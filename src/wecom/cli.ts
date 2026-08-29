@@ -221,14 +221,28 @@ async function handleText(frame: TextFrame): Promise<void> {
     }),
   });
 
-  const run = codex.run({
-    runId: randomUUID(),
-    prompt: text,
-    cwd: workspace,
-    threadId,
-    model,
-    sandbox,
-  });
+  let run: AgentRun;
+  try {
+    run = codex.run({
+      runId: randomUUID(),
+      prompt: text,
+      cwd: workspace,
+      threadId,
+      model,
+      sandbox,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    state = reduce(state, {
+      type: 'error',
+      message,
+      terminationReason: 'failed',
+    });
+    await client.replyStreamWithCard(frame, streamId, renderStream(state, threadId), true).catch(() => {});
+    console.error(`Failed to start Codex run: ${message}`);
+    return;
+  }
+
   const active: ActiveRunRecord = {
     run,
     state,
@@ -253,7 +267,7 @@ async function handleText(frame: TextFrame): Promise<void> {
       if (rendered !== lastSent && (terminal || now - lastFlushAt >= streamFlushIntervalMs)) {
         lastSent = rendered;
         lastFlushAt = now;
-        await client.replyStream(frame, streamId, rendered, false);
+        await client.replyStreamWithCard(frame, streamId, rendered, false);
       }
     }
 
@@ -263,7 +277,7 @@ async function handleText(frame: TextFrame): Promise<void> {
     await persistThread(key, threadId);
 
     const finalText = renderStream(state, threadId);
-    await client.replyStream(frame, streamId, finalText, true);
+    await client.replyStreamWithCard(frame, streamId, finalText, true);
     await run.waitForExit(1500).catch(() => false);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -275,7 +289,7 @@ async function handleText(frame: TextFrame): Promise<void> {
     active.state = state;
     active.threadId = threadId;
     await persistThread(key, threadId);
-    await client.replyStream(frame, streamId, renderStream(state, threadId), true).catch(() => {});
+    await client.replyStreamWithCard(frame, streamId, renderStream(state, threadId), true).catch(() => {});
     console.error(`Codex run failed: ${message}`);
   } finally {
     activeRuns.delete(key);
