@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -43,7 +43,7 @@ const codex = new CodexAdapter({
   sandbox,
 });
 
-await codex.prepareRun?.({} as never);
+await codex.prepareRun();
 
 const client = new WSClient({ botId, secret });
 
@@ -60,8 +60,7 @@ client.on('message.text', (frame: WsFrame) => {
   void handleText(frame).catch(async (err: unknown) => {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`Message handling failed: ${message}`);
-    const streamId = generateReqId('stream');
-    await client.replyStream(frame, streamId, `处理失败：${message}`, true).catch(() => {});
+    await replyOnce(frame, `处理失败：${message}`).catch(() => {});
   });
 });
 
@@ -154,6 +153,10 @@ async function handleText(frame: WsFrame): Promise<void> {
     const finalText = output.trim() || '任务已完成，但 Codex 没有返回文本。';
     await client.replyStream(frame, streamId, truncate(finalText), true);
     await run.waitForExit(1500).catch(() => false);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await client.replyStream(frame, streamId, `处理失败：${message}`, true).catch(() => {});
+    throw err;
   } finally {
     activeRuns.delete(key);
   }
@@ -198,7 +201,7 @@ async function loadSessions(file: string): Promise<SessionMap> {
 async function saveSessions(file: string, value: SessionMap): Promise<void> {
   const tmp = `${file}.tmp`;
   await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-  await writeFile(file, await readFile(tmp));
+  await rename(tmp, file);
 }
 
 function shutdown(): void {
