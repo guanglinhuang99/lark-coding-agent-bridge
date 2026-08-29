@@ -88,18 +88,9 @@ export function truncateUtf8(text: string, maxBytes: number): string {
 
   const marker = '\n\n…（内容过长，已截断）';
   const markerBytes = Buffer.byteLength(marker, 'utf8');
-  const budget = Math.max(0, maxBytes - markerBytes);
-  let bytes = 0;
-  let output = '';
+  if (markerBytes >= maxBytes) return takeUtf8Prefix(marker, maxBytes);
 
-  for (const character of text) {
-    const size = Buffer.byteLength(character, 'utf8');
-    if (bytes + size > budget) break;
-    output += character;
-    bytes += size;
-  }
-
-  return `${output}${marker}`;
+  return `${takeUtf8Prefix(text, maxBytes - markerBytes)}${marker}`;
 }
 
 function runStatus(state: RunState): { icon: string; label: string } {
@@ -157,4 +148,16 @@ function clipText(value: string, maxCodePoints: number): string {
   return characters.length > maxCodePoints
     ? `${characters.slice(0, Math.max(0, maxCodePoints - 1)).join('')}…`
     : value;
+}
+
+function takeUtf8Prefix(value: string, maxBytes: number): string {
+  let bytes = 0;
+  let output = '';
+  for (const character of value) {
+    const size = Buffer.byteLength(character, 'utf8');
+    if (bytes + size > maxBytes) break;
+    output += character;
+    bytes += size;
+  }
+  return output;
 }
