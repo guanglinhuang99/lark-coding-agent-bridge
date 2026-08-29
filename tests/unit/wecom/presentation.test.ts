@@ -81,4 +81,11 @@ describe('WeCom rich presentation', () => {
     expect(truncated).toContain('已截断');
     expect(truncated).not.toContain('�');
   });
+
+  it('also respects limits smaller than the truncation marker', () => {
+    const truncated = truncateUtf8('中文🙂'.repeat(100), 10);
+
+    expect(Buffer.byteLength(truncated, 'utf8')).toBeLessThanOrEqual(10);
+    expect(truncated).not.toContain('�');
+  });
 });
