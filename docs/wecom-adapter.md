@@ -43,6 +43,8 @@ The first response uses `replyStreamWithCard`, attaching the template card to th
 
 Clicking a card button triggers `event.template_card_event`. The adapter responds with `updateTemplateCard` using the original `task_id`, within the WeCom event-response window.
 
+The presentation is intentionally similar rather than byte-for-byte identical to Feishu. Feishu-specific collapsible panels and arbitrary streaming-card document updates have no direct WeCom equivalent. WeCom therefore shows tool activity as concise Markdown rows and keeps interactive operations in a native template card.
+
 ## Requirements
 
 - Node.js >= 20.12
