@@ -1,7 +1,7 @@
 {
   "name": "lark-channel-bridge",
   "version": "0.7.0",
-  "description": "Bridge Feishu/Lark messenger with local CLI coding agents",
+  "description": "Bridge Feishu/Lark or WeCom messenger with local CLI coding agents",
   "type": "module",
   "packageManager": "pnpm@10.33.0",
   "publishConfig": {
@@ -17,7 +17,8 @@
   },
   "homepage": "https://github.com/zarazhangrui/feishu-claude-code-bridge#readme",
   "bin": {
-    "lark-channel-bridge": "./bin/lark-channel-bridge.mjs"
+    "lark-channel-bridge": "./bin/lark-channel-bridge.mjs",
+    "wecom-channel-bridge": "./bin/wecom-channel-bridge.mjs"
   },
   "exports": {
     ".": {
@@ -50,6 +51,7 @@
   "dependencies": {
     "@clack/prompts": "^1.4.0",
     "@larksuite/channel": "^0.4.1",
+    "@wecom/aibot-node-sdk": "^1.0.6",
     "commander": "^12.1.0",
     "cross-spawn": "^7.0.6",
     "graceful-fs": "^4.2.11",
@@ -101,6 +103,8 @@
   "keywords": [
     "feishu",
     "lark",
+    "wecom",
+    "wechat-work",
     "claude",
     "claude-code",
     "codex",
