@@ -39,7 +39,9 @@ continuously updated Markdown answer
 button_interaction template card
 ```
 
-The Markdown stream is replaced in place while Codex is running. The accompanying card remains a session control surface. Clicking a card button triggers `event.template_card_event`, and the adapter updates that card within the WeCom event-response window.
+The first response uses `replyStreamWithCard`, attaching the template card to the Markdown stream. All later refreshes continue through `replyStreamWithCard` with the same stream ID and no second card payload, matching the official SDK lifecycle. The Markdown body is replaced in place while Codex is running, and the accompanying card remains a session control surface.
+
+Clicking a card button triggers `event.template_card_event`. The adapter responds with `updateTemplateCard` using the original `task_id`, within the WeCom event-response window.
 
 ## Requirements
 
