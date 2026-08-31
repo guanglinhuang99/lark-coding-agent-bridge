@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -6,6 +6,7 @@ import { WSClient, generateReqId } from '@wecom/aibot-node-sdk';
 import type {
   EnterChatEvent,
   EventMessageWith,
+  TemplateCard,
   TemplateCardEventData,
   TextMessage,
   WsFrame,
@@ -19,7 +20,6 @@ import {
   reduce,
   type RunState,
 } from '../card/run-state';
-import type { CodexSandboxMode } from '../config/permissions';
 import {
   buildWeComControlCard,
   renderWeComMarkdown,
@@ -27,22 +27,23 @@ import {
   truncateUtf8,
   type WeComCardStatus,
 } from './presentation';
+import {
+  conversationKey,
+  normalizeCardAction,
+  normalizeIncomingText,
+  readSandbox,
+  readStreamMaxBytes,
+  sendControlCard,
+  templateCardEventDetails,
+  WeComStreamReply,
+  withActiveRun,
+  withReservation,
+} from './runtime';
+import { WeComSessionStore } from './session-store';
 
-interface SessionRecord {
-  threadId?: string;
-  updatedAt: string;
-}
-
-type SessionMap = Record<string, SessionRecord>;
 type TextFrame = WsFrame<TextMessage>;
 type EnterChatFrame = WsFrame<EventMessageWith<EnterChatEvent>>;
 type TemplateCardEventFrame = WsFrame<EventMessageWith<TemplateCardEventData>>;
-
-interface ConversationBody {
-  chattype?: 'single' | 'group';
-  chatid?: string;
-  from?: { userid?: string };
-}
 
 interface ActiveRunRecord {
   run: AgentRun;
@@ -51,9 +52,6 @@ interface ActiveRunRecord {
   taskId: string;
   threadId?: string;
 }
-
-const WECOM_PROTOCOL_MAX_STREAM_BYTES = 20_480;
-const DEFAULT_STREAM_MAX_BYTES = 20_000;
 
 const botId = process.env.WECOM_BOT_ID?.trim();
 const secret = process.env.WECOM_SECRET?.trim();
@@ -75,8 +73,10 @@ const streamMaxBytes = readStreamMaxBytes(
 const streamFlushIntervalMs = readPositiveInt(process.env.WECOM_STREAM_FLUSH_MS, 500);
 
 await mkdir(stateDir, { recursive: true });
-let sessions = await loadSessions(sessionFile);
+const sessionStore = new WeComSessionStore(sessionFile);
+await sessionStore.load();
 const activeRuns = new Map<string, ActiveRunRecord>();
+const startingRuns = new Set<string>();
 
 const codex = new CodexAdapter({
   binary: process.env.CODEX_BINARY?.trim() || 'codex',
@@ -120,21 +120,21 @@ client.on('event.template_card_event', (frame: TemplateCardEventFrame) => {
 
 client.connect();
 
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.on('SIGINT', () => void shutdown('SIGINT'));
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
 async function handleText(frame: TextFrame): Promise<void> {
   const body = frame.body;
   if (!body) return;
 
-  const text = body.text.content.trim();
+  const text = normalizeIncomingText(body.text.content, body.chattype);
   if (!text) return;
 
   const key = conversationKey(body);
   const command = text.toLowerCase();
 
   if (command === '/new' || command === '/reset') {
-    if (activeRuns.has(key)) {
+    if (isConversationBusy(key)) {
       await replyControl(
         frame,
         key,
@@ -145,8 +145,7 @@ async function handleText(frame: TextFrame): Promise<void> {
       );
       return;
     }
-    delete sessions[key];
-    await saveSessions(sessionFile, sessions);
+    await sessionStore.clear(key);
     await replyControl(
       frame,
       key,
@@ -166,13 +165,14 @@ async function handleText(frame: TextFrame): Promise<void> {
   if (command === '/stop') {
     const active = activeRuns.get(key);
     if (!active) {
+      const starting = startingRuns.has(key);
       await replyControl(
         frame,
         key,
-        'ℹ️ 当前没有运行任务',
-        ['可以直接发送新问题。'],
-        'idle',
-        '当前为空闲状态',
+        starting ? '⏳ Codex 正在启动' : 'ℹ️ 当前没有运行任务',
+        [starting ? '任务完成启动后可再次停止。' : '可以直接发送新问题。'],
+        starting ? 'running' : 'idle',
+        starting ? '任务正在启动' : '当前为空闲状态',
       );
       return;
     }
@@ -191,7 +191,7 @@ async function handleText(frame: TextFrame): Promise<void> {
     return;
   }
 
-  if (activeRuns.has(key)) {
+  if (isConversationBusy(key)) {
     await replyControl(
       frame,
       key,
@@ -203,15 +203,22 @@ async function handleText(frame: TextFrame): Promise<void> {
     return;
   }
 
+  await withReservation(startingRuns, key, () => runCodexPrompt(frame, key, text));
+}
+
+async function runCodexPrompt(frame: TextFrame, key: string, text: string): Promise<void> {
   const streamId = generateReqId('stream');
+  const stream = new WeComStreamReply(client, frame, streamId);
   const taskId = createTaskId();
-  let threadId = sessions[key]?.threadId;
+  let threadId = sessionStore.threadId(key);
   let state = freshRunState();
   let lastSent = renderStream(state, threadId);
   let lastFlushAt = Date.now();
 
-  await client.replyStreamWithCard(frame, streamId, lastSent, false, {
-    templateCard: buildWeComControlCard({
+  await stream.start(lastSent);
+  await deliverControlCard(
+    frame,
+    buildWeComControlCard({
       taskId,
       status: 'running',
       workspace,
@@ -219,7 +226,7 @@ async function handleText(frame: TextFrame): Promise<void> {
       threadId,
       prompt: text,
     }),
-  });
+  );
 
   let run: AgentRun;
   try {
@@ -238,7 +245,7 @@ async function handleText(frame: TextFrame): Promise<void> {
       message,
       terminationReason: 'failed',
     });
-    await client.replyStreamWithCard(frame, streamId, renderStream(state, threadId), true).catch(() => {});
+    await stream.finish(renderStream(state, threadId)).catch(() => {});
     console.error(`Failed to start Codex run: ${message}`);
     return;
   }
@@ -250,50 +257,53 @@ async function handleText(frame: TextFrame): Promise<void> {
     taskId,
     threadId,
   };
-  activeRuns.set(key, active);
+  await withActiveRun(activeRuns, key, active, async () => {
+    try {
+      for await (const event of run.events) {
+        if (event.type === 'system' && event.threadId) threadId = event.threadId;
+        if (event.type === 'done' && event.threadId) threadId = event.threadId;
 
-  try {
-    for await (const event of run.events) {
-      if (event.type === 'system' && event.threadId) threadId = event.threadId;
-      if (event.type === 'done' && event.threadId) threadId = event.threadId;
+        state = reduce(state, event);
+        active.state = state;
+        active.threadId = threadId;
 
-      state = reduce(state, event);
+        const rendered = renderStream(state, threadId);
+        const now = Date.now();
+        const terminal = state.terminal !== 'running';
+        if (rendered !== lastSent && (terminal || now - lastFlushAt >= streamFlushIntervalMs)) {
+          lastSent = rendered;
+          lastFlushAt = now;
+          await stream.update(rendered);
+        }
+      }
+
+      state = finalizeIfRunning(state);
       active.state = state;
       active.threadId = threadId;
+      await persistThread(key, threadId);
 
-      const rendered = renderStream(state, threadId);
-      const now = Date.now();
-      const terminal = state.terminal !== 'running';
-      if (rendered !== lastSent && (terminal || now - lastFlushAt >= streamFlushIntervalMs)) {
-        lastSent = rendered;
-        lastFlushAt = now;
-        await client.replyStreamWithCard(frame, streamId, rendered, false);
-      }
+      const finalText = renderStream(state, threadId);
+      await stream.finish(finalText);
+      await run.waitForExit(1500).catch(() => false);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      state = reduce(state, {
+        type: 'error',
+        message,
+        terminationReason: 'failed',
+      });
+      active.state = state;
+      active.threadId = threadId;
+      await run.stop().catch(() => {});
+      await persistThread(key, threadId).catch((persistErr: unknown) => {
+        console.error(
+          `Failed to persist WeCom thread: ${persistErr instanceof Error ? persistErr.message : String(persistErr)}`,
+        );
+      });
+      await stream.finish(renderStream(state, threadId)).catch(() => {});
+      console.error(`Codex run failed: ${message}`);
     }
-
-    state = finalizeIfRunning(state);
-    active.state = state;
-    active.threadId = threadId;
-    await persistThread(key, threadId);
-
-    const finalText = renderStream(state, threadId);
-    await client.replyStreamWithCard(frame, streamId, finalText, true);
-    await run.waitForExit(1500).catch(() => false);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    state = reduce(state, {
-      type: 'error',
-      message,
-      terminationReason: 'failed',
-    });
-    active.state = state;
-    active.threadId = threadId;
-    await persistThread(key, threadId);
-    await client.replyStreamWithCard(frame, streamId, renderStream(state, threadId), true).catch(() => {});
-    console.error(`Codex run failed: ${message}`);
-  } finally {
-    activeRuns.delete(key);
-  }
+  });
 }
 
 async function handleEnterChat(frame: EnterChatFrame): Promise<void> {
@@ -305,10 +315,11 @@ async function handleEnterChat(frame: EnterChatFrame): Promise<void> {
     msgtype: 'template_card',
     template_card: buildWeComControlCard({
       taskId: createTaskId(),
-      status: activeRuns.has(key) ? 'running' : 'idle',
+      status: isConversationBusy(key) ? 'running' : 'idle',
       workspace,
       sandbox,
       threadId: currentThreadId(key),
+      prompt: '发送消息开始；运行时可停止，也可用 /status、/new、/stop。',
       notice: '发送消息即可调用本机 Codex',
     }),
   });
@@ -319,25 +330,26 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
   if (!body) return;
 
   const key = conversationKey(body);
-  const action = body.event.event_key;
-  const taskId = body.event.task_id;
+  const { eventKey: rawAction, taskId } = templateCardEventDetails(body.event);
+  const action = normalizeCardAction(rawAction);
   if (!taskId) {
     throw new Error('WeCom template card event missing task_id');
   }
 
   const active = activeRuns.get(key);
+  const starting = startingRuns.has(key);
 
   if (action === 'stop') {
     await client.updateTemplateCard(
       frame,
       buildWeComControlCard({
         taskId,
-        status: active ? 'stopping' : 'idle',
+        status: active ? 'stopping' : starting ? 'running' : 'idle',
         workspace,
         sandbox,
         threadId: currentThreadId(key),
         prompt: active?.prompt,
-        notice: active ? '停止请求已发送' : '当前没有运行任务',
+        notice: active ? '停止请求已发送' : starting ? '任务正在启动' : '当前没有运行任务',
       }),
     );
     if (active) {
@@ -350,7 +362,7 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
   }
 
   if (action === 'new') {
-    if (active) {
+    if (active || starting) {
       await client.updateTemplateCard(
         frame,
         buildWeComControlCard({
@@ -358,16 +370,18 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
           status: 'running',
           workspace,
           sandbox,
-          threadId: active.threadId,
-          prompt: active.prompt,
-          notice: '任务运行中，请先停止',
+          threadId: active?.threadId,
+          prompt: active?.prompt,
+          notice: active ? '任务运行中，请先停止' : '任务正在启动，请稍候',
         }),
       );
       return;
     }
 
-    delete sessions[key];
-    await saveSessions(sessionFile, sessions);
+    const clearResult = sessionStore.clear(key).then(
+      () => undefined,
+      (err: unknown) => err,
+    );
     await client.updateTemplateCard(
       frame,
       buildWeComControlCard({
@@ -378,6 +392,8 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
         notice: '已创建新会话',
       }),
     );
+    const clearError = await clearResult;
+    if (clearError) throw clearError;
     return;
   }
 
@@ -386,12 +402,12 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
       frame,
       buildWeComControlCard({
         taskId,
-        status: active ? 'running' : 'idle',
+        status: active || starting ? 'running' : 'idle',
         workspace,
         sandbox,
         threadId: currentThreadId(key),
         prompt: active?.prompt,
-        notice: active ? 'Codex 正在运行' : '当前为空闲状态',
+        notice: active ? 'Codex 正在运行' : starting ? 'Codex 正在启动' : '当前为空闲状态',
       }),
     );
     return;
@@ -405,26 +421,27 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
       workspace,
       sandbox,
       threadId: currentThreadId(key),
-      notice: `未识别的操作：${action ?? 'unknown'}`,
+      notice: `未识别的操作：${rawAction ?? 'unknown'}`,
     }),
   );
 }
 
 async function replyStatus(frame: WsFrame, key: string): Promise<void> {
   const active = activeRuns.get(key);
+  const busy = isConversationBusy(key);
   const threadId = currentThreadId(key);
   await replyControl(
     frame,
     key,
-    active ? '🟡 Codex 正在运行' : '🟢 Codex 当前空闲',
+    busy ? '🟡 Codex 正在运行' : '🟢 Codex 当前空闲',
     [
       `工作区：\`${workspace}\``,
       `权限：\`${sandbox}\``,
       `会话：\`${threadId ?? 'new'}\``,
       `模型：\`${model ?? 'Codex default'}\``,
     ],
-    active ? 'running' : 'idle',
-    active ? 'Codex 正在运行' : '当前为空闲状态',
+    busy ? 'running' : 'idle',
+    active ? 'Codex 正在运行' : busy ? 'Codex 正在启动' : '当前为空闲状态',
     active?.prompt,
   );
 }
@@ -440,8 +457,11 @@ async function replyControl(
 ): Promise<void> {
   const streamId = generateReqId('stream');
   const content = truncateUtf8(renderWeComNotice(title, lines), streamMaxBytes);
-  await client.replyStreamWithCard(frame, streamId, content, true, {
-    templateCard: buildWeComControlCard({
+  const stream = new WeComStreamReply(client, frame, streamId);
+  await stream.finish(content);
+  await deliverControlCard(
+    frame,
+    buildWeComControlCard({
       taskId: createTaskId(),
       status,
       workspace,
@@ -450,14 +470,19 @@ async function replyControl(
       prompt,
       notice,
     }),
-  });
+  );
 }
 
-function conversationKey(body: ConversationBody): string {
-  if (body.chatid && body.chattype !== 'single') return `group:${body.chatid}`;
-  const userid = body.from?.userid;
-  if (!userid) throw new Error('WeCom message missing sender userid');
-  return `single:${userid}`;
+async function deliverControlCard(frame: WsFrame, card: TemplateCard): Promise<void> {
+  const body = frame.body;
+  if (!body) return;
+  try {
+    await sendControlCard(client, body, card);
+  } catch (err) {
+    console.error(
+      `Failed to send WeCom control card: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 async function replyOnce(frame: WsFrame, title: string, lines: readonly string[]): Promise<void> {
@@ -477,13 +502,12 @@ function renderStream(state: RunState, threadId: string | undefined): string {
 }
 
 function currentThreadId(key: string): string | undefined {
-  return activeRuns.get(key)?.threadId ?? sessions[key]?.threadId;
+  return activeRuns.get(key)?.threadId ?? sessionStore.threadId(key);
 }
 
 async function persistThread(key: string, threadId: string | undefined): Promise<void> {
   if (!threadId) return;
-  sessions[key] = { threadId, updatedAt: new Date().toISOString() };
-  await saveSessions(sessionFile, sessions);
+  await sessionStore.setThread(key, threadId);
 }
 
 function createTaskId(): string {
@@ -499,49 +523,28 @@ function freshRunState(): RunState {
   };
 }
 
-function readSandbox(value: string | undefined): CodexSandboxMode {
-  if (!value) return 'read-only';
-  if (value === 'read-only' || value === 'workspace-write' || value === 'danger-full-access') {
-    return value;
-  }
-  throw new Error(`Invalid WECOM_CODEX_SANDBOX: ${value}`);
-}
-
-function readStreamMaxBytes(value: string | undefined): number {
-  const parsed = value ? Number(value) : DEFAULT_STREAM_MAX_BYTES;
-  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_STREAM_MAX_BYTES;
-  return Math.min(Math.floor(parsed), WECOM_PROTOCOL_MAX_STREAM_BYTES);
-}
-
 function readPositiveInt(value: string | undefined, fallback: number): number {
   const parsed = value ? Number(value) : fallback;
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return Math.floor(parsed);
 }
 
-async function loadSessions(file: string): Promise<SessionMap> {
-  try {
-    const raw = await readFile(file, 'utf8');
-    const parsed = JSON.parse(raw) as SessionMap;
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch (err: unknown) {
-    if (isNodeError(err) && err.code === 'ENOENT') return {};
-    throw err;
-  }
+function isConversationBusy(key: string): boolean {
+  return startingRuns.has(key) || activeRuns.has(key);
 }
 
-async function saveSessions(file: string, value: SessionMap): Promise<void> {
-  const tmp = `${file}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-  await rename(tmp, file);
-}
+let shuttingDown = false;
 
-function isNodeError(err: unknown): err is NodeJS.ErrnoException {
-  return err instanceof Error;
-}
-
-function shutdown(): void {
-  for (const active of activeRuns.values()) void active.run.stop().catch(() => {});
+async function shutdown(signal: 'SIGINT' | 'SIGTERM'): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  const runs = [...activeRuns.values()];
+  await Promise.allSettled(runs.map((active) => active.run.stop()));
+  await sessionStore.flush().catch((err: unknown) => {
+    console.error(
+      `Failed to flush WeCom sessions during ${signal}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  });
   client.disconnect();
   process.exit(0);
 }

@@ -1,4 +1,5 @@
 import { basename } from 'node:path';
+import { homedir } from 'node:os';
 import type { TemplateCard } from '@wecom/aibot-node-sdk';
 import { renderText } from '../card/text-renderer';
 import type { RunState } from '../card/run-state';
@@ -33,9 +34,12 @@ export function renderWeComMarkdown(state: RunState, meta: WeComRenderMeta): str
     `> 工作区：\`${escapeInlineCode(compactWorkspace(meta.workspace))}\` · 权限：\`${sandboxLabel(meta.sandbox)}\` · 会话：${thread}`,
   ].join('\n');
 
-  const renderedBody = renderText(state).trim();
+  const renderedBody = sanitizeSensitiveText(renderText(sanitizeToolInputs(state))).trim();
   const finalFallback = state.finalText?.trim() ?? '';
-  const body = renderedBody || finalFallback || emptyBody(state);
+  const finalBody = sanitizeSensitiveText(finalFallback);
+  const body = [renderedBody, shouldAppendFinalText(state, finalFallback) ? finalBody : '']
+    .filter(Boolean)
+    .join('\n\n') || emptyBody(state);
 
   return [header, body].filter(Boolean).join('\n\n');
 }
@@ -57,7 +61,12 @@ export function buildWeComControlCard(options: WeComControlCardOptions): Templat
       title: 'Codex 会话控制',
       desc: clipText(options.notice ?? '企业微信 ↔ 本机 Codex（使用 ChatGPT/Codex 订阅）', 30),
     },
-    sub_title_text: clipText(options.prompt?.trim() || '发送消息开始对话；回答主体使用 Markdown 富文本流。', 112),
+    sub_title_text: clipText(
+      sanitizeSensitiveText(
+        options.prompt?.trim() || '发送消息开始对话；回答主体使用 Markdown 富文本流。',
+      ),
+      112,
+    ),
     horizontal_content_list: [
       { keyname: '状态', value: clipText(status.label, 26) },
       { keyname: '工作区', value: clipText(workspaceName, 26) },
@@ -83,7 +92,7 @@ export function renderWeComNotice(title: string, lines: readonly string[]): stri
  * Truncate at code-point boundaries so Chinese and emoji are never corrupted.
  */
 export function truncateUtf8(text: string, maxBytes: number): string {
-  if (!Number.isFinite(maxBytes) || maxBytes <= 0) return text;
+  if (!Number.isFinite(maxBytes) || maxBytes <= 0) return '';
   if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
 
   const marker = '\n\n…（内容过长，已截断）';
@@ -91,6 +100,49 @@ export function truncateUtf8(text: string, maxBytes: number): string {
   if (markerBytes >= maxBytes) return takeUtf8Prefix(marker, maxBytes);
 
   return `${takeUtf8Prefix(text, maxBytes - markerBytes)}${marker}`;
+}
+
+function shouldAppendFinalText(state: RunState, finalText: string): boolean {
+  if (!finalText) return false;
+  return !state.blocks.some(
+    (block) => block.kind === 'text' && block.content.trim() === finalText,
+  );
+}
+
+function sanitizeToolInputs(state: RunState): RunState {
+  return {
+    ...state,
+    blocks: state.blocks.map((block) => {
+      if (block.kind !== 'tool') return block;
+      return {
+        ...block,
+        tool: {
+          ...block.tool,
+          input: sanitizeUnknown(block.tool.input),
+        },
+      };
+    }),
+  };
+}
+
+function sanitizeUnknown(value: unknown): unknown {
+  if (typeof value === 'string') return sanitizeSensitiveText(value);
+  if (Array.isArray(value)) return value.map(sanitizeUnknown);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, nested]) => [key, sanitizeUnknown(nested)]),
+  );
+}
+
+function sanitizeSensitiveText(value: string): string {
+  const home = homedir();
+  let output = home && home !== '/' ? value.split(home).join('~') : value;
+  output = output.replace(
+    /\b((?:WECOM_SECRET|OPENAI_API_KEY|[A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|API_KEY)))\s*=\s*(?:"[^"]*"|'[^']*'|[^\s`]+)/gi,
+    '$1=[REDACTED]',
+  );
+  output = output.replace(/\b(Bearer\s+)[A-Za-z0-9._~+/-]{8,}/gi, '$1[REDACTED]');
+  return output.replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]');
 }
 
 function runStatus(state: RunState): { icon: string; label: string } {

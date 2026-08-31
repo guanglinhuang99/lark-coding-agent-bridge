@@ -31,7 +31,7 @@ The WeCom path deliberately reuses the existing Feishu run-state reducer. Agent 
 - per-answer interactive template card with workspace, permission level, thread status, and action buttons
 - card actions: **Stop**, **New conversation**, and **Status**
 
-WeCom does not expose the same continuously mutable card document model as Feishu. The adapter therefore uses the platform-native combination that is closest to the Feishu experience:
+WeCom does not expose the same continuously mutable card document model as Feishu. The adapter therefore uses the platform-native presentation that is closest to the Feishu experience:
 
 ```text
 continuously updated Markdown answer
@@ -39,7 +39,7 @@ continuously updated Markdown answer
 button_interaction template card
 ```
 
-The first response uses `replyStreamWithCard`, attaching the template card to the Markdown stream. All later refreshes continue through `replyStreamWithCard` with the same stream ID and no second card payload, matching the official SDK lifecycle. The Markdown body is replaced in place while Codex is running, and the accompanying card remains a session control surface.
+The Markdown answer uses `replyStream` and keeps the same stream ID for every refresh. The control surface is sent once as a standalone native `template_card` message through `sendMessage`. This split transport is intentional: the macOS WeCom client can omit the card portion of `stream_with_template_card` even though it renders the stream successfully, while standalone template cards render and dispatch button events reliably. The Markdown body is replaced in place while Codex is running, and the adjacent card remains a session control surface.
 
 Clicking a card button triggers `event.template_card_event`. The adapter responds with `updateTemplateCard` using the original `task_id`, within the WeCom event-response window.
 
@@ -80,7 +80,7 @@ wecom-channel-bridge
 | `WECOM_STATE_DIR` | `~/.lark-channel/wecom` | local thread/session state |
 | `WECOM_CODEX_SANDBOX` | `read-only` | `read-only`, `workspace-write`, or `danger-full-access` |
 | `WECOM_CODEX_MODEL` | Codex default | optional Codex model override |
-| `WECOM_STREAM_MAX_BYTES` | `20000` | maximum UTF-8 byte length for the Markdown stream; clamped to WeCom's 20480-byte protocol limit |
+| `WECOM_STREAM_MAX_BYTES` | `20000` | maximum UTF-8 byte length for the Markdown stream; capped at 20000 to retain 480 bytes of headroom below WeCom's 20480-byte protocol limit |
 | `WECOM_STREAM_MAX_CHARS` | — | deprecated compatibility alias for `WECOM_STREAM_MAX_BYTES` |
 | `WECOM_STREAM_FLUSH_MS` | `500` | minimum interval between stream refreshes |
 | `CODEX_BINARY` | `codex` | Codex executable path/name |
@@ -91,6 +91,7 @@ wecom-channel-bridge
 - Group chat: `group:<chatid>`
 
 Each conversation keeps its own Codex `threadId` in `sessions.json`, so follow-up messages resume the same Codex thread.
+Session updates are serialized and written by atomic replacement. A missing file initializes normally; damaged JSON or malformed entries stop startup with an explicit error while preserving the original file.
 
 ## Commands
 
