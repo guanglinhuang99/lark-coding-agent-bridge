@@ -83,7 +83,31 @@ wecom-channel-bridge
 | `WECOM_STREAM_MAX_BYTES` | `20000` | maximum UTF-8 byte length for the Markdown stream; capped at 20000 to retain 480 bytes of headroom below WeCom's 20480-byte protocol limit |
 | `WECOM_STREAM_MAX_CHARS` | — | deprecated compatibility alias for `WECOM_STREAM_MAX_BYTES` |
 | `WECOM_STREAM_FLUSH_MS` | `500` | minimum interval between stream refreshes |
+| `WECOM_REQUEST_TIMEOUT_MS` | `30000` | SDK request timeout; also applies to encrypted attachment downloads through the local proxy |
+| `WECOM_LOG_RETENTION_DAYS` | `30` | number of daily structured log files to retain |
+| `WECOM_HEALTH_INTERVAL_MS` | `30000` | health heartbeat interval |
+| `WECOM_HEALTH_STALE_MS` | `90000` | maximum heartbeat age accepted by `--health` |
+| `WECOM_MEDIA_CACHE_TTL_MS` | `604800000` | downloaded attachment cache lifetime (7 days) |
+| `WECOM_ATTACHMENT_MAX_COUNT` | `10` | maximum attachments accepted for one message |
+| `WECOM_ATTACHMENT_MAX_BYTES` | `104857600` | aggregate attachment byte limit per message |
+| `WECOM_ATTACHMENT_MAX_FILE_BYTES` | `26214400` | per-file input limit (25 MiB) |
+| `WECOM_IMAGE_MAX_BYTES` | `10485760` | per-image input limit (10 MiB) |
+| `WECOM_OUTPUT_MAX_COUNT` | `5` | maximum generated files returned per answer |
+| `WECOM_OUTPUT_MAX_FILE_BYTES` | `26214400` | per-file output limit (25 MiB) |
+| `WECOM_OUTPUT_MAX_BYTES` | `52428800` | aggregate generated-file output limit (50 MiB) |
 | `CODEX_BINARY` | `codex` | Codex executable path/name |
+
+## Logs and health
+
+The bridge writes redacted JSONL logs to `WECOM_STATE_DIR/logs/bridge-YYYYMMDD.jsonl`. Files rotate daily and are removed after `WECOM_LOG_RETENTION_DAYS`. Credentials, authorization headers, resource IDs, raw prompts, and local attachment paths use the shared logger's redaction rules.
+
+The live process atomically refreshes `WECOM_STATE_DIR/health.json` with mode `0600`. Check it without providing Bot ID or Secret:
+
+```bash
+node ./bin/wecom-channel-bridge.mjs --health
+```
+
+The command prints one JSON object and exits `0` only when the recorded process is alive, authenticated, connected, and the heartbeat is fresh. Missing, damaged, stale, disconnected, and dead-process states exit non-zero with a machine-readable `reason`.
 
 ## Conversation mapping
 
@@ -101,6 +125,24 @@ Session updates are serialized and written by atomic replacement. A missing file
 
 The same operations are exposed as buttons on the template card.
 
+## Images and files
+
+The adapter accepts direct image messages, file messages, mixed text/image messages, and quoted image/file content. The official SDK downloads and decrypts each resource; accepted inputs are stored under `WECOM_STATE_DIR/media` using a SHA-256 content name and mode `0600`.
+
+- accepted images are passed to Codex through its native image argument
+- accepted files are described to Codex with an absolute local cache path
+- rejected inputs remain unavailable to Codex and include a size/format reason in the injected attachment metadata
+- the cache is cleaned by age according to `WECOM_MEDIA_CACHE_TTL_MS`
+
+When Codex creates a file that should be returned, its final answer must contain an absolute-path Markdown link to that file. The bridge validates the link, rejects missing files, input attachments, and paths or symlinks outside `WECOM_WORKSPACE`, then uploads the accepted artifact as a temporary WeCom image or file message. For example:
+
+```markdown
+[下载报告](/absolute/workspace/report.pdf)
+![结果图](</absolute/workspace/chart 1.png>)
+```
+
+File creation requires a writable agent sandbox such as `WECOM_CODEX_SANDBOX=workspace-write`; the bridge does not silently broaden the configured Codex permission level.
+
 ## Current scope
 
-The current adapter handles text messages, rich Markdown streaming, interactive template cards, card events, and per-conversation Codex threads. Image/file ingress and generated-file egress remain the next implementation slice.
+The current adapter handles text, image and file ingress, rich Markdown streaming, generated-file egress, interactive template cards, card events, structured logs, health checks, and per-conversation Codex threads. Voice and video messages are not sent to Codex.

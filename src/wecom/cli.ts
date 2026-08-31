@@ -4,8 +4,12 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { WSClient, generateReqId } from '@wecom/aibot-node-sdk';
 import type {
+  BaseMessage,
   EnterChatEvent,
   EventMessageWith,
+  FileMessage,
+  ImageMessage,
+  MixedMessage,
   TemplateCard,
   TemplateCardEventData,
   TextMessage,
@@ -29,6 +33,7 @@ import {
 } from './presentation';
 import {
   conversationKey,
+  messageTarget,
   normalizeCardAction,
   normalizeIncomingText,
   readSandbox,
@@ -40,8 +45,29 @@ import {
   withReservation,
 } from './runtime';
 import { WeComSessionStore } from './session-store';
+import {
+  closeLogger,
+  configureLogger,
+  gcOldLogs,
+  log,
+  redactDiagnosticText,
+} from '../core/logger';
+import { inspectWeComHealth, WeComHealthStore, type WeComHealthPhase } from './health';
+import {
+  buildWeComAgentPrompt,
+  collectWeComMediaInputs,
+  gcWeComMediaCache,
+  textFromWeComMessage,
+  WeComMediaStore,
+  type WeComMediaInput,
+} from './media';
+import { sendLinkedWorkspaceArtifacts } from './egress';
+import type { NormalizedAttachment } from '../media/attachment';
 
 type TextFrame = WsFrame<TextMessage>;
+type ImageFrame = WsFrame<ImageMessage>;
+type FileFrame = WsFrame<FileMessage>;
+type MixedFrame = WsFrame<MixedMessage>;
 type EnterChatFrame = WsFrame<EventMessageWith<EnterChatEvent>>;
 type TemplateCardEventFrame = WsFrame<EventMessageWith<TemplateCardEventData>>;
 
@@ -53,6 +79,20 @@ interface ActiveRunRecord {
   threadId?: string;
 }
 
+const workspace = path.resolve(process.env.WECOM_WORKSPACE || process.cwd());
+const stateDir = path.resolve(
+  process.env.WECOM_STATE_DIR || path.join(os.homedir(), '.lark-channel', 'wecom'),
+);
+const sessionFile = path.join(stateDir, 'sessions.json');
+const healthFile = path.join(stateDir, 'health.json');
+const healthStaleMs = readPositiveInt(process.env.WECOM_HEALTH_STALE_MS, 90_000);
+
+if (process.argv.includes('--health')) {
+  const inspection = await inspectWeComHealth(healthFile, { staleAfterMs: healthStaleMs });
+  console.log(JSON.stringify(inspection));
+  process.exit(inspection.healthy ? 0 : 1);
+}
+
 const botId = process.env.WECOM_BOT_ID?.trim();
 const secret = process.env.WECOM_SECRET?.trim();
 if (!botId || !secret) {
@@ -60,23 +100,47 @@ if (!botId || !secret) {
   process.exit(1);
 }
 
-const workspace = path.resolve(process.env.WECOM_WORKSPACE || process.cwd());
-const stateDir = path.resolve(
-  process.env.WECOM_STATE_DIR || path.join(os.homedir(), '.lark-channel', 'wecom'),
-);
-const sessionFile = path.join(stateDir, 'sessions.json');
 const sandbox = readSandbox(process.env.WECOM_CODEX_SANDBOX);
 const model = process.env.WECOM_CODEX_MODEL?.trim() || undefined;
 const streamMaxBytes = readStreamMaxBytes(
   process.env.WECOM_STREAM_MAX_BYTES ?? process.env.WECOM_STREAM_MAX_CHARS,
 );
 const streamFlushIntervalMs = readPositiveInt(process.env.WECOM_STREAM_FLUSH_MS, 500);
+const requestTimeoutMs = readPositiveInt(process.env.WECOM_REQUEST_TIMEOUT_MS, 30_000);
+const heartbeatMs = readPositiveInt(process.env.WECOM_HEALTH_INTERVAL_MS, 30_000);
+const logRetentionDays = readPositiveInt(process.env.WECOM_LOG_RETENTION_DAYS, 30);
+const mediaDir = path.join(stateDir, 'media');
+const mediaCacheMaxAgeMs = readPositiveInt(
+  process.env.WECOM_MEDIA_CACHE_TTL_MS,
+  7 * 24 * 60 * 60 * 1000,
+);
+const attachmentOptions = {
+  maxCount: readPositiveInt(process.env.WECOM_ATTACHMENT_MAX_COUNT, 10),
+  maxBytes: readPositiveInt(process.env.WECOM_ATTACHMENT_MAX_BYTES, 100 * 1024 * 1024),
+  maxFileBytes: readPositiveInt(process.env.WECOM_ATTACHMENT_MAX_FILE_BYTES, 25 * 1024 * 1024),
+  imageMaxBytes: readPositiveInt(process.env.WECOM_IMAGE_MAX_BYTES, 10 * 1024 * 1024),
+  cacheMaxAgeMs: mediaCacheMaxAgeMs,
+};
+const artifactOptions = {
+  maxCount: readPositiveInt(process.env.WECOM_OUTPUT_MAX_COUNT, 5),
+  maxFileBytes: readPositiveInt(process.env.WECOM_OUTPUT_MAX_FILE_BYTES, 25 * 1024 * 1024),
+  maxTotalBytes: readPositiveInt(process.env.WECOM_OUTPUT_MAX_BYTES, 50 * 1024 * 1024),
+};
 
 await mkdir(stateDir, { recursive: true });
+configureLogger({ logsDir: path.join(stateDir, 'logs'), retentionDays: logRetentionDays });
+await gcOldLogs();
+await gcWeComMediaCache(mediaDir, mediaCacheMaxAgeMs);
 const sessionStore = new WeComSessionStore(sessionFile);
 await sessionStore.load();
 const activeRuns = new Map<string, ActiveRunRecord>();
 const startingRuns = new Set<string>();
+const healthStore = new WeComHealthStore(healthFile);
+let healthPhase: WeComHealthPhase = 'starting';
+let connected = false;
+let reconnectAttempt: number | undefined;
+let lastHealthError: string | undefined;
+await refreshHealth();
 
 const codex = new CodexAdapter({
   binary: process.env.CODEX_BINARY?.trim() || 'codex',
@@ -89,23 +153,56 @@ const codex = new CodexAdapter({
 
 await codex.prepareRun();
 
-const client = new WSClient({ botId, secret });
+const client = new WSClient({ botId, secret, requestTimeout: requestTimeoutMs });
+const mediaStore = new WeComMediaStore(client, mediaDir);
 
+client.on('connected', () => {
+  healthPhase = 'starting';
+  log.info('ws', 'connected');
+  void refreshHealth();
+});
 client.on('authenticated', () => {
+  connected = true;
+  healthPhase = 'connected';
+  reconnectAttempt = undefined;
+  lastHealthError = undefined;
+  log.info('ws', 'authenticated', { sandbox });
+  void refreshHealth();
   console.log(`✓ WeCom bot authenticated; workspace=${workspace}; sandbox=${sandbox}`);
 });
 client.on('reconnecting', (attempt: number) => {
+  connected = false;
+  healthPhase = 'reconnecting';
+  reconnectAttempt = attempt;
+  log.warn('ws', 'reconnecting', { attempt });
+  void refreshHealth();
   console.warn(`WeCom reconnecting (attempt ${attempt})`);
 });
+client.on('disconnected', (reason: string) => {
+  connected = false;
+  healthPhase = shuttingDown ? 'stopping' : 'disconnected';
+  log.warn('ws', 'disconnected', { reason });
+  void refreshHealth();
+});
 client.on('error', (err: Error) => {
-  console.error(`WeCom error: ${err.message}`);
+  connected = false;
+  healthPhase = 'error';
+  lastHealthError = redactDiagnosticText(err.message).slice(0, 500);
+  log.fail('ws', err);
+  void refreshHealth();
+  console.error(`WeCom error: ${redactDiagnosticText(err.message)}`);
 });
 client.on('message.text', (frame: TextFrame) => {
-  void handleText(frame).catch(async (err: unknown) => {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`Message handling failed: ${message}`);
-    await replyOnce(frame, '⚠️ 处理失败', [`${message}`]).catch(() => {});
-  });
+  handleMessageEvent(frame);
+});
+client.on('message.image', (frame: ImageFrame) => {
+  handleMessageEvent(frame);
+});
+client.on('message.file', (frame: FileFrame) => {
+  handleMessageEvent(frame);
+});
+client.on('message.mixed', (frame: MixedFrame) => {
+  handleMessageEvent(frame);
 });
 client.on('event.enter_chat', (frame: EnterChatFrame) => {
   void handleEnterChat(frame).catch((err: unknown) => {
@@ -120,15 +217,30 @@ client.on('event.template_card_event', (frame: TemplateCardEventFrame) => {
 
 client.connect();
 
+const heartbeat = setInterval(() => {
+  void refreshHealth();
+}, heartbeatMs);
+heartbeat.unref();
+
 process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
-async function handleText(frame: TextFrame): Promise<void> {
+function handleMessageEvent<T extends BaseMessage>(frame: WsFrame<T>): void {
+  void handleMessage(frame).catch(async (err: unknown) => {
+    const message = redactDiagnosticText(err instanceof Error ? err.message : String(err));
+    log.fail('wecom-message', err);
+    console.error(`Message handling failed: ${message}`);
+    await replyOnce(frame, '⚠️ 处理失败', [`${message}`]).catch(() => {});
+  });
+}
+
+async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<void> {
   const body = frame.body;
   if (!body) return;
 
-  const text = normalizeIncomingText(body.text.content, body.chattype);
-  if (!text) return;
+  const text = normalizeIncomingText(textFromWeComMessage(body), body.chattype);
+  const mediaInputs = collectWeComMediaInputs(body);
+  if (!text && mediaInputs.length === 0) return;
 
   const key = conversationKey(body);
   const command = text.toLowerCase();
@@ -203,10 +315,26 @@ async function handleText(frame: TextFrame): Promise<void> {
     return;
   }
 
-  await withReservation(startingRuns, key, () => runCodexPrompt(frame, key, text));
+  try {
+    await withReservation(startingRuns, key, async () => {
+      await refreshHealth();
+      const attachments = await resolveAttachments(mediaInputs);
+      const prompt = buildWeComAgentPrompt(text, attachments);
+      const displayPrompt = text || attachmentSummary(attachments);
+      await runCodexPrompt(frame, key, prompt, displayPrompt, attachments);
+    });
+  } finally {
+    await refreshHealth();
+  }
 }
 
-async function runCodexPrompt(frame: TextFrame, key: string, text: string): Promise<void> {
+async function runCodexPrompt(
+  frame: WsFrame,
+  key: string,
+  prompt: string,
+  displayPrompt: string,
+  attachments: readonly NormalizedAttachment[],
+): Promise<void> {
   const streamId = generateReqId('stream');
   const stream = new WeComStreamReply(client, frame, streamId);
   const taskId = createTaskId();
@@ -224,7 +352,7 @@ async function runCodexPrompt(frame: TextFrame, key: string, text: string): Prom
       workspace,
       sandbox,
       threadId,
-      prompt: text,
+      prompt: displayPrompt,
     }),
   );
 
@@ -232,11 +360,14 @@ async function runCodexPrompt(frame: TextFrame, key: string, text: string): Prom
   try {
     run = codex.run({
       runId: randomUUID(),
-      prompt: text,
+      prompt,
       cwd: workspace,
       threadId,
       model,
       sandbox,
+      images: attachments
+        .filter((attachment) => attachment.kind === 'image' && attachment.decision === 'accepted')
+        .map((attachment) => attachment.absPath),
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -253,11 +384,12 @@ async function runCodexPrompt(frame: TextFrame, key: string, text: string): Prom
   const active: ActiveRunRecord = {
     run,
     state,
-    prompt: text,
+    prompt: displayPrompt,
     taskId,
     threadId,
   };
   await withActiveRun(activeRuns, key, active, async () => {
+    await refreshHealth();
     try {
       for await (const event of run.events) {
         if (event.type === 'system' && event.threadId) threadId = event.threadId;
@@ -284,6 +416,9 @@ async function runCodexPrompt(frame: TextFrame, key: string, text: string): Prom
 
       const finalText = renderStream(state, threadId);
       await stream.finish(finalText);
+      if (state.terminal === 'done') {
+        await sendGeneratedArtifacts(frame, state, attachments);
+      }
       await run.waitForExit(1500).catch(() => false);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -304,6 +439,7 @@ async function runCodexPrompt(frame: TextFrame, key: string, text: string): Prom
       console.error(`Codex run failed: ${message}`);
     }
   });
+  await refreshHealth();
 }
 
 async function handleEnterChat(frame: EnterChatFrame): Promise<void> {
@@ -490,6 +626,79 @@ async function replyOnce(frame: WsFrame, title: string, lines: readonly string[]
   await client.replyStream(frame, generateReqId('stream'), content, true);
 }
 
+async function resolveAttachments(
+  inputs: readonly WeComMediaInput[],
+): Promise<NormalizedAttachment[]> {
+  if (inputs.length === 0) return [];
+  const attachments = await mediaStore.resolve(inputs, attachmentOptions);
+  for (const attachment of attachments) {
+    log.info('wecom-media', 'attachment', {
+      decision: attachment.decision,
+      kind: attachment.kind,
+      size: attachment.size,
+      hash: attachment.hash,
+      rejectionReason: attachment.rejectionReason,
+    });
+  }
+  return attachments;
+}
+
+function attachmentSummary(attachments: readonly NormalizedAttachment[]): string {
+  const accepted = attachments.filter((attachment) => attachment.decision === 'accepted');
+  if (accepted.length === 0) return '收到附件，但附件未通过本地大小或格式校验。';
+  const images = accepted.filter((attachment) => attachment.kind === 'image').length;
+  const files = accepted.filter((attachment) => attachment.kind === 'file').length;
+  return [images ? `${images} 张图片` : '', files ? `${files} 个文件` : '']
+    .filter(Boolean)
+    .join('、');
+}
+
+async function sendGeneratedArtifacts(
+  frame: WsFrame,
+  state: RunState,
+  attachments: readonly NormalizedAttachment[],
+): Promise<void> {
+  const body = frame.body;
+  if (!body) return;
+  const markdown = agentOutputText(state);
+  if (!markdown) return;
+  try {
+    const result = await sendLinkedWorkspaceArtifacts(
+      client,
+      messageTarget(body),
+      workspace,
+      markdown,
+      {
+        ...artifactOptions,
+        excludedPaths: attachments
+          .filter((attachment) => attachment.decision === 'accepted')
+          .map((attachment) => attachment.absPath),
+      },
+    );
+    log.info('wecom-media', 'egress', {
+      sent: result.sent.length,
+      skipped: result.skipped.map((item) => item.reason),
+      bytes: result.sent.reduce((sum, item) => sum + item.size, 0),
+    });
+  } catch (err) {
+    log.fail('wecom-media-egress', err);
+    await client.sendMessage(messageTarget(body), {
+      msgtype: 'markdown',
+      markdown: { content: '⚠️ 生成文件回传失败，请查看本机 bridge 日志。' },
+    }).catch(() => {});
+  }
+}
+
+function agentOutputText(state: RunState): string {
+  const streamed = state.blocks
+    .filter((block): block is Extract<(typeof state.blocks)[number], { kind: 'text' }> =>
+      block.kind === 'text',
+    )
+    .map((block) => block.content)
+    .join('\n\n');
+  return [streamed, state.finalText ?? ''].filter(Boolean).join('\n\n');
+}
+
 function renderStream(state: RunState, threadId: string | undefined): string {
   return truncateUtf8(
     renderWeComMarkdown(state, {
@@ -533,11 +742,28 @@ function isConversationBusy(key: string): boolean {
   return startingRuns.has(key) || activeRuns.has(key);
 }
 
+async function refreshHealth(): Promise<void> {
+  await healthStore.update({
+    phase: healthPhase,
+    connected,
+    activeRuns: activeRuns.size,
+    startingRuns: startingRuns.size,
+    ...(reconnectAttempt !== undefined ? { reconnectAttempt } : {}),
+    ...(lastHealthError ? { lastError: lastHealthError } : {}),
+  }).catch((err: unknown) => {
+    log.fail('wecom-health', err);
+  });
+}
+
 let shuttingDown = false;
 
 async function shutdown(signal: 'SIGINT' | 'SIGTERM'): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
+  clearInterval(heartbeat);
+  connected = false;
+  healthPhase = 'stopping';
+  await refreshHealth();
   const runs = [...activeRuns.values()];
   await Promise.allSettled(runs.map((active) => active.run.stop()));
   await sessionStore.flush().catch((err: unknown) => {
@@ -546,5 +772,7 @@ async function shutdown(signal: 'SIGINT' | 'SIGTERM'): Promise<void> {
     );
   });
   client.disconnect();
+  await healthStore.flush().catch(() => {});
+  await closeLogger();
   process.exit(0);
 }

@@ -10,7 +10,7 @@ export interface AttachmentCandidate {
   size: number;
   mime: string;
   hash: string;
-  source: 'lark';
+  source: 'lark' | 'wecom';
   sourceMessageId: string;
   sourceFileKey: string;
   originalName?: string;

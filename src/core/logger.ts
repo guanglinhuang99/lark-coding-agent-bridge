@@ -1,5 +1,12 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { createWriteStream, mkdirSync, type WriteStream } from 'node:fs';
+import {
+  chmodSync,
+  closeSync,
+  createWriteStream,
+  mkdirSync,
+  openSync,
+  type WriteStream,
+} from 'node:fs';
 import { open, readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { telemetry } from './telemetry';
@@ -92,8 +99,12 @@ function getStream(): WriteStream | null {
     }
   }
   try {
-    mkdirSync(dir, { recursive: true });
-    stream = createWriteStream(join(dir, logFileName(today)), { flags: 'a' });
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    chmodSync(dir, 0o700);
+    const file = join(dir, logFileName(today));
+    closeSync(openSync(file, 'a', 0o600));
+    chmodSync(file, 0o600);
+    stream = createWriteStream(file, { flags: 'a', mode: 0o600 });
     currentDate = today;
     return stream;
   } catch {
@@ -167,9 +178,9 @@ const ID_KEYS = new Set([
 
 const MAX_LOG_STRING_CHARS = 4096;
 const CREDENTIAL_JSON_FIELD_RE =
-  /("(?:secret|app_secret|appSecret|token|access_token|tenant_access_token|app_access_token|authorization)"\s*:\s*")[^"]*(")/gi;
+  /("(?:secret|app_secret|appSecret|token|access_token|tenant_access_token|app_access_token|authorization|aeskey|aes_key)"\s*:\s*")[^"]*(")/gi;
 const ESCAPED_CREDENTIAL_JSON_FIELD_RE =
-  /(\\\"(?:secret|app_secret|appSecret|token|access_token|tenant_access_token|app_access_token|authorization)\\\"\s*:\s*\\\")[^\\]*(\\\")/gi;
+  /(\\\"(?:secret|app_secret|appSecret|token|access_token|tenant_access_token|app_access_token|authorization|aeskey|aes_key)\\\"\s*:\s*\\\")[^\\]*(\\\")/gi;
 const RESOURCE_JSON_FIELD_RE =
   /("(?:fileKey|sourceFileKey|file_key|source_file_key|imageKey|image_key|mediaKey|media_key)"\s*:\s*")[^"]*(")/gi;
 const ESCAPED_RESOURCE_JSON_FIELD_RE =
@@ -201,7 +212,7 @@ function sanitizeLogValue(
   const normalizedKey = key.startsWith('_') ? key.slice(1) : key;
   if (value === undefined) return undefined;
   if (RAW_PAYLOAD_KEYS.has(normalizedKey)) return '[REDACTED]';
-  if (/token|secret|authorization/i.test(normalizedKey)) return '[REDACTED]';
+  if (/token|secret|authorization|^aes_?key$/i.test(normalizedKey)) return '[REDACTED]';
   if (/attachment.*path|media.*path|^(cwd|cwdRealpath|path|absPath)$/i.test(normalizedKey)) {
     return '[REDACTED_PATH]';
   }
@@ -595,7 +606,7 @@ export function redactDiagnosticText(text: string): string {
   );
   out = out.replace(/\b(Bearer\s+)[A-Za-z0-9._\-+/=]+/g, '$1[REDACTED]');
   out = out.replace(
-    /\b(access_token|tenant_access_token|app_access_token|app_secret|appSecret|secret|token|doc_token|file_token|authorization)=([^&\s"',}]+)/gi,
+    /\b(access_token|tenant_access_token|app_access_token|app_secret|appSecret|secret|token|doc_token|file_token|authorization|aeskey|aes_key)=([^&\s"',}]+)/gi,
     '$1=[REDACTED]',
   );
   out = out.replace(

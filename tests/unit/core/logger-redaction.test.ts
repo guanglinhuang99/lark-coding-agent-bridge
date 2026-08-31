@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -35,6 +35,7 @@ describe('logger redaction', () => {
       line:
         'Authorization: Bearer secret-token-123 ' +
         'url=https://open.feishu.cn/open-apis?a=1&tenant_access_token=t-tenant-secret ' +
+        'aeskey=wecom-aes-secret ' +
         'cwd=/Users/example/private/project',
     });
     await flushLogger();
@@ -42,9 +43,12 @@ describe('logger redaction', () => {
     const text = await readTodayLog();
     expect(text).not.toContain('secret-token-123');
     expect(text).not.toContain('t-tenant-secret');
+    expect(text).not.toContain('wecom-aes-secret');
     expect(text).not.toContain('/Users/example/private/project');
     expect(text).toContain('[REDACTED]');
     expect(text).toContain('[REDACTED_PATH]');
+    expect((await stat(join(logsDir, 'bridge-20260525.jsonl'))).mode & 0o777).toBe(0o600);
+    expect((await stat(logsDir)).mode & 0o777).toBe(0o700);
   });
 
   it('redacts nested sdk args after stringify-style recursion', async () => {
@@ -70,8 +74,8 @@ describe('logger redaction', () => {
   it('redacts credentials inside stringified JSON sdk args', async () => {
     log.warn('sdk', 'error', {
       args: [
-        '{"app_secret":"json-secret","tenant_access_token":"tenant-secret","token":"plain-token"}',
-        '{\\"app_secret\\":\\"escaped-secret\\",\\"authorization\\":\\"Bearer escaped-token\\"}',
+        '{"app_secret":"json-secret","tenant_access_token":"tenant-secret","token":"plain-token","aeskey":"aes-secret"}',
+        '{\\"app_secret\\":\\"escaped-secret\\",\\"authorization\\":\\"Bearer escaped-token\\",\\"aes_key\\":\\"escaped-aes-secret\\"}',
       ],
     });
     await flushLogger();
@@ -82,6 +86,8 @@ describe('logger redaction', () => {
     expect(text).not.toContain('plain-token');
     expect(text).not.toContain('escaped-secret');
     expect(text).not.toContain('escaped-token');
+    expect(text).not.toContain('aes-secret');
+    expect(text).not.toContain('escaped-aes-secret');
   });
 
   it('redacts Lark resource keys and attachment tags from arbitrary previews', async () => {
