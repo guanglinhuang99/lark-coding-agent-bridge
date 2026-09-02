@@ -13,7 +13,11 @@ WeCom rich presentation
   - interaction card
         |
         v
-existing RunState + CodexAdapter
+deterministic risk fast path
+  - riskservice 本地 Python 代码（通过软链接和常驻进程直接调用）
+  - zero agent tokens
+        |
+        +---- otherwise ----> existing RunState + CodexAdapter
         |
         v
 Codex CLI / ChatGPT subscription
@@ -76,6 +80,7 @@ wecom-channel-bridge
 | --- | --- | --- |
 | `WECOM_BOT_ID` | required | WeCom AI Bot ID |
 | `WECOM_SECRET` | required | WeCom AI Bot secret |
+| `WECOM_ENV_FILE` | current directory `.env` | optional path to the environment file loaded at startup |
 | `WECOM_WORKSPACE` | current directory | Codex working directory |
 | `WECOM_STATE_DIR` | `~/.lark-channel/wecom` | local thread/session state |
 | `WECOM_CODEX_SANDBOX` | `read-only` | `read-only`, `workspace-write`, or `danger-full-access` |
@@ -84,10 +89,23 @@ wecom-channel-bridge
 | `WECOM_STREAM_MAX_CHARS` | — | deprecated compatibility alias for `WECOM_STREAM_MAX_BYTES` |
 | `WECOM_STREAM_FLUSH_MS` | `500` | minimum interval between stream refreshes |
 | `WECOM_REQUEST_TIMEOUT_MS` | `30000` | SDK request timeout; also applies to encrypted attachment downloads through the local proxy |
+| `WECOM_MESSAGE_DEDUPE_TTL_MS` | `1800000` | time window for suppressing duplicate callbacks with the same `msgid` (30 minutes) |
+| `WECOM_MESSAGE_DEDUPE_MAX_ENTRIES` | `10000` | maximum in-memory message IDs retained for callback deduplication |
+| `WECOM_MAX_CONCURRENT_RUNS` | `2` | maximum Codex runs or attachment-startup tasks admitted process-wide |
+| `WECOM_RUN_QUEUE_MAX` | `4` | maximum number of messages waiting for a global run slot |
+| `WECOM_RUN_QUEUE_TIMEOUT_MS` | `5000` | maximum queue wait before the message is rejected with a retry notice |
+| `WECOM_CONVERSATION_QUEUE_MAX` | `5` | maximum number of follow-up messages queued behind the active task in one conversation |
+| `WECOM_CONVERSATION_QUEUE_TIMEOUT_MS` | `120000` | maximum per-conversation wait; kept below the attachment URL validity window |
+| `WECOM_SHUTDOWN_TIMEOUT_MS` | `10000` | graceful cleanup deadline before process exit |
+| `WECOM_MAINTENANCE_INTERVAL_MS` | `86400000` | interval for session, media-cache, and log cleanup (24 hours) |
+| `WECOM_SESSION_TTL_MS` | `7776000000` | inactive session lifetime (90 days) |
+| `WECOM_SESSION_MAX_ENTRIES` | `2000` | maximum retained conversation-to-thread mappings |
 | `WECOM_LOG_RETENTION_DAYS` | `30` | number of daily structured log files to retain |
 | `WECOM_HEALTH_INTERVAL_MS` | `30000` | health heartbeat interval |
 | `WECOM_HEALTH_STALE_MS` | `90000` | maximum heartbeat age accepted by `--health` |
 | `WECOM_MEDIA_CACHE_TTL_MS` | `604800000` | downloaded attachment cache lifetime (7 days) |
+| `WECOM_MEDIA_DOWNLOAD_CONCURRENCY` | `2` | maximum concurrent attachment downloads per message |
+| `WECOM_MEDIA_DOWNLOAD_TIMEOUT_MS` | `90000` | total deadline for downloading all attachments in one message |
 | `WECOM_ATTACHMENT_MAX_COUNT` | `10` | maximum attachments accepted for one message |
 | `WECOM_ATTACHMENT_MAX_BYTES` | `104857600` | aggregate attachment byte limit per message |
 | `WECOM_ATTACHMENT_MAX_FILE_BYTES` | `26214400` | per-file input limit (25 MiB) |
@@ -95,11 +113,53 @@ wecom-channel-bridge
 | `WECOM_OUTPUT_MAX_COUNT` | `5` | maximum generated files returned per answer |
 | `WECOM_OUTPUT_MAX_FILE_BYTES` | `26214400` | per-file output limit (25 MiB) |
 | `WECOM_OUTPUT_MAX_BYTES` | `52428800` | aggregate generated-file output limit (50 MiB) |
+| `WECOM_RISK_SERVICE_DIR` | `./risk-service` | risk-service 本地目录或软链接；存在时启用风险快速路径 |
+| `WECOM_RISK_PYTHON` | icube Python | 安装了 `azpy`、`pandas`、`pins` 和 `openpyxl` 的 Python 解释器 |
+| `WECOM_RISK_BRIDGE_PATH` | `src/wecom/risk/direct_bridge.py` | 常驻本地直接调用桥脚本 |
+| `WECOM_RISK_DIRECT_WORKERS` | `4` | bridge 可同时处理的本地请求数 |
+| `WECOM_RISK_TIMEOUT_MS` | `180000` | 单次 risk-service 本地调用超时 |
+| `WECOM_RISK_PRODUCT_CACHE_TTL_MS` | `3600000` | product-list refresh interval; a prior successful list remains usable if refresh fails |
+| `WECOM_RISK_ALLOWED_USERIDS` | — | optional comma-separated WeCom userid allowlist; empty inherits the bot's existing audience |
 | `CODEX_BINARY` | `codex` | Codex executable path/name |
+
+When started from a project checkout, the adapter automatically loads `.env` from the current
+directory before reading WeCom and risk settings. Set `WECOM_ENV_FILE` to use a different file.
+Existing process environment values retain precedence over values from the file.
+
+## Risk fast path
+
+When the local riskservice link is available, explicit portfolio-risk questions are handled before an agent
+prompt or Codex process is created. Supported deterministic intents are:
+
+- pre-trade subscription, redemption, buy, sell, repo, and reverse-repo calculations
+- restricted-security and related-party-security checks
+- counterparty related-party checks
+- product holdings, investment restrictions, and entity credit queries
+- product listing and security search
+
+Examples:
+
+```text
+安联ESG纯债1号 申购 0.1
+安联ESG纯债1号 买 1000万 国债0115
+安联ESG纯债1号 能不能买 国债0115
+安联ESG纯债1号 投资限制
+```
+
+An amount without a unit defaults to 亿元 and the reply explicitly echoes that assumption.
+Ambiguous products or securities stay on the same zero-token path and ask the user to select a
+number. Exact security codes are selected automatically. Expired selections receive a local retry
+prompt rather than falling through to Codex. A risk-looking request with missing parameters asks a
+deterministic follow-up instead of starting Codex. Messages with attachments and unrelated
+questions continue through Codex.
+
+Risk conclusions distinguish a new breach from an existing breach, warning, or unavailable check.
+Only an explicit `hit: false` is formatted as a negative restricted-security or related-party
+result; missing or malformed status fields are reported as inconclusive.
 
 ## Logs and health
 
-The bridge writes redacted JSONL logs to `WECOM_STATE_DIR/logs/bridge-YYYYMMDD.jsonl`. Files rotate daily and are removed after `WECOM_LOG_RETENTION_DAYS`. Credentials, authorization headers, resource IDs, raw prompts, and local attachment paths use the shared logger's redaction rules.
+The bridge writes redacted JSONL logs to `WECOM_STATE_DIR/logs/bridge-YYYYMMDD.jsonl`. Files rotate daily and are removed after `WECOM_LOG_RETENTION_DAYS`. Cleanup runs at startup and then every `WECOM_MAINTENANCE_INTERVAL_MS`. Credentials, authorization headers, resource IDs, raw prompts, and local attachment paths use the shared logger's redaction rules. If the optional telemetry adapter is configured, WeCom reports queue wait, run/attachment latency, time to first text, stream coalescing/failures, generated-file bytes, duplicate callbacks, capacity rejection, and maintenance results without raw message content.
 
 The live process atomically refreshes `WECOM_STATE_DIR/health.json` with mode `0600`. Check it without providing Bot ID or Secret:
 
@@ -115,7 +175,8 @@ The command prints one JSON object and exits `0` only when the recorded process 
 - Group chat: `group:<chatid>`
 
 Each conversation keeps its own Codex `threadId` in `sessions.json`, so follow-up messages resume the same Codex thread.
-Session updates are serialized and written by atomic replacement. A missing file initializes normally; damaged JSON or malformed entries stop startup with an explicit error while preserving the original file.
+Messages that arrive while the same conversation is already running are acknowledged immediately and queued FIFO. They start automatically after the preceding task finishes; different conversations can still run concurrently subject to the global run gate. Per-conversation queues are bounded and expire before WeCom attachment download URLs become stale.
+Session updates are serialized and written by atomic replacement. Inactive and excess mappings are pruned according to `WECOM_SESSION_TTL_MS` and `WECOM_SESSION_MAX_ENTRIES`. A missing file initializes normally; damaged JSON or malformed entries stop startup with an explicit error while preserving the original file.
 
 ## Commands
 
@@ -132,6 +193,7 @@ The adapter accepts direct image messages, file messages, mixed text/image messa
 - accepted images are passed to Codex through its native image argument
 - accepted files are described to Codex with an absolute local cache path
 - rejected inputs remain unavailable to Codex and include a size/format reason in the injected attachment metadata
+- downloads use bounded concurrency and one batch deadline so a multi-file message cannot wait indefinitely
 - the cache is cleaned by age according to `WECOM_MEDIA_CACHE_TTL_MS`
 
 When Codex creates a file that should be returned, its final answer must contain an absolute-path Markdown link to that file. The bridge validates the link, rejects missing files, input attachments, and paths or symlinks outside `WECOM_WORKSPACE`, then uploads the accepted artifact as a temporary WeCom image or file message. For example:

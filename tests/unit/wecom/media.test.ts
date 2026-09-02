@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildWeComAgentPrompt,
   collectWeComMediaInputs,
+  promptContextFromWeComMessage,
   textFromWeComMessage,
   WeComMediaStore,
 } from '../../../src/wecom/media';
@@ -91,6 +92,58 @@ describe('WeCom media ingress', () => {
     expect(downloadFile).toHaveBeenCalledTimes(1);
   });
 
+  it('downloads multiple attachments with bounded concurrency and preserves input order', async () => {
+    const root = await mediaRoot();
+    let active = 0;
+    let maxActive = 0;
+    const downloadFile = vi.fn(async (url: string) => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      active--;
+      const suffix = Number(url.at(-1));
+      return {
+        buffer: Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.from([suffix])]),
+        filename: `${suffix}.png`,
+      };
+    });
+    const store = new WeComMediaStore({ downloadFile }, root);
+
+    const attachments = await store.resolve(
+      [1, 2, 3, 4].map((value) => ({
+        kind: 'image' as const,
+        url: `https://example.test/${value}`,
+        messageId: 'msg-concurrency',
+      })),
+      { downloadConcurrency: 2, downloadTimeoutMs: 1_000 },
+    );
+
+    expect(maxActive).toBe(2);
+    expect(attachments.map((attachment) => attachment.originalName)).toEqual([
+      '1.png',
+      '2.png',
+      '3.png',
+      '4.png',
+    ]);
+  });
+
+  it('applies one deadline to the whole attachment batch', async () => {
+    const root = await mediaRoot();
+    const downloadFile = vi.fn(() => new Promise<never>(() => {}));
+    const store = new WeComMediaStore({ downloadFile }, root);
+    const resolving = store.resolve(
+      [1, 2, 3].map((value) => ({
+        kind: 'file' as const,
+        url: `https://example.test/${value}`,
+        messageId: 'msg-timeout',
+      })),
+      { downloadConcurrency: 2, downloadTimeoutMs: 20 },
+    );
+
+    await expect(resolving).rejects.toMatchObject({ name: 'WeComMediaTimeoutError' });
+    expect(downloadFile).toHaveBeenCalledTimes(2);
+  });
+
   it('collects direct, mixed, and quoted media without duplicating URLs', () => {
     const body = {
       msgid: 'msg-3',
@@ -122,26 +175,83 @@ describe('WeCom media ingress', () => {
   });
 
   it('builds a prompt with accepted paths and an explicit output-link contract', () => {
-    const prompt = buildWeComAgentPrompt('请生成报告', [
+    const prompt = buildWeComAgentPrompt(
+      '请生成报告',
+      [
+        {
+          absPath: '/workspace/input.pdf',
+          path: '/workspace/input.pdf',
+          kind: 'file',
+          size: 42,
+          mime: 'application/pdf',
+          hash: 'hash',
+          source: 'wecom',
+          sourceMessageId: 'msg-4',
+          sourceFileKey: 'resource',
+          originalName: 'input.pdf',
+          requiredness: 'optional',
+          decision: 'accepted',
+        },
+      ],
       {
-        absPath: '/workspace/input.pdf',
-        path: '/workspace/input.pdf',
-        kind: 'file',
-        size: 42,
-        mime: 'application/pdf',
-        hash: 'hash',
-        source: 'wecom',
-        sourceMessageId: 'msg-4',
-        sourceFileKey: 'resource',
-        originalName: 'input.pdf',
-        requiredness: 'optional',
-        decision: 'accepted',
+        senderUserId: 'user-1',
+        senderName: '张三',
+        chatType: 'group',
+        chatId: 'chat-1',
       },
-    ]);
+    );
 
     expect(prompt).toContain('/workspace/input.pdf');
     expect(prompt).toContain('请生成报告');
     expect(prompt).toContain('绝对路径 Markdown 链接');
+    expect(prompt).toContain('<wecom_context>');
+    expect(prompt).toContain('"userid":"user-1"');
+    expect(prompt).toContain('"name":"张三"');
+    expect(prompt).toContain('"chattype":"group"');
+    expect(prompt).toContain('"chatid":"chat-1"');
+  });
+
+  it('extracts an optional sender name and group identity from the callback', () => {
+    const body = {
+      msgid: 'msg-group-context',
+      aibotid: 'bot-1',
+      chattype: 'group',
+      chatid: 'chat-2',
+      from: { userid: 'user-3', name: ' 李四 ' },
+      msgtype: 'text',
+      text: { content: '汇总一下' },
+    } as BaseMessage;
+
+    expect(promptContextFromWeComMessage(body)).toEqual({
+      senderUserId: 'user-3',
+      senderName: '李四',
+      chatType: 'group',
+      chatId: 'chat-2',
+    });
+  });
+
+  it('adds sender and private-chat context to every prompt without inventing a name', () => {
+    const body = {
+      msgid: 'msg-context',
+      aibotid: 'bot-1',
+      chattype: 'single',
+      from: { userid: 'user-2' },
+      msgtype: 'text',
+      text: { content: '继续上一个问题' },
+    } as BaseMessage;
+
+    const prompt = buildWeComAgentPrompt(
+      textFromWeComMessage(body),
+      [],
+      promptContextFromWeComMessage(body),
+    );
+
+    expect(prompt).toContain('<wecom_context>');
+    expect(prompt).toContain('"userid":"user-2"');
+    expect(prompt).toContain('"name":null');
+    expect(prompt).toContain('"chattype":"single"');
+    expect(prompt).toContain('"chatid":null');
+    expect(prompt).toContain('继续上一个问题');
   });
 });
 

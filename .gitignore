@@ -17,6 +17,11 @@ web/dist/
 .DS_Store
 .idea/
 .vscode/
+__pycache__/
+.codex-handoff/
+
+# Local source checkout used only as migration reference; it contains its own runtime config.
+wecom-qa-bot/
 
 # Local maintenance scripts and unreleased changelog are not part of the package
 scripts/

@@ -66,6 +66,60 @@ describe('WeCom session store', () => {
     await expect(store.load()).rejects.toThrow('damaged entry');
     expect(await readFile(file, 'utf8')).toBe(damaged);
   });
+
+  it('prunes expired sessions and retains only the most recently updated entries', async () => {
+    const file = await sessionPath();
+    await writeFile(
+      file,
+      JSON.stringify({
+        expired: { threadId: 'thread-old', updatedAt: '2026-01-01T00:00:00.000Z' },
+        recent: { threadId: 'thread-recent', updatedAt: '2026-08-30T00:00:00.000Z' },
+        newest: { threadId: 'thread-newest', updatedAt: '2026-08-31T00:00:00.000Z' },
+      }),
+    );
+    const store = new WeComSessionStore(file, {
+      maxAgeMs: 90 * 24 * 60 * 60 * 1000,
+      maxEntries: 1,
+      now: () => new Date('2026-08-31T12:00:00.000Z'),
+    });
+
+    await store.load();
+    expect(store.threadId('expired')).toBeUndefined();
+    expect(store.threadId('recent')).toBeUndefined();
+    expect(store.threadId('newest')).toBe('thread-newest');
+
+    const persisted = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    expect(Object.keys(persisted)).toEqual(['newest']);
+  });
+
+  it('supports periodic pruning after the store has loaded', async () => {
+    const file = await sessionPath();
+    let now = new Date('2026-08-31T00:00:00.000Z');
+    const store = new WeComSessionStore(file, {
+      maxAgeMs: 100,
+      maxEntries: 10,
+      now: () => now,
+    });
+    await store.load();
+    await store.setThread('single:user-a', 'thread-a');
+
+    now = new Date(now.getTime() + 101);
+    await expect(store.prune()).resolves.toBe(1);
+    expect(store.threadId('single:user-a')).toBeUndefined();
+  });
+
+  it('enforces the entry ceiling when a new conversation is persisted', async () => {
+    const file = await sessionPath();
+    let now = new Date('2026-08-31T00:00:00.000Z');
+    const store = new WeComSessionStore(file, { maxEntries: 1, now: () => now });
+    await store.load();
+    await store.setThread('single:user-a', 'thread-a');
+
+    now = new Date(now.getTime() + 1);
+    await store.setThread('single:user-b', 'thread-b');
+    expect(store.threadId('single:user-a')).toBeUndefined();
+    expect(store.threadId('single:user-b')).toBe('thread-b');
+  });
 });
 
 async function sessionPath(): Promise<string> {

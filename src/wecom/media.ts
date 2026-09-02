@@ -27,13 +27,30 @@ export interface WeComMediaInput {
   messageId: string;
 }
 
+export interface WeComPromptContext {
+  senderUserId: string;
+  senderName?: string;
+  chatType: 'single' | 'group';
+  chatId?: string;
+}
+
 export interface WeComMediaResolveOptions extends Partial<AttachmentPolicyOptions> {
   cacheMaxAgeMs?: number;
+  downloadConcurrency?: number;
+  downloadTimeoutMs?: number;
 }
 
 interface DownloadedCandidate {
   candidate: AttachmentCandidate;
   buffer: Buffer;
+}
+
+export class WeComMediaTimeoutError extends Error {
+  override readonly name = 'WeComMediaTimeoutError';
+
+  constructor(readonly timeoutMs: number) {
+    super(`WeCom attachment batch exceeded ${timeoutMs}ms download deadline`);
+  }
 }
 
 const KNOWN_FILE_EXTENSIONS = new Set([
@@ -65,11 +82,17 @@ export class WeComMediaStore {
     if (inputs.length === 0) return [];
     await mkdir(this.rootDir, { recursive: true });
 
-    const downloaded: DownloadedCandidate[] = [];
-    for (const input of inputs) {
-      const result = await downloadWithRetry(this.client, input);
-      downloaded.push(toCandidate(input, result.buffer, result.filename, this.rootDir));
-    }
+    const downloadConcurrency = positiveInt(options.downloadConcurrency, 2);
+    const downloadTimeoutMs = positiveInt(options.downloadTimeoutMs, 90_000);
+    const deadlineAt = Date.now() + downloadTimeoutMs;
+    const downloaded = await withMediaDeadline(
+      mapWithConcurrency(inputs, downloadConcurrency, async (input) => {
+        ensureBeforeDeadline(deadlineAt, downloadTimeoutMs);
+        const result = await downloadWithRetry(this.client, input, deadlineAt, downloadTimeoutMs);
+        return toCandidate(input, result.buffer, result.filename, this.rootDir);
+      }),
+      downloadTimeoutMs,
+    );
 
     const normalized = normalizeAttachments(
       downloaded.map((item) => item.candidate),
@@ -97,18 +120,64 @@ export class WeComMediaStore {
 async function downloadWithRetry(
   client: WeComDownloadClient,
   input: WeComMediaInput,
+  deadlineAt: number,
+  timeoutMs: number,
 ): Promise<{ buffer: Buffer; filename?: string }> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= 3; attempt++) {
+    ensureBeforeDeadline(deadlineAt, timeoutMs);
     try {
       return await client.downloadFile(input.url, input.aesKey);
     } catch (err: unknown) {
       lastError = err;
       if (attempt === 3 || !isRetryableDownloadError(err)) throw err;
-      await new Promise<void>((resolve) => setTimeout(resolve, attempt * 250));
+      const remainingMs = deadlineAt - Date.now();
+      if (remainingMs <= 0) throw new WeComMediaTimeoutError(timeoutMs);
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, Math.min(attempt * 250, remainingMs)),
+      );
     }
   }
   throw lastError;
+}
+
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= items.length) return;
+      results[index] = await worker(items[index]!);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+async function withMediaDeadline<T>(task: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new WeComMediaTimeoutError(timeoutMs)), timeoutMs);
+  });
+  try {
+    return await Promise.race([task, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function ensureBeforeDeadline(deadlineAt: number, timeoutMs: number): void {
+  if (Date.now() >= deadlineAt) throw new WeComMediaTimeoutError(timeoutMs);
+}
+
+function positiveInt(value: number | undefined, fallback: number): number {
+  if (!Number.isFinite(value) || (value ?? 0) <= 0) return fallback;
+  return Math.floor(value as number);
 }
 
 function isRetryableDownloadError(err: unknown): boolean {
@@ -167,9 +236,20 @@ export function textFromWeComMessage(body: BaseMessage): string {
     .join('\n');
 }
 
+export function promptContextFromWeComMessage(body: BaseMessage): WeComPromptContext {
+  const senderName = optionalString((body.from as { name?: unknown }).name);
+  return {
+    senderUserId: body.from.userid,
+    ...(senderName ? { senderName } : {}),
+    chatType: body.chattype,
+    ...(body.chatid ? { chatId: body.chatid } : {}),
+  };
+}
+
 export function buildWeComAgentPrompt(
   userText: string,
   attachments: readonly NormalizedAttachment[],
+  context: WeComPromptContext,
 ): string {
   const accepted = attachments
     .filter((attachment) => attachment.decision === 'accepted')
@@ -189,12 +269,28 @@ export function buildWeComAgentPrompt(
       reason: attachment.rejectionReason,
     }));
   const text = userText.trim() || (accepted.length > 0 ? '请查看附件。' : '请回复这条消息。');
+  const contextMetadata = safeJsonStringify({
+    sender: {
+      userid: context.senderUserId,
+      name: context.senderName ?? null,
+    },
+    conversation: {
+      chattype: context.chatType,
+      chatid: context.chatId ?? null,
+    },
+  });
+  const prefix = [
+    outputInstruction(),
+    '<wecom_context>',
+    contextMetadata,
+    '</wecom_context>',
+  ];
   if (attachments.length === 0) {
-    return `${outputInstruction()}\n\n${text}`;
+    return [...prefix, text].join('\n\n');
   }
   const metadata = safeJsonStringify({ accepted, unavailable });
   return [
-    outputInstruction(),
+    ...prefix,
     '<wecom_attachments>',
     metadata,
     '</wecom_attachments>',
@@ -335,6 +431,12 @@ function outputInstruction(): string {
     '企业微信桥接约定：附件元数据只供本地处理，不要原样复述标签。',
     '若创建了需要回传给用户的文件，请在最终回答中使用绝对路径 Markdown 链接；仅链接工作区内确实需要回传的文件。',
   ].join('\n');
+}
+
+function optionalString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
 }
 
 function isImageContent(value: unknown): value is ImageContent {

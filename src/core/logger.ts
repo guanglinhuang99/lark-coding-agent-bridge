@@ -104,7 +104,18 @@ function getStream(): WriteStream | null {
     const file = join(dir, logFileName(today));
     closeSync(openSync(file, 'a', 0o600));
     chmodSync(file, 0o600);
-    stream = createWriteStream(file, { flags: 'a', mode: 0o600 });
+    const nextStream = createWriteStream(file, { flags: 'a', mode: 0o600 });
+    nextStream.on('error', (err: Error) => {
+      // WriteStream failures arrive asynchronously, outside the try/catch in
+      // emit(). Keep file logging best-effort instead of crashing the bridge.
+      if (stream === nextStream) {
+        stream = null;
+        currentDate = '';
+      }
+      if (!nextStream.destroyed) nextStream.destroy();
+      console.error(`Structured log stream failed: ${redactDiagnosticText(err.message)}`);
+    });
+    stream = nextStream;
     currentDate = today;
     return stream;
   } catch {
@@ -667,7 +678,7 @@ export async function readRecentLogs(opts: { maxBytes: number }): Promise<string
 
 /**
  * Delete log files older than the retention window. Best-effort, called
- * on bridge startup. Returns the number of files removed.
+ * on bridge startup and by adapter maintenance loops. Returns the number removed.
  */
 export async function gcOldLogs(): Promise<number> {
   const dir = logsDir();

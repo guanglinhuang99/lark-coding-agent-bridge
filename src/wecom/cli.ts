@@ -1,7 +1,9 @@
 import { mkdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { loadEnvFile } from 'node:process';
 import { WSClient, generateReqId } from '@wecom/aibot-node-sdk';
 import type {
   BaseMessage,
@@ -40,9 +42,17 @@ import {
   readStreamMaxBytes,
   sendControlCard,
   templateCardEventDetails,
+  WeComConversationQueue,
+  WeComConversationQueueError,
+  WeComMessageDeduplicator,
+  WeComRunCapacityError,
+  WeComRunGate,
   WeComStreamReply,
+  WeComStreamUpdatePump,
   withActiveRun,
   withReservation,
+  waitForCompletion,
+  type WeComConversationSubmission,
 } from './runtime';
 import { WeComSessionStore } from './session-store';
 import {
@@ -51,18 +61,22 @@ import {
   gcOldLogs,
   log,
   redactDiagnosticText,
+  reportMetric,
 } from '../core/logger';
 import { inspectWeComHealth, WeComHealthStore, type WeComHealthPhase } from './health';
 import {
   buildWeComAgentPrompt,
   collectWeComMediaInputs,
   gcWeComMediaCache,
+  promptContextFromWeComMessage,
   textFromWeComMessage,
   WeComMediaStore,
   type WeComMediaInput,
 } from './media';
 import { sendLinkedWorkspaceArtifacts } from './egress';
 import type { NormalizedAttachment } from '../media/attachment';
+import { RiskDirectClient } from './risk/client';
+import { WeComRiskRouter } from './risk/router';
 
 type TextFrame = WsFrame<TextMessage>;
 type ImageFrame = WsFrame<ImageMessage>;
@@ -78,6 +92,9 @@ interface ActiveRunRecord {
   taskId: string;
   threadId?: string;
 }
+
+const envFile = path.resolve(process.env.WECOM_ENV_FILE?.trim() || '.env');
+if (existsSync(envFile)) loadEnvFile(envFile);
 
 const workspace = path.resolve(process.env.WECOM_WORKSPACE || process.cwd());
 const stateDir = path.resolve(
@@ -109,6 +126,32 @@ const streamFlushIntervalMs = readPositiveInt(process.env.WECOM_STREAM_FLUSH_MS,
 const requestTimeoutMs = readPositiveInt(process.env.WECOM_REQUEST_TIMEOUT_MS, 30_000);
 const heartbeatMs = readPositiveInt(process.env.WECOM_HEALTH_INTERVAL_MS, 30_000);
 const logRetentionDays = readPositiveInt(process.env.WECOM_LOG_RETENTION_DAYS, 30);
+const messageDedupeTtlMs = readPositiveInt(
+  process.env.WECOM_MESSAGE_DEDUPE_TTL_MS,
+  30 * 60 * 1000,
+);
+const messageDedupeMaxEntries = readPositiveInt(
+  process.env.WECOM_MESSAGE_DEDUPE_MAX_ENTRIES,
+  10_000,
+);
+const maxConcurrentRuns = readPositiveInt(process.env.WECOM_MAX_CONCURRENT_RUNS, 2);
+const maxQueuedRuns = readPositiveInt(process.env.WECOM_RUN_QUEUE_MAX, 4);
+const runQueueTimeoutMs = readPositiveInt(process.env.WECOM_RUN_QUEUE_TIMEOUT_MS, 5_000);
+const conversationQueueMax = readPositiveInt(process.env.WECOM_CONVERSATION_QUEUE_MAX, 5);
+const conversationQueueTimeoutMs = readPositiveInt(
+  process.env.WECOM_CONVERSATION_QUEUE_TIMEOUT_MS,
+  2 * 60 * 1000,
+);
+const shutdownTimeoutMs = readPositiveInt(process.env.WECOM_SHUTDOWN_TIMEOUT_MS, 10_000);
+const maintenanceIntervalMs = readPositiveInt(
+  process.env.WECOM_MAINTENANCE_INTERVAL_MS,
+  24 * 60 * 60 * 1000,
+);
+const sessionMaxAgeMs = readPositiveInt(
+  process.env.WECOM_SESSION_TTL_MS,
+  90 * 24 * 60 * 60 * 1000,
+);
+const sessionMaxEntries = readPositiveInt(process.env.WECOM_SESSION_MAX_ENTRIES, 2_000);
 const mediaDir = path.join(stateDir, 'media');
 const mediaCacheMaxAgeMs = readPositiveInt(
   process.env.WECOM_MEDIA_CACHE_TTL_MS,
@@ -120,21 +163,58 @@ const attachmentOptions = {
   maxFileBytes: readPositiveInt(process.env.WECOM_ATTACHMENT_MAX_FILE_BYTES, 25 * 1024 * 1024),
   imageMaxBytes: readPositiveInt(process.env.WECOM_IMAGE_MAX_BYTES, 10 * 1024 * 1024),
   cacheMaxAgeMs: mediaCacheMaxAgeMs,
+  downloadConcurrency: readPositiveInt(process.env.WECOM_MEDIA_DOWNLOAD_CONCURRENCY, 2),
+  downloadTimeoutMs: readPositiveInt(process.env.WECOM_MEDIA_DOWNLOAD_TIMEOUT_MS, 90_000),
 };
 const artifactOptions = {
   maxCount: readPositiveInt(process.env.WECOM_OUTPUT_MAX_COUNT, 5),
   maxFileBytes: readPositiveInt(process.env.WECOM_OUTPUT_MAX_FILE_BYTES, 25 * 1024 * 1024),
   maxTotalBytes: readPositiveInt(process.env.WECOM_OUTPUT_MAX_BYTES, 50 * 1024 * 1024),
 };
+const riskServiceDir = path.resolve(
+  process.env.WECOM_RISK_SERVICE_DIR?.trim() || path.join(process.cwd(), 'risk-service'),
+);
+const riskBridgePath = path.resolve(
+  process.env.WECOM_RISK_BRIDGE_PATH?.trim() ||
+    path.join(process.cwd(), 'src/wecom/risk/direct_bridge.py'),
+);
+const riskPython =
+  process.env.WECOM_RISK_PYTHON?.trim() ||
+  '/Users/guanglin/Documents/trae_projects/icube/bin/python';
+const riskTimeoutMs = readPositiveInt(process.env.WECOM_RISK_TIMEOUT_MS, 180_000);
+const riskDirectWorkers = readPositiveInt(process.env.WECOM_RISK_DIRECT_WORKERS, 4);
+const riskProductCacheTtlMs = readPositiveInt(
+  process.env.WECOM_RISK_PRODUCT_CACHE_TTL_MS,
+  60 * 60_000,
+);
+const riskAllowedUserIds = new Set(
+  (process.env.WECOM_RISK_ALLOWED_USERIDS ?? '')
+    .replaceAll('，', ',')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean),
+);
 
 await mkdir(stateDir, { recursive: true });
 configureLogger({ logsDir: path.join(stateDir, 'logs'), retentionDays: logRetentionDays });
 await gcOldLogs();
 await gcWeComMediaCache(mediaDir, mediaCacheMaxAgeMs);
-const sessionStore = new WeComSessionStore(sessionFile);
+const sessionStore = new WeComSessionStore(sessionFile, {
+  maxAgeMs: sessionMaxAgeMs,
+  maxEntries: sessionMaxEntries,
+});
 await sessionStore.load();
 const activeRuns = new Map<string, ActiveRunRecord>();
 const startingRuns = new Set<string>();
+const messageDeduplicator = new WeComMessageDeduplicator(
+  messageDedupeTtlMs,
+  messageDedupeMaxEntries,
+);
+const conversationQueue = new WeComConversationQueue(
+  conversationQueueMax,
+  conversationQueueTimeoutMs,
+);
+const runGate = new WeComRunGate(maxConcurrentRuns, maxQueuedRuns, runQueueTimeoutMs);
 const healthStore = new WeComHealthStore(healthFile);
 let healthPhase: WeComHealthPhase = 'starting';
 let connected = false;
@@ -150,6 +230,36 @@ const codex = new CodexAdapter({
   ignoreRules: false,
   sandbox,
 });
+const riskDirectEnabled =
+  existsSync(riskServiceDir) && existsSync(riskBridgePath) && existsSync(riskPython);
+const riskClient = riskDirectEnabled
+  ? new RiskDirectClient({
+      pythonPath: riskPython,
+      serviceDir: riskServiceDir,
+      stateDir: path.join(stateDir, 'risk-service'),
+      bridgePath: riskBridgePath,
+      timeoutMs: riskTimeoutMs,
+      workers: riskDirectWorkers,
+      onStage: ({ stage, durationMs, outcome }) => {
+        reportMetric('wecom_risk_stage_ms', durationMs, { stage, outcome });
+        log.info('wecom-risk-stage', 'completed', { stage, durationMs, outcome });
+      },
+      onDiagnostic: (line) => {
+        log.warn('wecom-risk-direct', 'python', {
+          message: redactDiagnosticText(line),
+        });
+      },
+    })
+  : undefined;
+const riskRouter = riskClient
+  ? new WeComRiskRouter(riskClient, { productCacheTtlMs: riskProductCacheTtlMs })
+  : undefined;
+
+if (!riskDirectEnabled) {
+  console.warn(
+    `WeCom risk fast path disabled: check local paths (${riskServiceDir}, ${riskBridgePath}, ${riskPython}).`,
+  );
+}
 
 await codex.prepareRun();
 
@@ -222,13 +332,25 @@ const heartbeat = setInterval(() => {
 }, heartbeatMs);
 heartbeat.unref();
 
+const maintenance = setInterval(() => {
+  void runMaintenance();
+}, maintenanceIntervalMs);
+maintenance.unref();
+
 process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
 function handleMessageEvent<T extends BaseMessage>(frame: WsFrame<T>): void {
+  const messageId = frame.body?.msgid;
+  if (messageId && !messageDeduplicator.claim(messageId)) {
+    log.info('wecom-message', 'duplicate', { messageId });
+    reportMetric('wecom_duplicate_message', 1);
+    return;
+  }
   void handleMessage(frame).catch(async (err: unknown) => {
     const message = redactDiagnosticText(err instanceof Error ? err.message : String(err));
     log.fail('wecom-message', err);
+    reportMetric('wecom_message_failures', 1, { kind: failureKind(err) });
     console.error(`Message handling failed: ${message}`);
     await replyOnce(frame, '⚠️ 处理失败', [`${message}`]).catch(() => {});
   });
@@ -257,6 +379,7 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
       );
       return;
     }
+    riskRouter?.clear(key);
     await sessionStore.clear(key);
     await replyControl(
       frame,
@@ -277,7 +400,7 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
   if (command === '/stop') {
     const active = activeRuns.get(key);
     if (!active) {
-      const starting = startingRuns.has(key);
+      const starting = startingRuns.has(key) || conversationQueue.has(key);
       await replyControl(
         frame,
         key,
@@ -303,26 +426,172 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
     return;
   }
 
-  if (isConversationBusy(key)) {
+  const riskCandidate = riskRouter?.shouldHandle(key, text, mediaInputs.length > 0) ?? false;
+  const riskAccessDenied = riskCandidate && !isRiskUserAllowed(body.from?.userid);
+  const useRiskFastPath = riskCandidate && !riskAccessDenied;
+  const stream = new WeComStreamReply(client, frame, generateReqId('stream'));
+  let markStreamReady!: () => void;
+  let markStreamFailed!: (err: unknown) => void;
+  const streamReady = new Promise<void>((resolve, reject) => {
+    markStreamReady = resolve;
+    markStreamFailed = reject;
+  });
+  let submission: WeComConversationSubmission;
+  try {
+    submission = conversationQueue.submit(key, async () => {
+      await streamReady;
+      await executeConversationMessage(
+        frame,
+        key,
+        text,
+        mediaInputs,
+        stream,
+        useRiskFastPath,
+        riskAccessDenied,
+      );
+    });
+  } catch (err) {
+    if (!(err instanceof WeComConversationQueueError)) throw err;
+    reportMetric('wecom_conversation_queue_rejected', 1, { reason: err.reason });
     await replyControl(
       frame,
       key,
-      '⏳ 上一条任务仍在运行',
-      ['发送 `/stop` 停止，或等待完成后再发送。'],
-      'running',
-      '同一会话一次只运行一个任务',
+      '⚠️ 当前会话排队较多',
+      ['本条消息没有入队，请稍后重新发送。'],
+      'error',
+      conversationQueueNotice(err.reason),
     );
     return;
   }
 
+  const initialNotice = submission.queued
+    ? renderWeComNotice('🕒 已加入会话队列', [
+        `当前排队位置：${submission.position}`,
+        `最长等待：${Math.ceil(conversationQueueTimeoutMs / 1000)} 秒`,
+        '前一项完成后会自动开始，无需重新发送。',
+      ])
+    : renderWeComNotice('⏳ 已收到消息', [
+        riskAccessDenied
+          ? '正在检查风险查询权限。'
+          : useRiskFastPath
+            ? '正在准备风险限额查询。'
+            : '正在准备 Codex 任务。',
+      ]);
   try {
-    await withReservation(startingRuns, key, async () => {
-      await refreshHealth();
-      const attachments = await resolveAttachments(mediaInputs);
-      const prompt = buildWeComAgentPrompt(text, attachments);
-      const displayPrompt = text || attachmentSummary(attachments);
-      await runCodexPrompt(frame, key, prompt, displayPrompt, attachments);
+    await stream.start(truncateUtf8(initialNotice, streamMaxBytes));
+    markStreamReady();
+  } catch (err) {
+    if (!submission.cancel(err)) markStreamFailed(err);
+    await submission.completion.catch(() => {});
+    throw err;
+  }
+
+  if (submission.queued) {
+    log.info('wecom-conversation-queue', 'queued', {
+      conversationType: key.startsWith('group:') ? 'group' : 'single',
+      position: submission.position,
+      queued: conversationQueue.queued(key),
     });
+    reportMetric('wecom_conversation_queued', 1);
+  }
+
+  try {
+    await submission.completion;
+  } catch (err) {
+    if (!(err instanceof WeComConversationQueueError)) {
+      const message = redactDiagnosticText(err instanceof Error ? err.message : String(err));
+      log.fail('wecom-message', err, { step: 'queued-execution' });
+      reportMetric('wecom_message_failures', 1, { kind: failureKind(err) });
+      console.error(`Message handling failed: ${message}`);
+      await stream.finish(
+        truncateUtf8(renderWeComNotice('⚠️ 处理失败', [message]), streamMaxBytes),
+      ).catch(() => {});
+      return;
+    }
+    reportMetric('wecom_conversation_queue_rejected', 1, { reason: err.reason });
+    await stream.finish(
+      truncateUtf8(
+        renderWeComNotice('⚠️ 排队任务未执行', [conversationQueueNotice(err.reason)]),
+        streamMaxBytes,
+      ),
+    ).catch(() => {});
+  }
+}
+
+async function executeConversationMessage(
+  frame: WsFrame,
+  key: string,
+  text: string,
+  mediaInputs: readonly WeComMediaInput[],
+  stream: WeComStreamReply,
+  useRiskFastPath: boolean,
+  riskAccessDenied: boolean,
+): Promise<void> {
+  const submittedAt = Date.now();
+  try {
+    await withReservation(startingRuns, key, async () =>
+      runGate.run(async () => {
+        const queueWaitMs = Date.now() - submittedAt;
+        reportMetric('wecom_queue_wait_ms', queueWaitMs);
+        log.info('wecom-run', 'admitted', { queueWaitMs });
+        await refreshHealth();
+        const body = frame.body as BaseMessage | undefined;
+        if (!body) return;
+        if (riskAccessDenied) {
+          reportMetric('wecom_risk_access_denied', 1);
+          await stream.finish('未授权用户，无法使用风险限额查询。');
+          return;
+        }
+        if (useRiskFastPath && riskRouter) {
+          const startedAt = Date.now();
+          const result = await riskRouter.handle(key, text, (progress) => {
+            void stream
+              .update(
+                truncateUtf8(renderWeComNotice('⏳ 风险限额查询中', [progress]), streamMaxBytes),
+              )
+              .catch(() => {});
+          });
+          if (result.handled) {
+            reportMetric('wecom_risk_fastpath_total', 1, { intent: result.intent });
+            reportMetric('wecom_risk_fastpath_ms', Date.now() - startedAt, {
+              intent: result.intent,
+            });
+            log.info('wecom-risk', 'completed', {
+              intent: result.intent,
+              durationMs: Date.now() - startedAt,
+            });
+            await stream.finish(truncateUtf8(result.markdown, streamMaxBytes));
+            return;
+          }
+        }
+        const attachments = await resolveAttachments(mediaInputs);
+        const prompt = buildWeComAgentPrompt(
+          text,
+          attachments,
+          promptContextFromWeComMessage(body),
+        );
+        const displayPrompt = text || attachmentSummary(attachments);
+        await runCodexPrompt(frame, key, prompt, displayPrompt, attachments, stream);
+      }),
+    );
+  } catch (err) {
+    if (!(err instanceof WeComRunCapacityError)) throw err;
+    const capacity = runGate.snapshot();
+    log.warn('wecom-run', 'capacity', {
+      reason: err.reason,
+      active: capacity.active,
+      queued: capacity.queued,
+    });
+    reportMetric('wecom_run_rejected', 1, { reason: err.reason });
+    await stream.finish(
+      truncateUtf8(
+        renderWeComNotice('⚠️ 当前任务较多', [
+          '本条消息尚未启动 Codex，请稍后重新发送。',
+          capacityNotice(err.reason),
+        ]),
+        streamMaxBytes,
+      ),
+    );
   } finally {
     await refreshHealth();
   }
@@ -334,16 +603,18 @@ async function runCodexPrompt(
   prompt: string,
   displayPrompt: string,
   attachments: readonly NormalizedAttachment[],
+  stream: WeComStreamReply,
 ): Promise<void> {
-  const streamId = generateReqId('stream');
-  const stream = new WeComStreamReply(client, frame, streamId);
+  const requestStartedAt = Date.now();
+  const streamUpdates = new WeComStreamUpdatePump(stream);
   const taskId = createTaskId();
   let threadId = sessionStore.threadId(key);
   let state = freshRunState();
   let lastSent = renderStream(state, threadId);
   let lastFlushAt = Date.now();
+  let firstOutputReported = false;
 
-  await stream.start(lastSent);
+  await stream.update(lastSent);
   await deliverControlCard(
     frame,
     buildWeComControlCard({
@@ -377,6 +648,9 @@ async function runCodexPrompt(
       terminationReason: 'failed',
     });
     await stream.finish(renderStream(state, threadId)).catch(() => {});
+    log.fail('wecom-run', err, { step: 'start', kind: failureKind(err) });
+    reportMetric('wecom_run_failures', 1, { kind: failureKind(err), step: 'start' });
+    reportMetric('wecom_run_e2e_ms', Date.now() - requestStartedAt, { terminal: 'failed-start' });
     console.error(`Failed to start Codex run: ${message}`);
     return;
   }
@@ -394,6 +668,31 @@ async function runCodexPrompt(
       for await (const event of run.events) {
         if (event.type === 'system' && event.threadId) threadId = event.threadId;
         if (event.type === 'done' && event.threadId) threadId = event.threadId;
+        if (event.type === 'usage') {
+          if (event.inputTokens !== undefined) reportMetric('tokens_in', event.inputTokens);
+          if (event.outputTokens !== undefined) reportMetric('tokens_out', event.outputTokens);
+          if (event.cachedInputTokens !== undefined) {
+            reportMetric('tokens_cached_in', event.cachedInputTokens);
+          }
+          log.info('agent', 'usage', {
+            ...(event.inputTokens !== undefined ? { inputTokens: event.inputTokens } : {}),
+            ...(event.outputTokens !== undefined ? { outputTokens: event.outputTokens } : {}),
+            ...(event.cachedInputTokens !== undefined
+              ? { cachedInputTokens: event.cachedInputTokens }
+              : {}),
+          });
+          continue;
+        }
+        if (
+          !firstOutputReported &&
+          ((event.type === 'text' && Boolean(event.delta)) ||
+            (event.type === 'final_text' && Boolean(event.content)))
+        ) {
+          firstOutputReported = true;
+          const ttftMs = Date.now() - requestStartedAt;
+          log.info('wecom-run', 'first-output', { ttftMs });
+          reportMetric('wecom_run_ttft_ms', ttftMs);
+        }
 
         state = reduce(state, event);
         active.state = state;
@@ -405,7 +704,7 @@ async function runCodexPrompt(
         if (rendered !== lastSent && (terminal || now - lastFlushAt >= streamFlushIntervalMs)) {
           lastSent = rendered;
           lastFlushAt = now;
-          await stream.update(rendered);
+          streamUpdates.update(rendered);
         }
       }
 
@@ -415,7 +714,7 @@ async function runCodexPrompt(
       await persistThread(key, threadId);
 
       const finalText = renderStream(state, threadId);
-      await stream.finish(finalText);
+      await streamUpdates.finish(finalText);
       if (state.terminal === 'done') {
         await sendGeneratedArtifacts(frame, state, attachments);
       }
@@ -435,9 +734,21 @@ async function runCodexPrompt(
           `Failed to persist WeCom thread: ${persistErr instanceof Error ? persistErr.message : String(persistErr)}`,
         );
       });
-      await stream.finish(renderStream(state, threadId)).catch(() => {});
+      await streamUpdates.finish(renderStream(state, threadId)).catch(() => {});
+      log.fail('wecom-run', err, { step: 'run', kind: failureKind(err) });
+      reportMetric('wecom_run_failures', 1, { kind: failureKind(err), step: 'run' });
       console.error(`Codex run failed: ${message}`);
     }
+  });
+  const streamStats = streamUpdates.snapshot();
+  reportMetric('wecom_stream_updates_sent', streamStats.sent);
+  reportMetric('wecom_stream_updates_coalesced', streamStats.coalesced);
+  reportMetric('wecom_stream_update_failures', streamStats.failures);
+  reportMetric('wecom_run_e2e_ms', Date.now() - requestStartedAt, { terminal: state.terminal });
+  log.info('wecom-run', 'completed', {
+    terminal: state.terminal,
+    durationMs: Date.now() - requestStartedAt,
+    ...streamStats,
   });
   await refreshHealth();
 }
@@ -473,7 +784,7 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
   }
 
   const active = activeRuns.get(key);
-  const starting = startingRuns.has(key);
+  const starting = startingRuns.has(key) || conversationQueue.has(key);
 
   if (action === 'stop') {
     await client.updateTemplateCard(
@@ -575,6 +886,7 @@ async function replyStatus(frame: WsFrame, key: string): Promise<void> {
       `权限：\`${sandbox}\``,
       `会话：\`${threadId ?? 'new'}\``,
       `模型：\`${model ?? 'Codex default'}\``,
+      `排队：\`${conversationQueue.queued(key)}\``,
     ],
     busy ? 'running' : 'idle',
     active ? 'Codex 正在运行' : busy ? 'Codex 正在启动' : '当前为空闲状态',
@@ -630,7 +942,29 @@ async function resolveAttachments(
   inputs: readonly WeComMediaInput[],
 ): Promise<NormalizedAttachment[]> {
   if (inputs.length === 0) return [];
-  const attachments = await mediaStore.resolve(inputs, attachmentOptions);
+  const startedAt = Date.now();
+  let attachments: NormalizedAttachment[];
+  try {
+    attachments = await mediaStore.resolve(inputs, attachmentOptions);
+  } catch (err) {
+    log.fail('wecom-media-resolve', err, {
+      durationMs: Date.now() - startedAt,
+      kind: failureKind(err),
+    });
+    reportMetric('wecom_media_resolve_failures', 1, { kind: failureKind(err) });
+    reportMetric('wecom_media_resolve_ms', Date.now() - startedAt, { result: 'failed' });
+    throw err;
+  }
+  const acceptedCount = attachments.filter(
+    (attachment) => attachment.decision === 'accepted',
+  ).length;
+  log.info('wecom-media', 'resolved', {
+    durationMs: Date.now() - startedAt,
+    accepted: acceptedCount,
+    rejected: attachments.length - acceptedCount,
+  });
+  reportMetric('wecom_media_resolve_ms', Date.now() - startedAt, { result: 'ok' });
+  reportMetric('wecom_media_accepted', acceptedCount);
   for (const attachment of attachments) {
     log.info('wecom-media', 'attachment', {
       decision: attachment.decision,
@@ -675,13 +1009,17 @@ async function sendGeneratedArtifacts(
           .map((attachment) => attachment.absPath),
       },
     );
+    const bytes = result.sent.reduce((sum, item) => sum + item.size, 0);
     log.info('wecom-media', 'egress', {
       sent: result.sent.length,
       skipped: result.skipped.map((item) => item.reason),
-      bytes: result.sent.reduce((sum, item) => sum + item.size, 0),
+      bytes,
     });
+    reportMetric('wecom_egress_bytes', bytes);
+    reportMetric('wecom_egress_files', result.sent.length);
   } catch (err) {
     log.fail('wecom-media-egress', err);
+    reportMetric('wecom_egress_failures', 1, { kind: failureKind(err) });
     await client.sendMessage(messageTarget(body), {
       msgtype: 'markdown',
       markdown: { content: '⚠️ 生成文件回传失败，请查看本机 bridge 日志。' },
@@ -738,8 +1076,44 @@ function readPositiveInt(value: string | undefined, fallback: number): number {
   return Math.floor(parsed);
 }
 
+function isRiskUserAllowed(userid: string | undefined): boolean {
+  return riskAllowedUserIds.size === 0 || (Boolean(userid) && riskAllowedUserIds.has(userid ?? ''));
+}
+
+function capacityNotice(reason: WeComRunCapacityError['reason']): string {
+  if (reason === 'queue-full') return '任务队列已满';
+  if (reason === 'queue-timeout') return '排队等待超时';
+  return '服务正在停止';
+}
+
+function conversationQueueNotice(reason: WeComConversationQueueError['reason']): string {
+  if (reason === 'queue-full') return '当前会话队列已满';
+  if (reason === 'queue-timeout') return '等待时间过长，消息已从队列移除，请重新发送';
+  return '服务正在停止';
+}
+
+function failureKind(err: unknown): string {
+  const item =
+    err && typeof err === 'object'
+      ? (err as { name?: unknown; code?: unknown; response?: { status?: unknown } })
+      : {};
+  if (item.name === 'WeComMediaTimeoutError') return 'timeout';
+  const status = item.response?.status;
+  if (typeof status === 'number') {
+    if (status === 429) return 'rate-limit';
+    if (status >= 500) return 'http-5xx';
+    if (status >= 400) return 'http-4xx';
+  }
+  const code = typeof item.code === 'string' ? item.code.toUpperCase() : '';
+  if (code === 'ETIMEDOUT' || code === 'ECONNABORTED') return 'timeout';
+  if (code.startsWith('ECONN') || code.startsWith('ENET') || code === 'EHOSTUNREACH') {
+    return 'network';
+  }
+  return 'other';
+}
+
 function isConversationBusy(key: string): boolean {
-  return startingRuns.has(key) || activeRuns.has(key);
+  return conversationQueue.has(key) || startingRuns.has(key) || activeRuns.has(key);
 }
 
 async function refreshHealth(): Promise<void> {
@@ -755,24 +1129,69 @@ async function refreshHealth(): Promise<void> {
   });
 }
 
+let maintenanceRunning = false;
+
+async function runMaintenance(): Promise<void> {
+  if (maintenanceRunning) return;
+  maintenanceRunning = true;
+  try {
+    const logsRemoved = await gcOldLogs();
+    const mediaRemoved = await gcWeComMediaCache(mediaDir, mediaCacheMaxAgeMs);
+    const sessionsRemoved = await sessionStore.prune();
+    reportMetric('wecom_maintenance_removed', logsRemoved, { kind: 'logs' });
+    reportMetric('wecom_maintenance_removed', mediaRemoved, { kind: 'media' });
+    reportMetric('wecom_maintenance_removed', sessionsRemoved, { kind: 'sessions' });
+    log.info('wecom-maintenance', 'completed', {
+      logsRemoved,
+      mediaRemoved,
+      sessionsRemoved,
+    });
+  } catch (err) {
+    log.fail('wecom-maintenance', err);
+    reportMetric('wecom_maintenance_failures', 1, { kind: failureKind(err) });
+  } finally {
+    maintenanceRunning = false;
+  }
+}
+
 let shuttingDown = false;
 
 async function shutdown(signal: 'SIGINT' | 'SIGTERM'): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
+  conversationQueue.close();
+  runGate.close();
   clearInterval(heartbeat);
+  clearInterval(maintenance);
   connected = false;
   healthPhase = 'stopping';
-  await refreshHealth();
-  const runs = [...activeRuns.values()];
-  await Promise.allSettled(runs.map((active) => active.run.stop()));
-  await sessionStore.flush().catch((err: unknown) => {
-    console.error(
-      `Failed to flush WeCom sessions during ${signal}: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  });
-  client.disconnect();
-  await healthStore.flush().catch(() => {});
-  await closeLogger();
+  const cleanup = (async () => {
+    await refreshHealth();
+    try {
+      client.disconnect();
+    } catch (err) {
+      console.error(
+        `Failed to disconnect WeCom during ${signal}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    const runs = [...activeRuns.values()];
+    await Promise.allSettled(runs.map((active) => active.run.stop()));
+    await riskClient?.close().catch((err: unknown) => {
+      console.error(
+        `Failed to stop local risk-service process: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+    await sessionStore.flush().catch((err: unknown) => {
+      console.error(
+        `Failed to flush WeCom sessions during ${signal}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+    await healthStore.flush().catch(() => {});
+    await closeLogger();
+  })();
+  const completed = await waitForCompletion(cleanup, shutdownTimeoutMs);
+  if (!completed) {
+    console.error(`WeCom shutdown exceeded ${shutdownTimeoutMs}ms; forcing process exit.`);
+  }
   process.exit(0);
 }

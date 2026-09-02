@@ -8,11 +8,27 @@ export interface WeComSessionRecord {
 
 type WeComSessionMap = Record<string, WeComSessionRecord>;
 
+export interface WeComSessionStoreOptions {
+  maxAgeMs?: number;
+  maxEntries?: number;
+  now?: () => Date;
+}
+
 export class WeComSessionStore {
   private data: WeComSessionMap = {};
   private saving: Promise<void> = Promise.resolve();
+  private readonly maxAgeMs: number;
+  private readonly maxEntries: number;
+  private readonly now: () => Date;
 
-  constructor(private readonly file: string) {}
+  constructor(
+    private readonly file: string,
+    options: WeComSessionStoreOptions = {},
+  ) {
+    this.maxAgeMs = positiveInt(options.maxAgeMs, 90 * 24 * 60 * 60 * 1000);
+    this.maxEntries = positiveInt(options.maxEntries, 2_000);
+    this.now = options.now ?? (() => new Date());
+  }
 
   async load(): Promise<void> {
     let raw: string;
@@ -36,6 +52,7 @@ export class WeComSessionStore {
       );
     }
     this.data = validateSessions(parsed, this.file);
+    if (this.pruneInMemory() > 0) await this.persist();
   }
 
   threadId(key: string): string | undefined {
@@ -43,7 +60,8 @@ export class WeComSessionStore {
   }
 
   async setThread(key: string, threadId: string): Promise<void> {
-    this.data[key] = { threadId, updatedAt: new Date().toISOString() };
+    this.data[key] = { threadId, updatedAt: this.now().toISOString() };
+    if (Object.keys(this.data).length > this.maxEntries) this.pruneInMemory();
     await this.persist();
   }
 
@@ -57,12 +75,37 @@ export class WeComSessionStore {
     await this.saving;
   }
 
+  async prune(): Promise<number> {
+    const removed = this.pruneInMemory();
+    if (removed > 0) await this.persist();
+    return removed;
+  }
+
   private persist(): Promise<void> {
     const payload = `${JSON.stringify(this.data, null, 2)}\n`;
     const next = this.saving.then(() => writeFileAtomic(this.file, payload, { mode: 0o600 }));
     // Keep later writes usable after a caller has observed a failed write.
     this.saving = next.catch(() => {});
     return next;
+  }
+
+  private pruneInMemory(): number {
+    const cutoff = this.now().getTime() - this.maxAgeMs;
+    let removed = 0;
+    for (const [key, record] of Object.entries(this.data)) {
+      if (Date.parse(record.updatedAt) >= cutoff) continue;
+      delete this.data[key];
+      removed++;
+    }
+
+    const newestFirst = Object.entries(this.data).sort(
+      ([, left], [, right]) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+    );
+    for (const [key] of newestFirst.slice(this.maxEntries)) {
+      delete this.data[key];
+      removed++;
+    }
+    return removed;
   }
 }
 
@@ -100,4 +143,9 @@ function damagedEntry(file: string, key: string): Error {
 
 function isNodeError(err: unknown): err is NodeJS.ErrnoException {
   return err instanceof Error;
+}
+
+function positiveInt(value: number | undefined, fallback: number): number {
+  if (!Number.isFinite(value) || (value ?? 0) <= 0) return fallback;
+  return Math.floor(value as number);
 }
