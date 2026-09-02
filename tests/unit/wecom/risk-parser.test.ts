@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   extractAmount,
   isRiskCandidate,
+  matchProducts,
   parseRiskMessage,
 } from '../../../src/wecom/risk/parser';
 
@@ -67,5 +68,44 @@ describe('WeCom risk parser', () => {
     expect(isRiskCandidate('安联ESG纯债1号 申购 0.1')).toBe(true);
     expect(extractAmount('安联ESG纯债1号 买 019115.SH')).toBeUndefined();
     expect(extractAmount('安联ESG纯债1号 买 5 年期国债')).toBeUndefined();
+  });
+
+  it('matches product names without Allianz prefixes, spaces, case, or numeral style', () => {
+    expect(matchProducts('安联资管 esg 纯债一号', products)).toEqual([
+      '安联ESG纯债1号资产管理产品',
+    ]);
+    expect(matchProducts('安联 esg 纯债 1 号', products)).toEqual([
+      '安联ESG纯债1号资产管理产品',
+    ]);
+    expect(matchProducts('纯债一号', products)).toEqual([
+      '安联ESG纯债1号资产管理产品',
+      '安联纯债1号资产管理产品',
+    ]);
+    expect(
+      matchProducts('安联资管远见十号', ['安联远见10号资产管理产品']),
+    ).toEqual(['安联远见10号资产管理产品']);
+  });
+
+  it('strips a normalized product name before extracting the traded security', () => {
+    expect(parseRiskMessage('安联 ESG 纯债 1 号，买 0.1 国债0115', products)).toMatchObject({
+      kind: 'pretrade_calc',
+      product: '安联ESG纯债1号资产管理产品',
+      action: 'buy',
+      amount: 0.1,
+      securityQuery: '国债0115',
+      missing: [],
+    });
+  });
+
+  it('uses conservative fuzzy matching only when deterministic matching finds nothing', () => {
+    expect(matchProducts('安联 ESG 纯在 1 号', products)).toEqual([
+      '安联ESG纯债1号资产管理产品',
+    ]);
+    expect(parseRiskMessage('安联 ESG 纯在 1 号 申购 0.1', products)).toMatchObject({
+      kind: 'pretrade_calc',
+      product: undefined,
+      productCandidates: ['安联ESG纯债1号资产管理产品'],
+    });
+    expect(matchProducts('完全不同的产品', products)).toEqual([]);
   });
 });

@@ -147,11 +147,32 @@ Examples:
 ```
 
 An amount without a unit defaults to 亿元 and the reply explicitly echoes that assumption.
-Ambiguous products or securities stay on the same zero-token path and ask the user to select a
-number. Exact security codes are selected automatically. Expired selections receive a local retry
-prompt rather than falling through to Codex. A risk-looking request with missing parameters asks a
-deterministic follow-up instead of starting Codex. Messages with attachments and unrelated
-questions continue through Codex.
+Product matching ignores an optional `安联` or `安联资管` prefix, spaces, punctuation, letter
+case, and Chinese-versus-Arabic numeral style. If deterministic matching finds nothing, a
+Levenshtein similarity fallback at `0.70` returns qualifying products for explicit confirmation;
+even a single fuzzy result is never selected automatically.
+Ambiguous products or securities stay on the same zero-token path. The adapter first sends the
+complete text list and then, after a short rendering delay, sends a WeCom option card: one candidate
+uses a confirmation button, two to six use direct buttons, and seven to ten use a dropdown plus a
+confirmation button. Product and security ambiguity are resolved as two sequential cards. Text
+letter/number replies remain available, while more than ten security candidates require a more
+precise name or code. Exact security codes are selected automatically. Card task IDs are scoped to
+one conversation, expire with the pending selection, and are consumed once. Expired selections
+receive a local retry prompt rather than falling through to Codex. A risk-looking request with
+missing parameters asks a deterministic follow-up instead of starting Codex. Messages with
+attachments and unrelated questions continue through Codex.
+
+Every accepted text message gets an immediate standalone acknowledgement that echoes the user's
+input before queueing or calculation starts. A template-card choice receives the same treatment
+with the resolved candidate label, while the original card is updated to a non-interactive
+received state. Later progress and final results are sent separately, matching the interaction
+timing used by `wecom-qa-bot`.
+
+Risk progress is forwarded in order and deduplicated. Short queries announce their operation (for
+example, holdings, investment restrictions, credit, or security checks), while pre-trade runs also
+forward the detailed local `risk-service` stages for holdings/rules, security resolution, limit
+calculation, restricted/related-party checks, and credit checks. Text requests update their live
+stream; card-triggered runs receive proactive progress messages.
 
 Risk conclusions distinguish a new breach from an existing breach, warning, or unavailable check.
 Only an explicit `hit: false` is formatted as a negative restricted-security or related-party

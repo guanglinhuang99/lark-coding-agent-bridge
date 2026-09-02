@@ -12,6 +12,7 @@ export type WeComCardAction = 'stop' | 'new' | 'status' | 'unknown';
 export interface WeComTemplateCardEventDetails {
   eventKey?: string;
   taskId?: string;
+  selectedId?: string;
 }
 
 export interface WeComStreamClient {
@@ -476,9 +477,16 @@ export function templateCardEventDetails(event: unknown): WeComTemplateCardEvent
       : undefined;
   const eventKey = stringValue(nested?.event_key) ?? stringValue(root.event_key);
   const taskId = stringValue(nested?.task_id) ?? stringValue(root.task_id);
+  const selectedId = firstSelectedOptionId(
+    nested?.selected_items ??
+      nested?.selected_item ??
+      root.selected_items ??
+      root.selected_item,
+  );
   return {
     ...(eventKey ? { eventKey } : {}),
     ...(taskId ? { taskId } : {}),
+    ...(selectedId ? { selectedId } : {}),
   };
 }
 
@@ -493,6 +501,26 @@ export function normalizeIncomingText(
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value ? value : undefined;
+}
+
+function firstSelectedOptionId(value: unknown, depth = 0): string | undefined {
+  if (depth > 8) return undefined;
+  const direct = stringValue(value);
+  if (direct) return direct;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const selected = firstSelectedOptionId(item, depth + 1);
+      if (selected) return selected;
+    }
+    return undefined;
+  }
+  if (!value || typeof value !== 'object') return undefined;
+  const record = value as Record<string, unknown>;
+  for (const key of ['option_id', 'option_ids', 'selected_item']) {
+    const selected = firstSelectedOptionId(record[key], depth + 1);
+    if (selected) return selected;
+  }
+  return undefined;
 }
 
 export function readSandbox(value: string | undefined): CodexSandboxMode {

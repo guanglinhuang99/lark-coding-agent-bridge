@@ -8,6 +8,7 @@ import {
 } from '../../../src/card/run-state';
 import {
   buildWeComControlCard,
+  renderWeComAcknowledgement,
   renderWeComMarkdown,
   truncateUtf8,
 } from '../../../src/wecom/presentation';
@@ -19,6 +20,15 @@ const meta = {
 };
 
 describe('WeCom rich presentation', () => {
+  it('immediately echoes typed text or a selected candidate', () => {
+    expect(renderWeComAcknowledgement('input', '  安联 ESG\n纯债 1 号  ')).toBe(
+      '收到，您输入了「安联 ESG 纯债 1 号」。',
+    );
+    expect(renderWeComAcknowledgement('selection', '安联ESG纯债1号资产管理产品')).toBe(
+      '收到，您选择了「安联ESG纯债1号资产管理产品」。',
+    );
+  });
+
   it('preserves headings, lists, quotes, links, bold, inline code, and code fences', () => {
     const source = [
       '# 标题',

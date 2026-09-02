@@ -57,12 +57,26 @@ describe('WeCom runtime contracts', () => {
   it('reads the live nested template-card event shape with a flat SDK fallback', () => {
     expect(
       templateCardEventDetails({
-        template_card_event: { event_key: 'status', task_id: 'task-live' },
+        template_card_event: {
+          event_key: 'submit',
+          task_id: 'task-live',
+          selected_items: {
+            selected_item: [{ option_ids: { option_id: ['7'] } }],
+          },
+        },
       }),
-    ).toEqual({ eventKey: 'status', taskId: 'task-live' });
+    ).toEqual({ eventKey: 'submit', taskId: 'task-live', selectedId: '7' });
     expect(
-      templateCardEventDetails({ event_key: 'stop', task_id: 'task-sdk' }),
-    ).toEqual({ eventKey: 'stop', taskId: 'task-sdk' });
+      templateCardEventDetails({
+        event_key: 'submit',
+        task_id: 'task-sdk',
+        selected_item: [{ option_id: '3' }],
+      }),
+    ).toEqual({ eventKey: 'submit', taskId: 'task-sdk', selectedId: '3' });
+    expect(templateCardEventDetails({ event_key: 'stop', task_id: 'task-button' })).toEqual({
+      eventKey: 'stop',
+      taskId: 'task-button',
+    });
     expect(templateCardEventDetails(undefined)).toEqual({});
   });
 

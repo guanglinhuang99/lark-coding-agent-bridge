@@ -49,6 +49,12 @@ describe('WeCom risk fast-path router', () => {
 
     const first = await router.handle('single:u1', '安联ESG纯债1号 能不能买 国债0115');
     expect(first).toMatchObject({ handled: true, intent: 'check_security' });
+    if (first.handled) {
+      expect(first.selection).toMatchObject({
+        kind: 'security',
+        options: [{ key: '1', label: '国债0115 019115.SH' }],
+      });
+    }
     expect(router.shouldHandle('single:u1', '确认', false)).toBe(true);
 
     const second = await router.handle('single:u1', '确认');
@@ -67,7 +73,13 @@ describe('WeCom risk fast-path router', () => {
 
     const second = await router.handle('single:u2', '国债0115');
     expect(second).toMatchObject({ handled: true, intent: 'pretrade_calc' });
-    if (second.handled) expect(second.markdown).toContain('本笔投资未引发新增超限');
+    if (second.handled) {
+      expect(second.markdown).toContain('请确认证券');
+      expect(second.selection?.options).toHaveLength(1);
+    }
+
+    const confirmed = await router.handle('single:u2', '确认');
+    if (confirmed.handled) expect(confirmed.markdown).toContain('本笔投资未引发新增超限');
   });
 
   it('keeps an expired selection reply off the agent path', async () => {
@@ -139,6 +151,140 @@ describe('WeCom risk fast-path router', () => {
     await router.handle('single:u5', '1');
 
     expect(listProducts).toHaveBeenCalledOnce();
+  });
+
+  it('resolves product and security ambiguity as two sequential card selections', async () => {
+    const calculatePretrade = vi.fn(async () => successfulCalculation());
+    const progress: string[] = [];
+    const router = new WeComRiskRouter(
+      fakeService({
+        listProducts: async () => [
+          '安联ESG纯债1号资产管理产品',
+          '安联ESG纯债1号',
+        ],
+        searchSecurities: async () => [
+          { name: '国债0115', code: '019115.SH', label: '国债0115 019115.SH' },
+        ],
+        calculatePretrade,
+      }),
+    );
+
+    const productChoice = await router.handle(
+      'single:u6',
+      '安联ESG纯债1号 买 0.1 国债',
+      (message) => progress.push(message),
+    );
+    if (!productChoice.handled) throw new Error('expected handled result');
+    expect(productChoice.selection).toMatchObject({
+      kind: 'product',
+      options: [
+        { key: 'a', label: '安联ESG纯债1号资产管理产品' },
+        { key: 'b', label: '安联ESG纯债1号' },
+      ],
+    });
+
+    const securityChoice = await router.handle('single:u6', 'b', (message) => {
+      progress.push(message);
+    });
+    if (!securityChoice.handled) throw new Error('expected handled result');
+    expect(securityChoice.selection).toMatchObject({
+      kind: 'security',
+      options: [{ key: '1', label: '国债0115 019115.SH' }],
+    });
+
+    const result = await router.handle('single:u6', '1', (message) => progress.push(message));
+    if (result.handled) expect(result.markdown).toContain('本笔投资未引发新增超限');
+    expect(progress).toEqual([
+      '已确认：账户「安联ESG纯债1号」，正在继续风险查询…',
+      expect.stringContaining('证券「国债0115（019115.SH）」'),
+      '正在提交投前测算…',
+    ]);
+    expect(calculatePretrade).toHaveBeenCalledWith(
+      '安联ESG纯债1号',
+      { type: 'buy', amount: 0.1, security_name: '019115.SH' },
+      expect.any(Function),
+    );
+  });
+
+  it('asks for a more precise security when more than ten candidates match', async () => {
+    const calculatePretrade = vi.fn(async () => successfulCalculation());
+    const router = new WeComRiskRouter(
+      fakeService({
+        calculatePretrade,
+        searchSecurities: async () =>
+          Array.from({ length: 11 }, (_, index) => ({
+            name: `候选${index + 1}`,
+            code: `CODE${index + 1}`,
+            label: `候选${index + 1} CODE${index + 1}`,
+          })),
+      }),
+    );
+
+    const result = await router.handle('single:u7', '安联ESG纯债1号 买 0.1 候选');
+
+    if (!result.handled) throw new Error('expected handled result');
+    expect(result.markdown).toContain('匹配到 11 个候选');
+    expect(result.markdown).toContain('更精确');
+    expect(result.selection).toBeUndefined();
+    expect(calculatePretrade).not.toHaveBeenCalled();
+  });
+
+  it('turns fuzzy product matches into a confirmation card instead of guessing', async () => {
+    const calculatePretrade = vi.fn(async () => successfulCalculation());
+    const router = new WeComRiskRouter(
+      fakeService({
+        listProducts: async () => [
+          '安联ESG纯债1号资产管理产品',
+          '安联ESG纯债2号资产管理产品',
+        ],
+        calculatePretrade,
+      }),
+    );
+
+    const result = await router.handle('single:u8', '安联资管 ESG 纯债 3 号 申购 0.1');
+
+    if (!result.handled) throw new Error('expected handled result');
+    expect(result.selection).toMatchObject({
+      kind: 'product',
+      options: [
+        { key: 'a', label: '安联ESG纯债1号资产管理产品' },
+        { key: 'b', label: '安联ESG纯债2号资产管理产品' },
+      ],
+    });
+    expect(calculatePretrade).not.toHaveBeenCalled();
+  });
+
+  it('requires confirmation even when fuzzy fallback finds one product', async () => {
+    const calculatePretrade = vi.fn(async () => successfulCalculation());
+    const router = new WeComRiskRouter(fakeService({ calculatePretrade }));
+
+    const choice = await router.handle('single:u9', '安联 ESG 纯在 1 号 申购 0.1');
+    if (!choice.handled) throw new Error('expected handled result');
+    expect(choice.selection).toMatchObject({
+      kind: 'product',
+      options: [{ key: 'a', label: '安联ESG纯债1号资产管理产品' }],
+    });
+    expect(calculatePretrade).not.toHaveBeenCalled();
+
+    const confirmed = await router.handle('single:u9', '确认');
+    if (confirmed.handled) expect(confirmed.markdown).toContain('本笔投资未引发新增超限');
+    expect(calculatePretrade).toHaveBeenCalledOnce();
+  });
+
+  it('reports explicit progress for holdings and credit queries', async () => {
+    const holdingsProgress: string[] = [];
+    const creditProgress: string[] = [];
+    const router = new WeComRiskRouter(fakeService());
+
+    await router.handle('single:u10', '安联 ESG 纯债 1 号持仓', (message) => {
+      holdingsProgress.push(message);
+    });
+    await router.handle('single:u11', '赣锋锂业授信额度', (message) => {
+      creditProgress.push(message);
+    });
+
+    expect(holdingsProgress).toEqual(['正在查询产品持仓…']);
+    expect(creditProgress).toEqual(['正在查询主体授信额度…']);
   });
 });
 

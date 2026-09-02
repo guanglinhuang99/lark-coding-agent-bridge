@@ -28,6 +28,7 @@ import {
 } from '../card/run-state';
 import {
   buildWeComControlCard,
+  renderWeComAcknowledgement,
   renderWeComMarkdown,
   renderWeComNotice,
   truncateUtf8,
@@ -52,6 +53,7 @@ import {
   withActiveRun,
   withReservation,
   waitForCompletion,
+  type ConversationBody,
   type WeComConversationSubmission,
 } from './runtime';
 import { WeComSessionStore } from './session-store';
@@ -76,7 +78,17 @@ import {
 import { sendLinkedWorkspaceArtifacts } from './egress';
 import type { NormalizedAttachment } from '../media/attachment';
 import { RiskDirectClient } from './risk/client';
-import { WeComRiskRouter } from './risk/router';
+import {
+  WeComRiskRouter,
+  type RiskRouteResult,
+  type RiskSelectionRequest,
+} from './risk/router';
+import {
+  buildRiskSelectionCard,
+  buildRiskSelectionStatusCard,
+  RiskSelectionTaskRegistry,
+} from './risk/card';
+import { RiskProgressRelay } from './risk/progress';
 
 type TextFrame = WsFrame<TextMessage>;
 type ImageFrame = WsFrame<ImageMessage>;
@@ -254,6 +266,8 @@ const riskClient = riskDirectEnabled
 const riskRouter = riskClient
   ? new WeComRiskRouter(riskClient, { productCacheTtlMs: riskProductCacheTtlMs })
   : undefined;
+const riskSelectionTasks = new RiskSelectionTaskRegistry();
+const riskSelectionCardDelayMs = 800;
 
 if (!riskDirectEnabled) {
   console.warn(
@@ -380,6 +394,7 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
       return;
     }
     riskRouter?.clear(key);
+    riskSelectionTasks.clearConversation(key);
     await sessionStore.clear(key);
     await replyControl(
       frame,
@@ -429,6 +444,14 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
   const riskCandidate = riskRouter?.shouldHandle(key, text, mediaInputs.length > 0) ?? false;
   const riskAccessDenied = riskCandidate && !isRiskUserAllowed(body.from?.userid);
   const useRiskFastPath = riskCandidate && !riskAccessDenied;
+  const acknowledgement = text
+    ? renderWeComAcknowledgement('input', text)
+    : `收到，您发送的 ${mediaInputs.length} 个附件已收到。`;
+  await new WeComStreamReply(client, frame, generateReqId('ack'))
+    .finish(truncateUtf8(acknowledgement, streamMaxBytes))
+    .catch((err: unknown) => {
+      log.fail('wecom-ack', err, { step: 'input' });
+    });
   const stream = new WeComStreamReply(client, frame, generateReqId('stream'));
   let markStreamReady!: () => void;
   let markStreamFailed!: (err: unknown) => void;
@@ -470,7 +493,7 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
         `最长等待：${Math.ceil(conversationQueueTimeoutMs / 1000)} 秒`,
         '前一项完成后会自动开始，无需重新发送。',
       ])
-    : renderWeComNotice('⏳ 已收到消息', [
+    : renderWeComNotice('⏳ 正在处理', [
         riskAccessDenied
           ? '正在检查风险查询权限。'
           : useRiskFastPath
@@ -543,14 +566,23 @@ async function executeConversationMessage(
           return;
         }
         if (useRiskFastPath && riskRouter) {
+          riskSelectionTasks.clearConversation(key);
           const startedAt = Date.now();
+          const progressRelay = new RiskProgressRelay(
+            async (progress) => {
+              await stream.update(
+                truncateUtf8(
+                  renderWeComNotice('⏳ 风险限额查询中', [progress]),
+                  streamMaxBytes,
+                ),
+              );
+            },
+            (err) => log.fail('wecom-risk-progress', err, { step: 'message' }),
+          );
           const result = await riskRouter.handle(key, text, (progress) => {
-            void stream
-              .update(
-                truncateUtf8(renderWeComNotice('⏳ 风险限额查询中', [progress]), streamMaxBytes),
-              )
-              .catch(() => {});
+            progressRelay.push(progress);
           });
+          await progressRelay.flush();
           if (result.handled) {
             reportMetric('wecom_risk_fastpath_total', 1, { intent: result.intent });
             reportMetric('wecom_risk_fastpath_ms', Date.now() - startedAt, {
@@ -561,6 +593,9 @@ async function executeConversationMessage(
               durationMs: Date.now() - startedAt,
             });
             await stream.finish(truncateUtf8(result.markdown, streamMaxBytes));
+            if (result.selection) {
+              scheduleRiskSelectionCard(body, key, result.selection);
+            }
             return;
           }
         }
@@ -777,11 +812,15 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
   if (!body) return;
 
   const key = conversationKey(body);
-  const { eventKey: rawAction, taskId } = templateCardEventDetails(body.event);
-  const action = normalizeCardAction(rawAction);
+  const { eventKey: rawAction, taskId, selectedId } = templateCardEventDetails(body.event);
   if (!taskId) {
     throw new Error('WeCom template card event missing task_id');
   }
+  if (taskId.startsWith('risk_')) {
+    await handleRiskSelectionCardEvent(frame, key, taskId, rawAction, selectedId);
+    return;
+  }
+  const action = normalizeCardAction(rawAction);
 
   const active = activeRuns.get(key);
   const starting = startingRuns.has(key) || conversationQueue.has(key);
@@ -829,6 +868,8 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
       () => undefined,
       (err: unknown) => err,
     );
+    riskRouter?.clear(key);
+    riskSelectionTasks.clearConversation(key);
     await client.updateTemplateCard(
       frame,
       buildWeComControlCard({
@@ -871,6 +912,182 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
       notice: `未识别的操作：${rawAction ?? 'unknown'}`,
     }),
   );
+}
+
+async function handleRiskSelectionCardEvent(
+  frame: TemplateCardEventFrame,
+  key: string,
+  taskId: string,
+  eventKey: string | undefined,
+  selectedId: string | undefined,
+): Promise<void> {
+  const body = frame.body;
+  if (!body) return;
+  if (!riskRouter || !isRiskUserAllowed(body.from?.userid)) {
+    await client.updateTemplateCard(
+      frame,
+      buildRiskSelectionStatusCard(
+        taskId,
+        '无法使用此选择',
+        riskRouter ? '当前用户没有风险查询权限' : '风险查询暂不可用',
+      ),
+    );
+    return;
+  }
+
+  const selectedKey = selectedId || (eventKey === 'submit' ? '' : eventKey ?? '');
+  const resolution = riskSelectionTasks.resolve(taskId, key, selectedKey);
+  if (resolution.status === 'invalid') {
+    await client.updateTemplateCard(
+      frame,
+      buildRiskSelectionCard(
+        {
+          ...resolution.selection,
+          replyHint: '请先选择一个候选项，再点击确认',
+        },
+        taskId,
+      ),
+    );
+    return;
+  }
+  if (resolution.status !== 'selected') {
+    await client.updateTemplateCard(
+      frame,
+      buildRiskSelectionStatusCard(
+        taskId,
+        '选择已失效',
+        resolution.status === 'mismatch'
+          ? '该选项不属于当前会话'
+          : '该选项已处理或超过五分钟，请重新发送查询',
+      ),
+    );
+    return;
+  }
+
+  await Promise.all([
+    sendRiskMarkdown(
+      body,
+      renderWeComAcknowledgement('selection', resolution.option.label),
+    ).catch((err: unknown) => {
+      log.fail('wecom-ack', err, { step: 'selection-message' });
+    }),
+    client
+      .updateTemplateCard(
+        frame,
+        buildRiskSelectionStatusCard(
+          taskId,
+          '已收到选择',
+          '正在继续风险查询',
+          resolution.option.label,
+        ),
+      )
+      .catch((err: unknown) => {
+        log.fail('wecom-risk-card', err, { step: 'selection-status' });
+      }),
+  ]);
+
+  let submission: WeComConversationSubmission;
+  try {
+    submission = conversationQueue.submit(key, async () => {
+      await executeRiskCardSelection(body, key, resolution.option.key);
+    });
+  } catch (err) {
+    if (!(err instanceof WeComConversationQueueError)) throw err;
+    await sendRiskMarkdown(
+      body,
+      renderWeComNotice('⚠️ 当前会话排队较多', [conversationQueueNotice(err.reason)]),
+    );
+    return;
+  }
+
+  if (submission.queued) {
+    await sendRiskMarkdown(
+      body,
+      renderWeComNotice('🕒 已加入会话队列', [
+        `当前排队位置：${submission.position}`,
+        '前一项完成后会自动处理本次选择。',
+      ]),
+    );
+  }
+  void submission.completion.catch(async (err: unknown) => {
+    const message = redactDiagnosticText(err instanceof Error ? err.message : String(err));
+    log.fail('wecom-risk-card', err, { step: 'selection' });
+    await sendRiskMarkdown(body, renderWeComNotice('⚠️ 风险查询失败', [message])).catch(
+      () => {},
+    );
+  });
+}
+
+async function executeRiskCardSelection(
+  body: ConversationBody,
+  key: string,
+  selectedKey: string,
+): Promise<void> {
+  if (!riskRouter) return;
+  try {
+    await withReservation(startingRuns, key, async () =>
+      runGate.run(async () => {
+        await refreshHealth();
+        const progressRelay = new RiskProgressRelay(
+          (progress) =>
+            sendRiskMarkdown(
+              body,
+              renderWeComNotice('⏳ 风险限额查询中', [progress]),
+            ),
+          (err) => log.fail('wecom-risk-progress', err, { step: 'card-selection' }),
+        );
+        const result = await riskRouter.handle(key, selectedKey, (progress) => {
+          if (progress.startsWith('已确认：')) return;
+          progressRelay.push(progress);
+        });
+        await progressRelay.flush();
+        if (result.handled) await sendRiskRouteResult(body, key, result);
+      }),
+    );
+  } catch (err) {
+    if (!(err instanceof WeComRunCapacityError)) throw err;
+    await sendRiskMarkdown(
+      body,
+      renderWeComNotice('⚠️ 当前任务较多', [capacityNotice(err.reason)]),
+    );
+  } finally {
+    await refreshHealth();
+  }
+}
+
+async function sendRiskRouteResult(
+  body: ConversationBody,
+  key: string,
+  result: Extract<RiskRouteResult, { handled: true }>,
+): Promise<void> {
+  await sendRiskMarkdown(body, result.markdown);
+  if (result.selection) scheduleRiskSelectionCard(body, key, result.selection);
+}
+
+async function sendRiskMarkdown(body: ConversationBody, content: string): Promise<void> {
+  await client.sendMessage(messageTarget(body), {
+    msgtype: 'markdown',
+    markdown: { content: truncateUtf8(content, streamMaxBytes) },
+  });
+}
+
+function scheduleRiskSelectionCard(
+  body: ConversationBody,
+  key: string,
+  selection: RiskSelectionRequest,
+): void {
+  const taskId = createRiskTaskId();
+  riskSelectionTasks.register(taskId, key, selection);
+  void (async () => {
+    await new Promise<void>((resolve) => setTimeout(resolve, riskSelectionCardDelayMs));
+    if (!riskSelectionTasks.has(taskId, key)) return;
+    try {
+      await sendControlCard(client, body, buildRiskSelectionCard(selection, taskId));
+    } catch (err) {
+      riskSelectionTasks.remove(taskId);
+      log.fail('wecom-risk-card', err, { step: 'send' });
+    }
+  })();
 }
 
 async function replyStatus(frame: WsFrame, key: string): Promise<void> {
@@ -1060,6 +1277,11 @@ async function persistThread(key: string, threadId: string | undefined): Promise
 function createTaskId(): string {
   const suffix = randomUUID().replace(/-/g, '').slice(0, 10);
   return `codex_${Date.now()}_${suffix}`;
+}
+
+function createRiskTaskId(): string {
+  const suffix = randomUUID().replace(/-/g, '').slice(0, 10);
+  return `risk_${Date.now()}_${suffix}`;
 }
 
 function freshRunState(): RunState {

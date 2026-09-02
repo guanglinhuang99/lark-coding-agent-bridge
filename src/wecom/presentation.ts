@@ -87,6 +87,17 @@ export function renderWeComNotice(title: string, lines: readonly string[]): stri
   return [`### ${title}`, content].filter(Boolean).join('\n\n');
 }
 
+export function renderWeComAcknowledgement(
+  kind: 'input' | 'selection',
+  value: string,
+): string {
+  const compact = sanitizeSensitiveText(value).replace(/\s+/g, ' ').trim();
+  const echoed = clipText(compact || '空消息', 120);
+  return kind === 'selection'
+    ? `收到，您选择了「${echoed}」。`
+    : `收到，您输入了「${echoed}」。`;
+}
+
 /**
  * WeCom limits stream content by UTF-8 bytes, not JavaScript characters.
  * Truncate at code-point boundaries so Chinese and emoji are never corrupted.
