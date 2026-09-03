@@ -89,6 +89,13 @@ import {
   buildRiskSelectionStatusCard,
   RiskSelectionTaskRegistry,
 } from './risk/card';
+import {
+  buildErrorCardView,
+  buildQueueCardView,
+  type WeComErrorKind,
+} from './ui/builders';
+import type { WeComCardView } from './ui/model';
+import { renderWeComCard } from './ui/renderer';
 import { RiskProgressRelay } from './risk/progress';
 import {
   buildIntentSelection,
@@ -511,14 +518,11 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
   } catch (err) {
     if (!(err instanceof WeComConversationQueueError)) throw err;
     reportMetric('wecom_conversation_queue_rejected', 1, { reason: err.reason });
-    await replyControl(
-      frame,
-      key,
-      '⚠️ 当前会话排队较多',
-      ['本条消息没有入队，请稍后重新发送。'],
-      'error',
+    await replyOnce(frame, '⚠️ 当前会话排队较多', [
+      '本条消息没有入队，请稍后重新发送。',
       conversationQueueNotice(err.reason),
-    );
+    ]);
+    await deliverErrorCard(frame, err.reason === 'queue-timeout' ? 'queue-timeout' : 'queue-full');
     return;
   }
 
@@ -545,6 +549,16 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
   }
 
   if (submission.queued) {
+    await deliverCardView(
+      frame,
+      buildQueueCardView({
+        taskId: createTaskId(),
+        status: 'queued',
+        workspace,
+        position: submission.position,
+        ahead: submission.position - 1,
+      }),
+    );
     log.info('wecom-conversation-queue', 'queued', {
       conversationType: key.startsWith('group:') ? 'group' : 'single',
       position: submission.position,
@@ -564,6 +578,7 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
       await stream.finish(
         truncateUtf8(renderWeComNotice('⚠️ 处理失败', [message]), streamMaxBytes),
       ).catch(() => {});
+      await deliverErrorCard(frame, 'execution');
       return;
     }
     reportMetric('wecom_conversation_queue_rejected', 1, { reason: err.reason });
@@ -573,6 +588,7 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
         streamMaxBytes,
       ),
     ).catch(() => {});
+    await deliverErrorCard(frame, err.reason === 'queue-timeout' ? 'queue-timeout' : 'queue-full');
   }
 }
 
@@ -757,6 +773,7 @@ async function executeConversationMessage(
         streamMaxBytes,
       ),
     );
+    await deliverErrorCard(frame, err.reason === 'queue-timeout' ? 'queue-timeout' : 'queue-full');
   } finally {
     await refreshHealth();
   }
@@ -1004,6 +1021,7 @@ async function runCodexPrompt(
       terminationReason: 'failed',
     });
     await stream.finish(renderStream(state, threadId)).catch(() => {});
+    await deliverErrorCard(frame, 'agent-startup');
     log.fail('wecom-run', err, { step: 'start', kind: failureKind(err) });
     reportMetric('wecom_run_failures', 1, { kind: failureKind(err), step: 'start' });
     reportMetric('wecom_run_e2e_ms', Date.now() - requestStartedAt, { terminal: 'failed-start' });
@@ -1091,6 +1109,7 @@ async function runCodexPrompt(
         );
       });
       await streamUpdates.finish(renderStream(state, threadId)).catch(() => {});
+      await deliverErrorCard(frame, 'execution');
       log.fail('wecom-run', err, { step: 'run', kind: failureKind(err) });
       reportMetric('wecom_run_failures', 1, { kind: failureKind(err), step: 'run' });
       console.error(`Codex run failed: ${message}`);
@@ -1135,7 +1154,8 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
   const key = conversationKey(body);
   const { eventKey: rawAction, taskId, selectedId } = templateCardEventDetails(body.event);
   if (!taskId) {
-    throw new Error('WeCom template card event missing task_id');
+    await deliverErrorCard(frame, 'callback-invalid');
+    return;
   }
   if (taskId.startsWith('risk_')) {
     await handleRiskSelectionCardEvent(frame, key, taskId, rawAction, selectedId);
@@ -1225,14 +1245,7 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
 
   await client.updateTemplateCard(
     frame,
-    buildWeComControlCard({
-      taskId,
-      status: 'error',
-      workspace,
-      sandbox,
-      threadId: currentThreadId(key),
-      notice: `未识别的操作：${rawAction ?? 'unknown'}`,
-    }),
+    renderWeComCard(buildErrorCardView({ taskId, kind: 'callback-invalid' })),
   );
 }
 
@@ -1278,12 +1291,11 @@ async function handleRiskSelectionCardEvent(
     }
     await client.updateTemplateCard(
       frame,
-      buildRiskSelectionStatusCard(
-        taskId,
-        '选择已失效',
-        resolution.status === 'mismatch'
-          ? '该选项不属于当前会话'
-          : '该选项已处理或超过五分钟，请重新发送查询',
+      renderWeComCard(
+        buildErrorCardView({
+          taskId,
+          kind: resolution.status === 'mismatch' ? 'callback-invalid' : 'callback-expired',
+        }),
       ),
     );
     return;
@@ -1500,6 +1512,18 @@ async function deliverControlCard(frame: WsFrame, card: TemplateCard): Promise<v
       `Failed to send WeCom control card: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+}
+
+async function deliverCardView(frame: WsFrame, view: WeComCardView): Promise<void> {
+  await deliverControlCard(frame, renderWeComCard(view));
+}
+
+async function deliverErrorCard(
+  frame: WsFrame,
+  kind: WeComErrorKind,
+  taskId = createTaskId(),
+): Promise<void> {
+  await deliverCardView(frame, buildErrorCardView({ taskId, kind }));
 }
 
 async function replyOnce(frame: WsFrame, title: string, lines: readonly string[]): Promise<void> {

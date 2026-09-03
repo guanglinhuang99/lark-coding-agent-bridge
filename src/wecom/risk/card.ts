@@ -1,6 +1,11 @@
 import type { TemplateCard } from '@wecom/aibot-node-sdk';
 import type { RiskSelectionOption, RiskSelectionRequest } from './router';
 import { WECOM_CARD_ACTIONS } from '../ui/actions';
+import {
+  buildConfirmationCardView,
+  buildNoticeCardView,
+  buildSelectionCardView,
+} from '../ui/builders';
 import { renderWeComCard } from '../ui/renderer';
 
 export type RiskSelectionResolution =
@@ -87,47 +92,35 @@ export function buildRiskSelectionCard(
         : '交易';
 
   if (options.length === 1) {
-    return renderWeComCard({
-      kind: 'interactive',
+    return renderWeComCard(
+      buildConfirmationCardView({
+        taskId,
+        source: '风险限额查询',
+        title: selection.title,
+        description: selection.replyHint,
+        facts: [{ label: candidateLabel, value: clip(options[0]?.label ?? '', 26) }],
+        confirmKey: options[0]?.key ?? '1',
+        confirmText: '确认选择',
+      }),
+    );
+  }
+
+  return renderWeComCard(
+    buildSelectionCardView({
       taskId,
       source: '风险限额查询',
       title: selection.title,
       description: selection.replyHint,
       subtitle: selection.subTitle,
-      facts: [{ label: candidateLabel, value: clip(options[0]?.label ?? '', 26) }],
-      buttons: [
-        {
-          text: '确认选择',
-          key: options[0]?.key ?? '1',
-          variant: 'primary',
-        },
-      ],
-    });
-  }
-
-  return renderWeComCard({
-    kind: 'interactive',
-    taskId,
-    source: '风险限额查询',
-    title: selection.title,
-    description: selection.replyHint,
-    subtitle: selection.subTitle,
-    selection: {
       questionKey: `risk_${selection.kind}`,
-      title: selection.title,
       options: options.map((option) => ({
         id: option.key,
         text: clip(option.label, 60),
       })),
-    },
-    buttons: [
-      {
-        text: '确认选择',
-        key: WECOM_CARD_ACTIONS.selection.submit,
-        variant: 'primary',
-      },
-    ],
-  });
+      submitKey: WECOM_CARD_ACTIONS.selection.submit,
+      submitText: '确认选择',
+    }),
+  );
 }
 
 export function buildRiskSelectionStatusCard(
@@ -136,14 +129,15 @@ export function buildRiskSelectionStatusCard(
   description: string,
   selectedLabel?: string,
 ): TemplateCard {
-  return renderWeComCard({
-    kind: 'notice',
-    taskId,
-    source: '风险限额查询',
-    title,
-    description,
-    ...(selectedLabel ? { subtitle: clip(selectedLabel, 112) } : {}),
-  });
+  return renderWeComCard(
+    buildNoticeCardView({
+      taskId,
+      source: '风险限额查询',
+      title,
+      description,
+      ...(selectedLabel ? { subtitle: clip(selectedLabel, 112) } : {}),
+    }),
+  );
 }
 
 function clip(value: string, maxLength: number): string {
