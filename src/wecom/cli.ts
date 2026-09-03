@@ -215,18 +215,17 @@ async function runCodexPrompt(frame: TextFrame, key: string, text: string): Prom
   let lastSent = renderStream(state, threadId);
   let lastFlushAt = Date.now();
 
-  await stream.start(lastSent);
-  await deliverControlCard(
-    frame,
-    buildWeComControlCard({
-      taskId,
-      status: 'running',
-      workspace,
-      sandbox,
-      threadId,
-      prompt: text,
-    }),
-  );
+  const initialCard = buildWeComControlCard({
+    taskId,
+    status: 'running',
+    workspace,
+    sandbox,
+    threadId,
+    prompt: text,
+    runState: state,
+  });
+  const cardAttached = await stream.startWithCard(lastSent, initialCard);
+  if (!cardAttached) await deliverControlCard(frame, initialCard);
 
   let run: AgentRun;
   try {
@@ -373,6 +372,7 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
           threadId: active?.threadId,
           prompt: active?.prompt,
           notice: active ? '任务运行中，请先停止' : '任务正在启动，请稍候',
+          runState: active?.state,
         }),
       );
       return;
@@ -407,7 +407,8 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
         sandbox,
         threadId: currentThreadId(key),
         prompt: active?.prompt,
-        notice: active ? 'Codex 正在运行' : starting ? 'Codex 正在启动' : '当前为空闲状态',
+        notice: active ? undefined : starting ? 'Codex 正在启动' : '当前为空闲状态',
+        runState: active?.state,
       }),
     );
     return;
