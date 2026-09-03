@@ -552,7 +552,7 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
     await deliverCardView(
       frame,
       buildQueueCardView({
-        taskId: createTaskId(),
+        taskId: createQueueTaskId(),
         status: 'queued',
         workspace,
         position: submission.position,
@@ -1157,6 +1157,13 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
     await deliverErrorCard(frame, 'callback-invalid');
     return;
   }
+  if (taskId.startsWith('queue_')) {
+    await client.updateTemplateCard(
+      frame,
+      renderWeComCard(buildErrorCardView({ taskId, kind: 'callback-invalid' })),
+    );
+    return;
+  }
   if (taskId.startsWith('risk_')) {
     await handleRiskSelectionCardEvent(frame, key, taskId, rawAction, selectedId);
     return;
@@ -1653,6 +1660,11 @@ async function persistThread(key: string, threadId: string | undefined): Promise
 function createTaskId(): string {
   const suffix = randomUUID().replace(/-/g, '').slice(0, 10);
   return `codex_${Date.now()}_${suffix}`;
+}
+
+function createQueueTaskId(): string {
+  const suffix = randomUUID().replace(/-/g, '').slice(0, 10);
+  return `queue_${Date.now()}_${suffix}`;
 }
 
 function createRiskTaskId(): string {
