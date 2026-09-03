@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import type { TemplateCard } from '@wecom/aibot-node-sdk';
 import { taskCard } from '../card-ui/cards';
 import { renderWeComAgentCard } from '../card-ui/wecom-renderer';
-import type { CardStatus } from '../card-ui/types';
+import type { CardStatus, CardStep, CardTone } from '../card-ui/types';
 import { renderText } from '../card/text-renderer';
 import type { RunState } from '../card/run-state';
 import type { CodexSandboxMode } from '../config/permissions';
@@ -21,22 +21,16 @@ export interface WeComControlCardOptions extends WeComRenderMeta {
   status: WeComCardStatus;
   prompt?: string;
   notice?: string;
+  runState?: RunState;
 }
 
 /**
  * Render the same RunState used by the Feishu card renderer as a structured
  * WeCom Markdown stream. The body keeps the agent's Markdown intact while the
- * header uses a compact TUI-style status surface.
+ * header behaves like a live Claude-Code-style TUI status panel.
  */
 export function renderWeComMarkdown(state: RunState, meta: WeComRenderMeta): string {
-  const status = runStatus(state);
-  const thread = meta.threadId ? `\`${escapeInlineCode(shortThread(meta.threadId))}\`` : '`new`';
-  const header = [
-    '### 🤖 Codex',
-    `> ${status.icon} **${status.label}**  ·  ${status.terminal}`,
-    `> \`workspace\` ${escapeInlineCode(compactWorkspace(meta.workspace))}  ·  \`mode\` ${sandboxLabel(meta.sandbox)}  ·  \`session\` ${thread}`,
-  ].join('\n');
-
+  const header = renderLifecyclePanel(state, meta);
   const renderedBody = sanitizeSensitiveText(renderText(sanitizeToolInputs(state))).trim();
   const finalFallback = state.finalText?.trim() ?? '';
   const finalBody = sanitizeSensitiveText(finalFallback);
@@ -47,35 +41,37 @@ export function renderWeComMarkdown(state: RunState, meta: WeComRenderMeta): str
   return [header, body].filter(Boolean).join('\n\n');
 }
 
-/** Build the persistent WeCom interaction card displayed beside the stream. */
+/** Build the persistent WeCom interaction card displayed beside the live stream. */
 export function buildWeComControlCard(options: WeComControlCardOptions): TemplateCard {
-  const running = options.status === 'running' || options.status === 'stopping';
-  const status = cardStatus(options.status);
+  const visual = options.runState ? runCardStatus(options.runState) : cardStatus(options.status);
+  const running = options.runState
+    ? options.runState.terminal === 'running'
+    : options.status === 'running' || options.status === 'stopping';
   const workspaceName = compactWorkspace(options.workspace);
   const thread = options.threadId ? `continue ${shortThread(options.threadId)}` : 'new';
 
   return renderWeComAgentCard(
     taskCard({
       taskId: options.taskId,
-      status: status.semantic,
-      tone: status.tone,
+      status: visual.semantic,
+      tone: visual.tone,
       eyebrow: 'CODEX · WECOM',
-      title: 'Codex 会话控制',
-      subtitle: options.notice ?? '企业微信 ↔ 本机 Codex',
+      title: options.runState ? visual.title : 'Codex 会话控制',
+      subtitle: options.notice ?? (options.runState ? visual.label : '企业微信 ↔ 本机 Codex'),
       body: sanitizeSensitiveText(
         options.prompt?.trim() || '发送消息开始任务；运行状态会持续更新。',
       ),
       fields: [
-        { label: 'status', value: status.label },
+        { label: 'status', value: visual.label },
         { label: 'workspace', value: workspaceName },
         { label: 'mode', value: sandboxLabel(options.sandbox) },
         { label: 'session', value: thread },
       ],
-      steps: controlSteps(options.status),
+      steps: options.runState ? lifecycleCardSteps(options.runState) : controlSteps(options.status),
       actions: [
         ...(running ? [{ key: 'stop', label: '停止', tone: 'danger' as const }] : []),
         { key: 'new', label: '新会话', tone: 'secondary' as const },
-        { key: 'status', label: '查看状态', tone: 'primary' as const },
+        { key: 'status', label: '刷新状态', tone: 'primary' as const },
       ],
     }),
   );
@@ -99,6 +95,57 @@ export function truncateUtf8(text: string, maxBytes: number): string {
   if (markerBytes >= maxBytes) return takeUtf8Prefix(marker, maxBytes);
 
   return `${takeUtf8Prefix(text, maxBytes - markerBytes)}${marker}`;
+}
+
+function renderLifecyclePanel(state: RunState, meta: WeComRenderMeta): string {
+  const status = runStatus(state);
+  const thread = meta.threadId ? `\`${escapeInlineCode(shortThread(meta.threadId))}\`` : '`new`';
+  const steps = lifecycleTextSteps(state);
+  return [
+    '### 🤖 **CODEX**',
+    `> **▌ ${status.icon} ${status.terminal}** · **${status.label}**`,
+    `> **workspace** \`${escapeInlineCode(compactWorkspace(meta.workspace))}\` · **mode** \`${sandboxLabel(meta.sandbox)}\` · **session** ${thread}`,
+    ...(steps.length > 0 ? ['>', ...steps.map((step) => `> ${step}`)] : []),
+  ].join('\n');
+}
+
+function lifecycleTextSteps(state: RunState): string[] {
+  const steps: string[] = ['├─ ✓ Runtime connected'];
+  const tools = state.blocks.filter((block) => block.kind === 'tool').slice(-3);
+  for (const block of tools) {
+    if (block.kind !== 'tool') continue;
+    const glyph = block.tool.status === 'done' ? '✓' : block.tool.status === 'error' ? '×' : '⟳';
+    steps.push(`├─ ${glyph} ${clipText(block.tool.name, 42)}`);
+  }
+
+  if (state.terminal === 'done') steps.push('└─ ✓ Task complete');
+  else if (state.terminal === 'interrupted') steps.push('└─ ! Task stopped');
+  else if (state.terminal === 'idle_timeout') steps.push('└─ ! Idle timeout');
+  else if (state.terminal === 'error') steps.push('└─ × Task failed');
+  else if (state.footer === 'tool_running') steps.push('└─ ⟳ Tool executing');
+  else if (state.footer === 'streaming') steps.push('└─ ⟳ Response streaming');
+  else steps.push('└─ ⟳ Reasoning');
+
+  return steps.slice(-5);
+}
+
+function lifecycleCardSteps(state: RunState): readonly CardStep[] {
+  const steps: CardStep[] = [{ label: 'Runtime connected', status: 'done' }];
+  const tools = state.blocks.filter((block) => block.kind === 'tool').slice(-2);
+  for (const block of tools) {
+    if (block.kind !== 'tool') continue;
+    steps.push({ label: clipText(block.tool.name, 48), status: block.tool.status });
+  }
+
+  if (state.terminal === 'done') steps.push({ label: 'Task complete', status: 'done' });
+  else if (state.terminal === 'interrupted') steps.push({ label: 'Task stopped', status: 'error' });
+  else if (state.terminal === 'idle_timeout') steps.push({ label: 'Idle timeout', status: 'error' });
+  else if (state.terminal === 'error') steps.push({ label: 'Task failed', status: 'error' });
+  else if (state.footer === 'tool_running') steps.push({ label: 'Tool executing', status: 'running' });
+  else if (state.footer === 'streaming') steps.push({ label: 'Response streaming', status: 'running' });
+  else steps.push({ label: 'Reasoning', status: 'running' });
+
+  return steps.slice(-4);
 }
 
 function shouldAppendFinalText(state: RunState, finalText: string): boolean {
@@ -145,38 +192,63 @@ function sanitizeSensitiveText(value: string): string {
 }
 
 function runStatus(state: RunState): { icon: string; label: string; terminal: string } {
-  if (state.terminal === 'done') return { icon: '✅', label: '已完成', terminal: 'DONE' };
-  if (state.terminal === 'interrupted') return { icon: '⏹', label: '已中断', terminal: 'STOPPED' };
-  if (state.terminal === 'idle_timeout') return { icon: '⏱', label: '已超时', terminal: 'TIMEOUT' };
-  if (state.terminal === 'error') return { icon: '⚠️', label: '执行失败', terminal: 'FAILED' };
-  if (state.footer === 'tool_running') return { icon: '🧰', label: '正在调用工具', terminal: 'TOOL' };
-  if (state.footer === 'streaming') return { icon: '✍️', label: '正在输出', terminal: 'STREAM' };
-  return { icon: '🧠', label: '正在思考', terminal: 'THINK' };
+  if (state.terminal === 'done') return { icon: '✓', label: '已完成', terminal: 'DONE' };
+  if (state.terminal === 'interrupted') return { icon: '■', label: '已中断', terminal: 'STOPPED' };
+  if (state.terminal === 'idle_timeout') return { icon: '!', label: '已超时', terminal: 'TIMEOUT' };
+  if (state.terminal === 'error') return { icon: '×', label: '执行失败', terminal: 'FAILED' };
+  if (state.footer === 'tool_running') return { icon: '●', label: '正在调用工具', terminal: 'TOOL' };
+  if (state.footer === 'streaming') return { icon: '●', label: '正在输出', terminal: 'STREAM' };
+  return { icon: '●', label: '正在思考', terminal: 'THINK' };
+}
+
+function runCardStatus(state: RunState): {
+  title: string;
+  label: string;
+  semantic: CardStatus;
+  tone: CardTone;
+} {
+  if (state.terminal === 'done') {
+    return { title: 'Codex 任务完成', label: 'DONE · 已完成', semantic: 'success', tone: 'success' };
+  }
+  if (state.terminal === 'interrupted') {
+    return { title: 'Codex 任务已停止', label: 'STOPPED · 已中断', semantic: 'warning', tone: 'warning' };
+  }
+  if (state.terminal === 'idle_timeout') {
+    return { title: 'Codex 响应超时', label: 'TIMEOUT · 已超时', semantic: 'warning', tone: 'warning' };
+  }
+  if (state.terminal === 'error') {
+    return { title: 'Codex 执行失败', label: 'FAILED · 执行失败', semantic: 'error', tone: 'danger' };
+  }
+  if (state.footer === 'tool_running') {
+    return { title: 'Codex 正在执行工具', label: 'TOOL · 工具执行中', semantic: 'running', tone: 'info' };
+  }
+  if (state.footer === 'streaming') {
+    return { title: 'Codex 正在输出', label: 'STREAM · 生成回答', semantic: 'running', tone: 'info' };
+  }
+  return { title: 'Codex 正在思考', label: 'THINK · 推理中', semantic: 'thinking', tone: 'info' };
 }
 
 function cardStatus(status: WeComCardStatus): {
+  title: string;
   label: string;
   semantic: CardStatus;
-  tone: 'neutral' | 'info' | 'success' | 'warning' | 'danger';
+  tone: CardTone;
 } {
   switch (status) {
     case 'running':
-      return { label: '运行中', semantic: 'running', tone: 'info' };
+      return { title: 'Codex 会话控制', label: '运行中', semantic: 'running', tone: 'info' };
     case 'stopping':
-      return { label: '停止请求已发送', semantic: 'stopping', tone: 'warning' };
+      return { title: 'Codex 会话控制', label: '停止请求已发送', semantic: 'stopping', tone: 'warning' };
     case 'reset':
-      return { label: '已创建新会话', semantic: 'success', tone: 'success' };
+      return { title: 'Codex 会话控制', label: '已创建新会话', semantic: 'success', tone: 'success' };
     case 'error':
-      return { label: '操作失败', semantic: 'error', tone: 'danger' };
+      return { title: 'Codex 会话控制', label: '操作失败', semantic: 'error', tone: 'danger' };
     case 'idle':
-      return { label: '空闲', semantic: 'idle', tone: 'neutral' };
+      return { title: 'Codex 会话控制', label: '空闲', semantic: 'idle', tone: 'neutral' };
   }
 }
 
-function controlSteps(status: WeComCardStatus): readonly {
-  label: string;
-  status: 'pending' | 'running' | 'done' | 'error';
-}[] {
+function controlSteps(status: WeComCardStatus): readonly CardStep[] {
   if (status === 'running') {
     return [
       { label: 'Codex runtime connected', status: 'done' },
@@ -211,7 +283,7 @@ function shortThread(threadId: string): string {
 
 function emptyBody(state: RunState): string {
   if (state.terminal === 'done') return '_（未返回文本内容）_';
-  if (state.terminal === 'running') return '_🧠 正在思考…_';
+  if (state.terminal === 'running') return '_**▌ Codex 正在工作…**_';
   return '';
 }
 
