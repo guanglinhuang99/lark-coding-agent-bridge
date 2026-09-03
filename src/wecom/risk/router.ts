@@ -92,7 +92,7 @@ export class WeComRiskRouter {
         if (!isRiskCandidate(text)) {
           return handled(
             pending.intent.kind,
-            '之前的选择已过期，请重新发送完整交易或查询。该消息未调用 AI。',
+            '之前的选择已过期，请重新发送完整交易或查询。',
           );
         }
       } else if (pending) {
@@ -104,7 +104,7 @@ export class WeComRiskRouter {
         return {
           handled: true,
           intent: 'unknown-risk',
-          markdown: riskHelp('我识别到这是风险查询，但缺少可执行参数。'),
+          markdown: riskHelp('这条信息还缺少完整的交易内容。'),
         };
       }
       return await this.execute(conversationKey, intent, onProgress);
@@ -606,8 +606,8 @@ function riskHelp(prefix: string): string {
 }
 
 function formatRiskError(error: unknown): string {
-  if (error instanceof RiskServiceError) return `⚠️ **风险查询失败**：${error.message}`;
+  if (error instanceof RiskServiceError) return '⚠️ **风险查询失败**：暂时无法完成查询，请稍后重试。';
   const message = error instanceof Error ? error.message : String(error);
-  if (/abort|timeout/i.test(message)) return '⚠️ **风险查询超时**：riskservice 暂未在规定时间内响应。';
-  return `⚠️ **风险查询失败**：${message}`;
+  if (/abort|timeout/i.test(message)) return '⚠️ **风险查询超时**：请稍后重试。';
+  return '⚠️ **风险查询失败**：暂时无法完成查询，请稍后重试。';
 }

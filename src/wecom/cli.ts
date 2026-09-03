@@ -631,13 +631,31 @@ async function executeConversationMessage(
               pendingIntent.draft,
               text,
             );
+            const market = /一级/.test(text)
+              ? 'primary'
+              : /二级/.test(text)
+                ? 'secondary'
+                : pendingIntent.draft.market;
             const normalized = await normalizeRiskDraft(
               pendingIntent.originalText,
-              revised,
+              { ...revised, market },
               riskClient,
             );
             riskIntents.set(key, normalized);
             await finishRiskIntentState(body, key, stream, normalized);
+            return;
+          }
+          if (pendingIntent?.stage === 'confirm' && isRiskIntentConfirmation(text)) {
+            riskIntents.delete(key);
+            riskSelectionTasks.clearConversation(key);
+            riskIntents.clearTasksForConversation(key);
+            await stream.finish(
+              truncateUtf8(
+                renderWeComNotice('已确认交易信息', ['正在执行投资限额测算。']),
+                streamMaxBytes,
+              ),
+            );
+            await executeRiskCardSelection(body, key, canonicalCommand(pendingIntent), true);
             return;
           }
           if (!pendingIntent && isPretradeIntentCandidate(text)) {
@@ -646,7 +664,7 @@ async function executeConversationMessage(
             await stream.update(
               truncateUtf8(
                 renderWeComNotice('🧠 正在理解交易意图', [
-                  'AI 正在提取账户关键词、操作、标的关键词和交易规模。',
+                  '正在提取账户、操作、标的和交易规模。',
                 ]),
                 streamMaxBytes,
               ),
@@ -655,8 +673,8 @@ async function executeConversationMessage(
               const draft = await analyzeRiskDraft(text);
               await stream.update(
                 truncateUtf8(
-                  renderWeComNotice('🔎 正在核对标准名称', [
-                    '正在通过 risk-service 匹配准确账户和证券名称/代码。',
+                  renderWeComNotice('🔎 正在核对交易信息', [
+                    '正在核对账户和证券名称/代码。',
                   ]),
                   streamMaxBytes,
                 ),
@@ -676,7 +694,7 @@ async function executeConversationMessage(
             }
           }
         }
-        if (useRiskFastPath && riskRouter) {
+        if (useRiskFastPath && riskRouter && !isPretradeIntentCandidate(text)) {
           riskSelectionTasks.clearConversation(key);
           riskIntents.clearTasksForConversation(key);
           const startedAt = Date.now();
@@ -742,6 +760,10 @@ async function executeConversationMessage(
   } finally {
     await refreshHealth();
   }
+}
+
+function isRiskIntentConfirmation(text: string): boolean {
+  return /^(?:确认|是|是的|对|对的|好|好的|可以|行|ok|yes|y|1)$/i.test(text.trim());
 }
 
 async function analyzeRiskDraft(
@@ -824,7 +846,7 @@ async function finishRiskIntentState(
         selection.subTitle,
         state.stage === 'confirm'
           ? '确认完成前不会执行投资限额测算。'
-          : '候选来自 risk-service。',
+          : '请选择最符合的一项。',
       ]),
       streamMaxBytes,
     ),
@@ -1328,9 +1350,11 @@ async function handleRiskSelectionCardEvent(
     );
   }
   void submission.completion.catch(async (err: unknown) => {
-    const message = redactDiagnosticText(err instanceof Error ? err.message : String(err));
     log.fail('wecom-risk-card', err, { step: 'selection' });
-    await sendRiskMarkdown(body, renderWeComNotice('⚠️ 风险查询失败', [message])).catch(
+    await sendRiskMarkdown(
+      body,
+      renderWeComNotice('⚠️ 风险查询失败', ['暂时无法完成查询，请稍后重试。']),
+    ).catch(
       () => {},
     );
   });
@@ -1340,28 +1364,32 @@ async function executeRiskCardSelection(
   body: ConversationBody,
   key: string,
   selectedKey: string,
+  withinConversationRun = false,
 ): Promise<void> {
   if (!riskRouter) return;
   try {
-    await withReservation(startingRuns, key, async () =>
-      runGate.run(async () => {
-        await refreshHealth();
-        const progressRelay = new RiskProgressRelay(
-          (progress) =>
-            sendRiskMarkdown(
-              body,
-              renderWeComNotice('⏳ 风险限额查询中', [progress]),
-            ),
-          (err) => log.fail('wecom-risk-progress', err, { step: 'card-selection' }),
-        );
-        const result = await riskRouter.handle(key, selectedKey, (progress) => {
-          if (progress.startsWith('已确认：')) return;
-          progressRelay.push(progress);
-        });
-        await progressRelay.flush();
-        if (result.handled) await sendRiskRouteResult(body, key, result);
-      }),
-    );
+    const execute = async () => {
+      await refreshHealth();
+      const progressRelay = new RiskProgressRelay(
+        (progress) =>
+          sendRiskMarkdown(
+            body,
+            renderWeComNotice('⏳ 风险限额查询中', [progress]),
+          ),
+        (err) => log.fail('wecom-risk-progress', err, { step: 'card-selection' }),
+      );
+      const result = await riskRouter.handle(key, selectedKey, (progress) => {
+        if (progress.startsWith('已确认：')) return;
+        progressRelay.push(progress);
+      });
+      await progressRelay.flush();
+      if (result.handled) await sendRiskRouteResult(body, key, result);
+    };
+    if (withinConversationRun) {
+      await execute();
+    } else {
+      await withReservation(startingRuns, key, async () => runGate.run(execute));
+    }
   } catch (err) {
     if (!(err instanceof WeComRunCapacityError)) throw err;
     await sendRiskMarkdown(

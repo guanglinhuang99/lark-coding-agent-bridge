@@ -79,6 +79,7 @@ export function buildRiskSelectionCard(
 
   const base: TemplateCard = {
     card_type: 'button_interaction',
+    card_action: { type: 0 },
     source: { desc: '风险限额查询' },
     main_title: {
       title: selection.title,
@@ -104,21 +105,12 @@ export function buildRiskSelectionCard(
     return base;
   }
 
-  if (options.length <= 6) {
-    base.button_list = options.map((option) => ({
-      text: clip(`${option.key}.${option.label}`, 20),
-      key: option.key,
-      style: 1,
-    }));
-    return base;
-  }
-
   base.button_selection = {
     question_key: `risk_${selection.kind}`,
     title: selection.title,
     option_list: options.map((option) => ({
       id: option.key,
-      text: clip(`${option.key}.${option.label}`, 20),
+      text: clip(option.label, 60),
     })),
   };
   base.button_list = [{ text: '确认选择', key: 'submit', style: 1 }];
@@ -133,6 +125,10 @@ export function buildRiskSelectionStatusCard(
 ): TemplateCard {
   return {
     card_type: 'text_notice',
+    // WeCom requires a valid whole-card action when updating a text_notice card.
+    // Use the official site as a harmless fallback target for the otherwise
+    // non-interactive status card.
+    card_action: { type: 1, url: 'https://work.weixin.qq.com/' },
     source: { desc: '风险限额查询' },
     main_title: { title, desc: description },
     ...(selectedLabel ? { sub_title_text: clip(selectedLabel, 112) } : {}),

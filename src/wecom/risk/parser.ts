@@ -65,6 +65,9 @@ export function isRiskCandidate(text: string): boolean {
   if (!value) return false;
   if (/有哪些?(?:产品|组合)|产品列表|列出.*产品/.test(value)) return true;
   if (/搜.*(?:证券|债券|股票)|(?:证券|债券|股票).*搜/.test(value)) return true;
+  if (/(?:能不能买|是否能买|可以买吗|可不可以买|会不会禁投|是否禁投)/.test(value)) {
+    return /(?:安联|产品|资产管理|资管|账户|证券|债券|股票|国债|基金)/.test(value);
+  }
   if (/禁投|超限|限额|关联方|交易对手|对手方|授信|信用额度/.test(value)) return true;
   if (/持仓|仓位|投资限制|投资范围|比例限制|限制规则/.test(value)) return true;
   if (findAction(value) && (/(?:安联|产品|资产管理)/.test(value) || extractAmount(value))) {
@@ -386,9 +389,11 @@ function extractCreditEntity(text: string): string {
 
 function extractSecurityQuery(text: string, products: readonly string[]): string {
   return stripProducts(text, products)
+    .replace(/^(?:请)?(?:帮我)?(?:查|看|核查|检查|查询)\s*(?:一下)?\s*/, '')
     .replace(/能不能买|是否能买|可以买吗|会不会禁投|是否禁投|禁投证券|关联方证券/g, '')
     .replace(/禁投|关联方|证券|债券|股票|检查|核查|查询|查|会不会|是否|违规|问题/g, '')
     .replace(/买入|买/g, '')
+    .replace(/[吗么]\s*[?？。！!]*$/, '')
     .trim();
 }
 

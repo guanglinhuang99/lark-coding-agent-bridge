@@ -61,6 +61,11 @@ describe('WeCom risk parser', () => {
       product: '安联ESG纯债1号资产管理产品',
       securityQuery: '国债0115',
     });
+    expect(parseRiskMessage('查一下安联ESG纯债1号禁投国债0115吗', products)).toMatchObject({
+      kind: 'check_security',
+      product: '安联ESG纯债1号资产管理产品',
+      securityQuery: '国债0115',
+    });
   });
 
   it('does not intercept an unrelated use of 买', () => {

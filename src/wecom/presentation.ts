@@ -53,6 +53,7 @@ export function buildWeComControlCard(options: WeComControlCardOptions): Templat
 
   return {
     card_type: 'button_interaction',
+    card_action: { type: 0 },
     source: {
       desc: 'Codex Bridge',
       desc_color: status.color,

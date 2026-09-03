@@ -1,5 +1,11 @@
 import type { RiskSecuritySuggestion, RiskService } from './client';
-import { detectMarket, findAction, matchProductCandidates, type RiskActionType } from './parser';
+import {
+  detectMarket,
+  extractAmount,
+  findAction,
+  matchProductCandidates,
+  type RiskActionType,
+} from './parser';
 import type { RiskSelectionRequest } from './router';
 
 export interface RiskAiDraft {
@@ -22,7 +28,8 @@ export function isPretradeIntentCandidate(text: string): boolean {
   if (!findAction(text)) return false;
   return (
     /(?:安联|产品|资产管理|资管|账户|证券|债券|股票|国债|基金|回购|一级|二级)/.test(text) ||
-    /(?:金额|数量|\d+(?:\.\d+)?\s*(?:亿|万|元|块|股|手|张|份))/.test(text)
+    /(?:金额|数量|\d+(?:\.\d+)?\s*(?:亿|万|元|块|股|手|张|份))/.test(text) ||
+    extractAmount(text) !== undefined
   );
 }
 
@@ -119,7 +126,7 @@ export function buildRiskIntentPrompt(userText: string, previous?: RiskAiDraft, 
 
 export function parseRiskIntentOutput(raw: string, originalText: string): RiskAiDraft {
   const value = jsonObject(raw);
-  const accountQuery = str(value.account_query);
+  const accountQuery = str(value.account_query) || inferAccountQuery(originalText);
   const action = actionValue(value.action);
   const securityQuery = str(value.security_query);
   const amountText = str(value.amount_text);
@@ -179,11 +186,11 @@ export function buildIntentSelection(state: RiskIntentState, expiresAt: number):
       kind: 'intent-account',
       title: '请选择准确账户',
       subTitle: noCandidates
-        ? `risk-service 未找到账户候选；AI 识别关键词：${state.draft.accountQuery}`
-        : `AI 识别关键词：${state.draft.accountQuery}`,
+        ? '未找到匹配的产品，请选择“其他”并输入产品名称。'
+        : '请选择匹配的产品。',
       replyHint: noCandidates
-        ? '未找到候选，请选择“其他”并输入准确账户名称或关键词'
-        : '请选择 risk-service 返回的账户；若都不是请选择“其他”后自行输入',
+        ? '如果列表中没有合适的产品，请选择“其他”。'
+        : '如果列表中没有合适的产品，请选择“其他”。',
       options: [...state.products.map((label, i) => ({ key: `p${i + 1}`, label, value: label })), { key: 'other', label: '其他', value: '__other_account__' }],
       expiresAt,
     };
@@ -194,11 +201,11 @@ export function buildIntentSelection(state: RiskIntentState, expiresAt: number):
       kind: 'intent-security',
       title: '请选择准确证券',
       subTitle: noCandidates
-        ? `risk-service 未找到证券候选；AI 识别关键词：${state.draft.securityQuery ?? ''}`
-        : `AI 识别关键词：${state.draft.securityQuery ?? ''}`,
+        ? '未找到匹配的证券，请选择“其他”并输入证券名称或代码。'
+        : '请选择匹配的证券。',
       replyHint: noCandidates
-        ? '未找到候选，请选择“其他”并输入准确证券名称或代码'
-        : '请选择 risk-service 返回的证券；若都不是请选择“其他”后自行输入',
+        ? '如果列表中没有合适的证券，请选择“其他”。'
+        : '如果列表中没有合适的证券，请选择“其他”。',
       options: [...state.securities.map((item, i) => ({ key: `s${i + 1}`, label: item.label, value: JSON.stringify(item) })), { key: 'other', label: '其他', value: '__other_security__' }],
       expiresAt,
     };
@@ -250,13 +257,23 @@ function exactSecurity(query: string, options: RiskSecuritySuggestion[]): RiskSe
 function actionLabel(action: RiskActionType): string {
   return ({ subscription: '申购', redemption: '赎回', buy: '买入', sell: '卖出', repo: '正回购', reverse_repo: '逆回购' } as const)[action];
 }
+
+function inferAccountQuery(text: string): string {
+  const action = /逆回购|回购|申购|认购|赎回|买入|卖出|买|卖/.exec(text);
+  if (!action) return '';
+  return text
+    .slice(0, action.index)
+    .replace(/一级市场|二级市场|一级|二级/g, '')
+    .trim();
+}
+
 function jsonObject(raw: string): Record<string, unknown> {
   const t = raw.trim();
   const s = t.indexOf('{');
   const e = t.lastIndexOf('}');
-  if (s < 0 || e <= s) throw new Error('AI 未返回 JSON');
+  if (s < 0 || e <= s) throw new Error('交易信息格式错误');
   const v = JSON.parse(t.slice(s, e + 1));
-  if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('AI JSON 格式错误');
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('交易信息格式错误');
   return v as Record<string, unknown>;
 }
 function str(v: unknown): string { return typeof v === 'string' ? v.trim() : ''; }

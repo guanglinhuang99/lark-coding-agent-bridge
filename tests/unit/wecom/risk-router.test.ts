@@ -105,7 +105,8 @@ describe('WeCom risk fast-path router', () => {
     expect(expired).toMatchObject({ handled: true, intent: 'pretrade_calc' });
     if (expired.handled) {
       expect(expired.markdown).toContain('选择已过期');
-      expect(expired.markdown).toContain('未调用 AI');
+      expect(expired.markdown).not.toContain('AI');
+      expect(expired.markdown).not.toContain('risk-service');
     }
     expect(calculatePretrade).not.toHaveBeenCalled();
   });

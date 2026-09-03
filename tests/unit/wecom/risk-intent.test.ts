@@ -95,8 +95,8 @@ describe('AI pretrade intent normalization', () => {
     );
     const accountState = await normalizeRiskDraft('不存在账户买1000万国债', draft, accountService);
     expect(buildIntentSelection(accountState, 1000)).toMatchObject({
-      subTitle: expect.stringContaining('未找到账户候选'),
-      replyHint: expect.stringContaining('输入准确账户'),
+      subTitle: expect.stringContaining('未找到匹配的产品'),
+      replyHint: expect.stringContaining('其他'),
       options: [{ value: '__other_account__' }],
     });
 
@@ -108,8 +108,8 @@ describe('AI pretrade intent normalization', () => {
       securityService,
     );
     expect(buildIntentSelection(securityState, 1000)).toMatchObject({
-      subTitle: expect.stringContaining('未找到证券候选'),
-      replyHint: expect.stringContaining('输入准确证券'),
+      subTitle: expect.stringContaining('未找到匹配的证券'),
+      replyHint: expect.stringContaining('其他'),
       options: [{ value: '__other_security__' }],
     });
   });
@@ -120,6 +120,16 @@ describe('AI pretrade intent normalization', () => {
     expect(isPretradeIntentCandidate('安联ESG纯债1号 是否能买 国债0115')).toBe(false);
     expect(isPretradeIntentCandidate('安联ESG纯债1号 禁投 国债0115')).toBe(false);
     expect(isPretradeIntentCandidate('ESG纯债1号买1000万国债')).toBe(true);
+    expect(isPretradeIntentCandidate('ESG纯债1号申购0.1')).toBe(true);
+    expect(isPretradeIntentCandidate('ESG纯债1号正回购1亿7天')).toBe(true);
+  });
+
+  it('infers an omitted account from the text before the action', () => {
+    const draft = parseRiskIntentOutput(
+      '{"account_query":"","action":"subscription","security_query":null,"amount_text":"1000万"}',
+      'ESG纯债1号申购1000万',
+    );
+    expect(draft.accountQuery).toBe('ESG纯债1号');
   });
 
   it('requires and standardizes security for primary-market subscription', async () => {

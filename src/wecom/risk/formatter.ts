@@ -105,13 +105,13 @@ export function formatSecurityCheck(data: Record<string, unknown>): string {
       : '';
     return `✅ **未命中关联方禁投或禁投证券**${located ? `\n定位证券：${located}${located.includes('（') ? '）' : ''}` : ''}`;
   }
-  return '🟡 **无法确认是否禁投**：riskservice 未返回明确的 `hit=true/false`，请勿据此放行。';
+  return '🟡 **暂时无法确认是否禁投**，请勿据此放行。';
 }
 
 export function formatCounterpartyCheck(data: Record<string, unknown>): string {
   if (data.hit === true) return '🚫 **该交易对手命中关联方禁投**';
   if (data.hit === false) return '✅ **该交易对手未命中关联方禁投**';
-  return '🟡 **无法确认交易对手是否为关联方**：riskservice 未返回明确的 `hit=true/false`，请勿据此放行。';
+  return '🟡 **暂时无法确认交易对手是否为关联方**，请勿据此放行。';
 }
 
 export function formatHoldings(data: Record<string, unknown>): string {

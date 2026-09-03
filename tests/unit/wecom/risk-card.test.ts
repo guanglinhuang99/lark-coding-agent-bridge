@@ -17,11 +17,10 @@ describe('WeCom risk selection cards', () => {
     expect(card.button_selection).toBeUndefined();
   });
 
-  it('uses direct buttons for two to six candidates', () => {
+  it('uses one wide selector and one confirmation button for multiple candidates', () => {
     const card = buildRiskSelectionCard(selection(6), 'risk_buttons');
 
-    expect(card.button_list).toHaveLength(6);
-    expect(card.button_list?.map((button) => button.key)).toEqual([
+    expect(card.button_selection?.option_list.map((option) => option.id)).toEqual([
       '1',
       '2',
       '3',
@@ -29,7 +28,15 @@ describe('WeCom risk selection cards', () => {
       '5',
       '6',
     ]);
-    expect(card.button_selection).toBeUndefined();
+    expect(card.button_selection?.option_list.map((option) => option.text)).toEqual([
+      '候选1 CODE1',
+      '候选2 CODE2',
+      '候选3 CODE3',
+      '候选4 CODE4',
+      '候选5 CODE5',
+      '候选6 CODE6',
+    ]);
+    expect(card.button_list).toEqual([{ text: '确认选择', key: 'submit', style: 1 }]);
   });
 
   it('uses a dropdown and confirmation button for seven to ten candidates', () => {
@@ -54,6 +61,7 @@ describe('WeCom risk selection cards', () => {
       task_id: 'risk_done',
       main_title: { title: '已收到选择' },
     });
+    expect(card.card_action).toMatchObject({ type: 1 });
     expect(card.button_list).toBeUndefined();
   });
 
