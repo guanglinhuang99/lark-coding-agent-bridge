@@ -4,8 +4,10 @@ import type { TemplateCard } from '@wecom/aibot-node-sdk';
 import { renderText } from '../card/text-renderer';
 import type { RunState } from '../card/run-state';
 import type { CodexSandboxMode } from '../config/permissions';
+import { buildRunCardView, type WeComRunCardStatus } from './ui/builders';
+import { renderWeComCard } from './ui/renderer';
 
-export type WeComCardStatus = 'running' | 'idle' | 'stopping' | 'reset' | 'error';
+export type WeComCardStatus = WeComRunCardStatus;
 
 export interface WeComRenderMeta {
   workspace: string;
@@ -46,41 +48,7 @@ export function renderWeComMarkdown(state: RunState, meta: WeComRenderMeta): str
 
 /** Build the persistent WeCom interaction card displayed beside the stream. */
 export function buildWeComControlCard(options: WeComControlCardOptions): TemplateCard {
-  const running = options.status === 'running' || options.status === 'stopping';
-  const status = cardStatus(options.status);
-  const workspaceName = compactWorkspace(options.workspace);
-  const thread = options.threadId ? `继续 ${shortThread(options.threadId)}` : '新会话';
-
-  return {
-    card_type: 'button_interaction',
-    card_action: { type: 0 },
-    source: {
-      desc: 'Codex Bridge',
-      desc_color: status.color,
-    },
-    main_title: {
-      title: 'Codex 会话控制',
-      desc: clipText(options.notice ?? '企业微信 ↔ 本机 Codex（使用 ChatGPT/Codex 订阅）', 30),
-    },
-    sub_title_text: clipText(
-      sanitizeSensitiveText(
-        options.prompt?.trim() || '发送消息开始对话；回答主体使用 Markdown 富文本流。',
-      ),
-      112,
-    ),
-    horizontal_content_list: [
-      { keyname: '状态', value: clipText(status.label, 26) },
-      { keyname: '工作区', value: clipText(workspaceName, 26) },
-      { keyname: '权限', value: clipText(sandboxLabel(options.sandbox), 26) },
-      { keyname: '会话', value: clipText(thread, 26) },
-    ],
-    button_list: [
-      ...(running ? [{ text: '停止', style: 4, key: 'stop' }] : []),
-      { text: '新会话', style: 2, key: 'new' },
-      { text: '查看状态', style: 1, key: 'status' },
-    ],
-    task_id: options.taskId,
-  };
+  return renderWeComCard(buildRunCardView(options));
 }
 
 export function renderWeComNotice(title: string, lines: readonly string[]): string {
@@ -165,21 +133,6 @@ function runStatus(state: RunState): { icon: string; label: string } {
   if (state.footer === 'tool_running') return { icon: '🧰', label: '正在调用工具' };
   if (state.footer === 'streaming') return { icon: '✍️', label: '正在输出' };
   return { icon: '🧠', label: '正在思考' };
-}
-
-function cardStatus(status: WeComCardStatus): { label: string; color: 0 | 1 | 2 | 3 } {
-  switch (status) {
-    case 'running':
-      return { label: '运行中', color: 0 };
-    case 'stopping':
-      return { label: '停止请求已发送', color: 2 };
-    case 'reset':
-      return { label: '已创建新会话', color: 3 };
-    case 'error':
-      return { label: '操作失败', color: 2 };
-    case 'idle':
-      return { label: '空闲', color: 3 };
-  }
 }
 
 function sandboxLabel(sandbox: CodexSandboxMode): string {
