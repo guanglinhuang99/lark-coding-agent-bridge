@@ -17,7 +17,9 @@ import type {
   TextMessage,
   WsFrame,
 } from '@wecom/aibot-node-sdk';
+import { supportedModels } from '../agent/models';
 import { CodexAdapter } from '../agent/codex/adapter';
+import { listCodexThreadHistory } from '../session/codex-history';
 import type { AgentRun } from '../agent/types';
 import {
   finalizeIfRunning,
@@ -77,6 +79,13 @@ import {
 } from './media';
 import { sendLinkedWorkspaceArtifacts } from './egress';
 import { resolveWeComModelConfig } from './model-config';
+import {
+  effectiveModel as effectiveConversationModel,
+  effectiveReasoningEffort as effectiveConversationReasoningEffort,
+  setConversationModel,
+  setConversationReasoningEffort,
+  type ConversationAgentPreferences,
+} from './agent-preferences';
 import type { NormalizedAttachment } from '../media/attachment';
 import { RiskDirectClient } from './risk/client';
 import {
@@ -91,11 +100,27 @@ import {
 } from './risk/card';
 import {
   buildErrorCardView,
+  buildNoticeCardView,
   buildQueueCardView,
   type WeComErrorKind,
 } from './ui/builders';
 import type { WeComCardView } from './ui/model';
+import {
+  buildHomeCardView,
+  buildModelSelectionCardView,
+  buildReasoningSelectionCardView,
+  buildSessionSelectionCardView,
+  buildWorkspaceSelectionCardView,
+  type WeComSessionOption,
+  type WeComWorkspaceOption,
+} from './ui/navigation';
 import { renderWeComCard } from './ui/renderer';
+import {
+  cardPurposeFromTaskId,
+  isHomeAction,
+  navigationActionForPurpose,
+  type WeComCardPurpose,
+} from './card-routing';
 import { RiskProgressRelay } from './risk/progress';
 import {
   buildIntentSelection,
@@ -156,6 +181,7 @@ const {
   codexReasoningEffort,
   riskIntentModel,
 } = resolveWeComModelConfig(process.env);
+const conversationAgentPreferences = new Map<string, ConversationAgentPreferences>();
 const streamMaxBytes = readStreamMaxBytes(
   process.env.WECOM_STREAM_MAX_BYTES ?? process.env.WECOM_STREAM_MAX_CHARS,
 );
@@ -244,6 +270,13 @@ const sessionStore = new WeComSessionStore(sessionFile, {
 await sessionStore.load();
 const activeRuns = new Map<string, ActiveRunRecord>();
 const startingRuns = new Set<string>();
+interface NavigationTask {
+  purpose: Exclude<WeComCardPurpose, 'menu' | 'codex' | 'queue' | 'risk' | 'unknown'>;
+  conversationKey: string;
+  optionLabels: ReadonlyMap<string, string>;
+  expiresAt: number;
+}
+const navigationTasks = new Map<string, NavigationTask>();
 const messageDeduplicator = new WeComMessageDeduplicator(
   messageDedupeTtlMs,
   messageDedupeMaxEntries,
@@ -418,6 +451,26 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
 
   const key = conversationKey(body);
   const command = text.toLowerCase();
+
+  if (command === '/menu') {
+    await replyHomeCard(frame, key);
+    return;
+  }
+
+  if (command === '/workspace') {
+    await replyWorkspaceSelection(frame, key);
+    return;
+  }
+
+  if (command === '/model') {
+    await replyModelSelection(frame, key);
+    return;
+  }
+
+  if (command === '/resume') {
+    await replySessionSelection(frame, key);
+    return;
+  }
 
   if (command === '/new' || command === '/reset') {
     if (isConversationBusy(key)) {
@@ -1006,8 +1059,8 @@ async function runCodexPrompt(
       prompt,
       cwd: workspace,
       threadId,
-      model,
-      reasoningEffort: codexReasoningEffort,
+      model: effectiveModel(key),
+      reasoningEffort: effectiveReasoningEffort(key),
       sandbox,
       images: attachments
         .filter((attachment) => attachment.kind === 'image' && attachment.decision === 'accepted')
@@ -1135,15 +1188,7 @@ async function handleEnterChat(frame: EnterChatFrame): Promise<void> {
 
   await client.replyWelcome(frame, {
     msgtype: 'template_card',
-    template_card: buildWeComControlCard({
-      taskId: createTaskId(),
-      status: isConversationBusy(key) ? 'running' : 'idle',
-      workspace,
-      sandbox,
-      threadId: currentThreadId(key),
-      prompt: '发送消息开始；运行时可停止，也可用 /status、/new、/stop。',
-      notice: '发送消息即可调用本机 Codex',
-    }),
+    template_card: renderWeComCard(buildHomeCardView(homeCardOptions(key))),
   });
 }
 
@@ -1157,22 +1202,72 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
     await deliverErrorCard(frame, 'callback-invalid');
     return;
   }
-  if (taskId.startsWith('queue_')) {
-    await client.updateTemplateCard(
-      frame,
-      renderWeComCard(buildErrorCardView({ taskId, kind: 'callback-invalid' })),
-    );
+  const purpose = cardPurposeFromTaskId(taskId);
+  if (purpose === 'queue' || purpose === 'unknown') {
+    await updateInvalidCallback(frame, taskId);
     return;
   }
-  if (taskId.startsWith('risk_')) {
+  if (purpose === 'risk') {
     await handleRiskSelectionCardEvent(frame, key, taskId, rawAction, selectedId);
     return;
   }
-  const action = normalizeCardAction(rawAction);
+  if (purpose === 'menu') {
+    await handleHomeCardEvent(frame, key, taskId, rawAction);
+    return;
+  }
+  if (purpose === 'codex') {
+    await handleLegacyControlCardEvent(frame, key, taskId, rawAction);
+    return;
+  }
+  await handleNavigationCardEvent(frame, key, taskId, purpose, rawAction, selectedId);
+}
 
+async function handleHomeCardEvent(
+  frame: TemplateCardEventFrame,
+  key: string,
+  taskId: string,
+  rawAction: string | undefined,
+): Promise<void> {
+  if (!isHomeAction(rawAction)) {
+    await updateInvalidCallback(frame, taskId);
+    return;
+  }
   const active = activeRuns.get(key);
   const starting = startingRuns.has(key) || conversationQueue.has(key);
+  if (rawAction === 'stop') {
+    await updateHomeCard(frame, key, taskId);
+    if (active) {
+      active.state = markInterrupted(active.state);
+      void active.run.stop().catch((err: unknown) => {
+        console.error(`Failed to stop Codex run: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
+    return;
+  }
+  if (rawAction === 'new') {
+    if (active || starting) {
+      await updateHomeCard(frame, key, taskId);
+      return;
+    }
+    await sessionStore.clear(key);
+    riskRouter?.clear(key);
+    riskSelectionTasks.clearConversation(key);
+    riskIntents.clearConversation(key);
+    await updateHomeCard(frame, key, taskId);
+    return;
+  }
+  await updateHomeCard(frame, key, taskId);
+}
 
+async function handleLegacyControlCardEvent(
+  frame: TemplateCardEventFrame,
+  key: string,
+  taskId: string,
+  rawAction: string | undefined,
+): Promise<void> {
+  const action = normalizeCardAction(rawAction);
+  const active = activeRuns.get(key);
+  const starting = startingRuns.has(key) || conversationQueue.has(key);
   if (action === 'stop') {
     await client.updateTemplateCard(
       frame,
@@ -1194,7 +1289,6 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
     }
     return;
   }
-
   if (action === 'new') {
     if (active || starting) {
       await client.updateTemplateCard(
@@ -1211,11 +1305,7 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
       );
       return;
     }
-
-    const clearResult = sessionStore.clear(key).then(
-      () => undefined,
-      (err: unknown) => err,
-    );
+    await sessionStore.clear(key);
     riskRouter?.clear(key);
     riskSelectionTasks.clearConversation(key);
     riskIntents.clearConversation(key);
@@ -1229,11 +1319,8 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
         notice: '已创建新会话',
       }),
     );
-    const clearError = await clearResult;
-    if (clearError) throw clearError;
     return;
   }
-
   if (action === 'status') {
     await client.updateTemplateCard(
       frame,
@@ -1249,11 +1336,262 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
     );
     return;
   }
+  await updateInvalidCallback(frame, taskId);
+}
 
+async function replyHomeCard(frame: WsFrame, key: string): Promise<void> {
+  await client.replyTemplateCard(frame, renderWeComCard(buildHomeCardView(homeCardOptions(key))));
+}
+
+function homeCardOptions(key: string) {
+  return {
+    taskId: createNavigationTaskId('menu'),
+    busy: isConversationBusy(key),
+    workspace,
+    model: effectiveModel(key),
+    reasoning: effectiveReasoningEffort(key),
+    threadId: currentThreadId(key),
+  };
+}
+
+async function replyWorkspaceSelection(frame: WsFrame, key: string): Promise<void> {
+  const taskId = createNavigationTaskId('workspace');
+  const options: WeComWorkspaceOption[] = [
+    { id: 'current', label: `${path.basename(workspace)}（当前，需重启生效）` },
+  ];
+  registerNavigationTask(taskId, 'workspace', key, options.map((item) => [item.id, item.label]));
+  await client.replyTemplateCard(
+    frame,
+    renderWeComCard(buildWorkspaceSelectionCardView({ taskId, workspaces: options })),
+  );
+}
+
+async function replyModelSelection(frame: WsFrame, key: string): Promise<void> {
+  const taskId = createNavigationTaskId('model');
+  const options = modelSelectionOptions(key);
+  registerNavigationTask(taskId, 'model', key, options.map((item) => [item.id, item.text]));
+  await client.replyTemplateCard(
+    frame,
+    renderWeComCard(buildModelSelectionCardView({ taskId, models: options })),
+  );
+}
+
+async function replyReasoningSelection(frame: WsFrame, key: string): Promise<void> {
+  const taskId = createNavigationTaskId('reasoning');
+  const options = reasoningSelectionOptions(key);
+  registerNavigationTask(taskId, 'reasoning', key, options.map((item) => [item.id, item.text]));
+  await client.replyTemplateCard(
+    frame,
+    renderWeComCard(buildReasoningSelectionCardView({ taskId, levels: options })),
+  );
+}
+
+async function replySessionSelection(frame: WsFrame, key: string): Promise<void> {
+  const taskId = createNavigationTaskId('session');
+  try {
+    const history = await listCodexThreadHistory({
+      binary: process.env.CODEX_BINARY?.trim() || 'codex',
+      cwd: workspace,
+      limit: 10,
+      profileStateDir: stateDir,
+      inheritCodexHome: true,
+      timeoutMs: 5_000,
+    });
+    const sessions: WeComSessionOption[] = history.map((entry) => ({
+      id: entry.threadId,
+      label: entry.name || entry.preview || '(空会话)',
+      workspace: path.basename(entry.cwd),
+    }));
+    if (sessions.length === 0) {
+      await replyNoticeCard(frame, {
+        taskId,
+        title: '🧵 没有可恢复的会话',
+        description: `工作区 ${path.basename(workspace)} 暂无 Codex 历史 thread。`,
+      });
+      return;
+    }
+    registerNavigationTask(taskId, 'session', key, sessions.map((item) => [item.id, item.label]));
+    await client.replyTemplateCard(
+      frame,
+      renderWeComCard(buildSessionSelectionCardView({ taskId, sessions })),
+    );
+  } catch (err) {
+    log.warn('wecom-session', 'history-unavailable', {
+      message: redactDiagnosticText(err instanceof Error ? err.message : String(err)),
+    });
+    await replyNoticeCard(frame, {
+      taskId,
+      title: '🧵 暂时无法读取历史会话',
+      description: 'Codex 历史服务暂不可用，请稍后重试。',
+    });
+  }
+}
+
+async function handleNavigationCardEvent(
+  frame: TemplateCardEventFrame,
+  key: string,
+  taskId: string,
+  purpose: Exclude<WeComCardPurpose, 'menu' | 'codex' | 'queue' | 'risk' | 'unknown'>,
+  rawAction: string | undefined,
+  selectedId: string | undefined,
+): Promise<void> {
+  if (rawAction !== navigationActionForPurpose(purpose)) {
+    await updateInvalidCallback(frame, taskId);
+    return;
+  }
+  const task = navigationTasks.get(taskId);
+  if (!task || task.purpose !== purpose || task.conversationKey !== key) {
+    await updateInvalidCallback(frame, taskId);
+    return;
+  }
+  if (task.expiresAt <= Date.now()) {
+    navigationTasks.delete(taskId);
+    await client.updateTemplateCard(
+      frame,
+      renderWeComCard(buildErrorCardView({ taskId, kind: 'callback-expired' })),
+    );
+    return;
+  }
+  if (!selectedId || !task.optionLabels.has(selectedId)) {
+    await updateInvalidCallback(frame, taskId);
+    return;
+  }
+
+  if (purpose === 'session' && isConversationBusy(key)) {
+    await replyNavigationResult(
+      frame,
+      key,
+      taskId,
+      '当前任务仍在运行，请先停止后再恢复会话。',
+      'warning',
+      '⚠️ 暂不能恢复会话',
+    );
+    return;
+  }
+
+  const label = task.optionLabels.get(selectedId) ?? selectedId;
+  if (purpose === 'model') setConversationModel(conversationAgentPreferences, key, selectedId);
+  if (purpose === 'reasoning') {
+    setConversationReasoningEffort(conversationAgentPreferences, key, selectedId);
+  }
+  if (purpose === 'session') await sessionStore.setThread(key, selectedId);
+  navigationTasks.delete(taskId);
+
+  const message =
+    purpose === 'workspace'
+      ? 'WeCom workspace 在进程启动时固定；请重启并设置 WECOM_WORKSPACE 后生效。'
+      : purpose === 'session'
+        ? `已恢复会话：${label}`
+        : `已应用${purpose === 'model' ? '模型' : '推理强度'}：${label}（当前会话后续新任务生效）`;
+  await replyNavigationResult(
+    frame,
+    key,
+    taskId,
+    message,
+    purpose === 'workspace' ? 'warning' : 'success',
+    purpose === 'workspace' ? '⚠️ Workspace 需要重启' : '✅ 操作已处理',
+  );
+}
+
+async function replyNavigationResult(
+  frame: TemplateCardEventFrame,
+  key: string,
+  taskId: string,
+  message: string,
+  status: 'success' | 'warning',
+  title: string,
+): Promise<void> {
+  await client.updateTemplateCard(
+    frame,
+    renderWeComCard(
+      buildNoticeCardView({
+        taskId,
+        source: 'Codex Bridge',
+        title,
+        description: message,
+        subtitle: '可继续使用下方最新控制卡片。',
+        status,
+      }),
+    ),
+  );
+  await deliverControlCard(frame, renderWeComCard(buildHomeCardView(homeCardOptions(key))));
+}
+
+async function replyNoticeCard(
+  frame: WsFrame,
+  options: { taskId: string; title: string; description: string },
+): Promise<void> {
+  await client.replyTemplateCard(
+    frame,
+    renderWeComCard(
+      buildNoticeCardView({
+        ...options,
+        source: 'Codex Bridge',
+        status: 'warning',
+      }),
+    ),
+  );
+}
+
+async function updateHomeCard(
+  frame: TemplateCardEventFrame,
+  key: string,
+  taskId: string,
+): Promise<void> {
+  await client.updateTemplateCard(
+    frame,
+    renderWeComCard(buildHomeCardView({ ...homeCardOptions(key), taskId })),
+  );
+}
+
+async function updateInvalidCallback(frame: TemplateCardEventFrame, taskId: string): Promise<void> {
   await client.updateTemplateCard(
     frame,
     renderWeComCard(buildErrorCardView({ taskId, kind: 'callback-invalid' })),
   );
+}
+
+function registerNavigationTask(
+  taskId: string,
+  purpose: NavigationTask['purpose'],
+  key: string,
+  options: readonly [string, string][],
+): void {
+  const expiresAt = Date.now() + 5 * 60_000;
+  navigationTasks.set(taskId, {
+    purpose,
+    conversationKey: key,
+    optionLabels: new Map(options),
+    expiresAt,
+  });
+  const timer = setTimeout(() => {
+    const task = navigationTasks.get(taskId);
+    if (task?.expiresAt === expiresAt) navigationTasks.delete(taskId);
+  }, 5 * 60_000);
+  timer.unref();
+}
+
+function modelSelectionOptions(key: string) {
+  const currentModel = effectiveModel(key);
+  const known = supportedModels('codex')
+    .filter((item) => item.value !== 'default')
+    .map((item) => ({ id: item.value, text: item.label }));
+  return [
+    { id: currentModel, text: `${currentModel}（当前）` },
+    ...known.filter((item) => item.id !== currentModel),
+  ];
+}
+
+function reasoningSelectionOptions(key: string) {
+  const currentReasoningEffort = effectiveReasoningEffort(key);
+  const known = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].map((id) => ({
+    id,
+    text: id,
+  }));
+  return [
+    { id: currentReasoningEffort, text: `${currentReasoningEffort}（当前）` },
+    ...known.filter((item) => item.id !== currentReasoningEffort),
+  ];
 }
 
 async function handleRiskSelectionCardEvent(
@@ -1473,7 +1811,8 @@ async function replyStatus(frame: WsFrame, key: string): Promise<void> {
       `工作区：\`${workspace}\``,
       `权限：\`${sandbox}\``,
       `会话：\`${threadId ?? 'new'}\``,
-      `模型：\`${model ?? 'Codex default'}\``,
+      `模型：\`${effectiveModel(key) || 'Codex default'}\``,
+      `推理：\`${effectiveReasoningEffort(key)}\``,
       `排队：\`${conversationQueue.queued(key)}\``,
     ],
     busy ? 'running' : 'idle',
@@ -1652,6 +1991,18 @@ function currentThreadId(key: string): string | undefined {
   return activeRuns.get(key)?.threadId ?? sessionStore.threadId(key);
 }
 
+function effectiveModel(key: string): string {
+  return effectiveConversationModel(conversationAgentPreferences, key, model);
+}
+
+function effectiveReasoningEffort(key: string): string {
+  return effectiveConversationReasoningEffort(
+    conversationAgentPreferences,
+    key,
+    codexReasoningEffort,
+  );
+}
+
 async function persistThread(key: string, threadId: string | undefined): Promise<void> {
   if (!threadId) return;
   await sessionStore.setThread(key, threadId);
@@ -1660,6 +2011,13 @@ async function persistThread(key: string, threadId: string | undefined): Promise
 function createTaskId(): string {
   const suffix = randomUUID().replace(/-/g, '').slice(0, 10);
   return `codex_${Date.now()}_${suffix}`;
+}
+
+function createNavigationTaskId(
+  purpose: Exclude<WeComCardPurpose, 'codex' | 'queue' | 'risk' | 'unknown'>,
+): string {
+  const suffix = randomUUID().replace(/-/g, '').slice(0, 10);
+  return `${purpose}_${Date.now()}_${suffix}`;
 }
 
 function createQueueTaskId(): string {
