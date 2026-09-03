@@ -18,6 +18,7 @@ export type RiskIntentState =
   | { stage: 'freeform'; originalText: string; draft: RiskAiDraft; field: 'account' | 'security' | 'amount' | 'market' | 'other'; product?: string; security?: RiskSecuritySuggestion };
 
 export function isPretradeIntentCandidate(text: string): boolean {
+  if (/能不能买|是否能买|可以买吗|可不可以买|禁投|关联方证券/.test(text)) return false;
   if (!findAction(text)) return false;
   return (
     /(?:安联|产品|资产管理|资管|账户|证券|债券|股票|国债|基金|回购|一级|二级)/.test(text) ||
@@ -123,11 +124,14 @@ export function parseRiskIntentOutput(raw: string, originalText: string): RiskAi
   const securityQuery = str(value.security_query);
   const amountText = str(value.amount_text);
   const days = num(value.days);
+  const market = detectMarket(originalText);
+  const needsSecurity =
+    action === 'buy' || action === 'sell' || (market === 'primary' && action === 'subscription');
   const missing = [
     ...(!accountQuery ? ['账户'] : []),
     ...(!action ? ['交易动作'] : []),
     ...(!amountText ? ['金额/数量'] : []),
-    ...((action === 'buy' || action === 'sell') && !securityQuery ? ['交易标的'] : []),
+    ...(needsSecurity && !securityQuery ? ['交易标的'] : []),
   ];
   if (missing.length) throw new RiskIntentClarificationError(missing);
   if (!action) throw new RiskIntentClarificationError(['交易动作']);
@@ -137,7 +141,7 @@ export function parseRiskIntentOutput(raw: string, originalText: string): RiskAi
     ...(securityQuery ? { securityQuery } : {}),
     amountText,
     ...(days !== undefined ? { days } : {}),
-    market: detectMarket(originalText),
+    market,
   };
 }
 
@@ -156,7 +160,11 @@ export async function normalizeRiskDraft(originalText: string, draft: RiskAiDraf
 }
 
 export async function normalizeSecurity(originalText: string, draft: RiskAiDraft, product: string, service: RiskService): Promise<RiskIntentState> {
-  if (draft.action !== 'buy' && draft.action !== 'sell') return { stage: 'confirm', originalText, draft, product };
+  const needsSecurity =
+    draft.action === 'buy' ||
+    draft.action === 'sell' ||
+    (draft.market === 'primary' && draft.action === 'subscription');
+  if (!needsSecurity) return { stage: 'confirm', originalText, draft, product };
   const securities = await service.searchSecurities(draft.securityQuery ?? '');
   const exact = exactSecurity(draft.securityQuery ?? '', securities);
   if (exact) return { stage: 'confirm', originalText, draft, product, security: exact };

@@ -114,9 +114,39 @@ describe('AI pretrade intent normalization', () => {
     });
   });
 
-  it('does not classify ordinary messages containing 买 as pretrade intents', () => {
+  it('does not classify ordinary or read-only 买 queries as pretrade intents', () => {
     expect(isPretradeIntentCandidate('帮我买一本书')).toBe(false);
+    expect(isPretradeIntentCandidate('安联ESG纯债1号 能不能买 国债0115')).toBe(false);
+    expect(isPretradeIntentCandidate('安联ESG纯债1号 是否能买 国债0115')).toBe(false);
+    expect(isPretradeIntentCandidate('安联ESG纯债1号 禁投 国债0115')).toBe(false);
     expect(isPretradeIntentCandidate('ESG纯债1号买1000万国债')).toBe(true);
+  });
+
+  it('requires and standardizes security for primary-market subscription', async () => {
+    expect(() =>
+      parseRiskIntentOutput(
+        '{"account_query":"ESG纯债1号","action":"subscription","security_query":null,"amount_text":"1000万"}',
+        'ESG纯债1号 一级申购 1000万',
+      ),
+    ).toThrow(/交易标的/);
+
+    const service = fakeService();
+    const draft = parseRiskIntentOutput(
+      '{"account_query":"ESG纯债1号","action":"subscription","security_query":"国债0115","amount_text":"1000万"}',
+      'ESG纯债1号 一级申购 1000万 国债0115',
+    );
+    const state = await normalizeRiskDraft(
+      'ESG纯债1号 一级申购 1000万 国债0115',
+      draft,
+      service,
+    );
+    expect(service.searchSecurities).toHaveBeenCalledWith('国债0115');
+    expect(state).toMatchObject({
+      stage: 'confirm',
+      product: '安联ESG纯债1号资产管理产品',
+      security: { code: '019115.SH' },
+      draft: { market: 'primary', action: 'subscription' },
+    });
   });
 
   it('expires conversation and card intent state', () => {
