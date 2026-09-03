@@ -79,6 +79,13 @@ import {
 } from './media';
 import { sendLinkedWorkspaceArtifacts } from './egress';
 import { resolveWeComModelConfig } from './model-config';
+import {
+  effectiveModel as effectiveConversationModel,
+  effectiveReasoningEffort as effectiveConversationReasoningEffort,
+  setConversationModel,
+  setConversationReasoningEffort,
+  type ConversationAgentPreferences,
+} from './agent-preferences';
 import type { NormalizedAttachment } from '../media/attachment';
 import { RiskDirectClient } from './risk/client';
 import {
@@ -174,8 +181,7 @@ const {
   codexReasoningEffort,
   riskIntentModel,
 } = resolveWeComModelConfig(process.env);
-let activeModel = model;
-let activeReasoningEffort = codexReasoningEffort;
+const conversationAgentPreferences = new Map<string, ConversationAgentPreferences>();
 const streamMaxBytes = readStreamMaxBytes(
   process.env.WECOM_STREAM_MAX_BYTES ?? process.env.WECOM_STREAM_MAX_CHARS,
 );
@@ -1053,8 +1059,8 @@ async function runCodexPrompt(
       prompt,
       cwd: workspace,
       threadId,
-      model: activeModel,
-      reasoningEffort: activeReasoningEffort,
+      model: effectiveModel(key),
+      reasoningEffort: effectiveReasoningEffort(key),
       sandbox,
       images: attachments
         .filter((attachment) => attachment.kind === 'image' && attachment.decision === 'accepted')
@@ -1342,8 +1348,8 @@ function homeCardOptions(key: string) {
     taskId: createNavigationTaskId('menu'),
     busy: isConversationBusy(key),
     workspace,
-    model: activeModel,
-    reasoning: activeReasoningEffort,
+    model: effectiveModel(key),
+    reasoning: effectiveReasoningEffort(key),
     threadId: currentThreadId(key),
   };
 }
@@ -1362,7 +1368,7 @@ async function replyWorkspaceSelection(frame: WsFrame, key: string): Promise<voi
 
 async function replyModelSelection(frame: WsFrame, key: string): Promise<void> {
   const taskId = createNavigationTaskId('model');
-  const options = modelSelectionOptions();
+  const options = modelSelectionOptions(key);
   registerNavigationTask(taskId, 'model', key, options.map((item) => [item.id, item.text]));
   await client.replyTemplateCard(
     frame,
@@ -1372,7 +1378,7 @@ async function replyModelSelection(frame: WsFrame, key: string): Promise<void> {
 
 async function replyReasoningSelection(frame: WsFrame, key: string): Promise<void> {
   const taskId = createNavigationTaskId('reasoning');
-  const options = reasoningSelectionOptions();
+  const options = reasoningSelectionOptions(key);
   registerNavigationTask(taskId, 'reasoning', key, options.map((item) => [item.id, item.text]));
   await client.replyTemplateCard(
     frame,
@@ -1464,8 +1470,10 @@ async function handleNavigationCardEvent(
   }
 
   const label = task.optionLabels.get(selectedId) ?? selectedId;
-  if (purpose === 'model') activeModel = selectedId;
-  if (purpose === 'reasoning') activeReasoningEffort = selectedId;
+  if (purpose === 'model') setConversationModel(conversationAgentPreferences, key, selectedId);
+  if (purpose === 'reasoning') {
+    setConversationReasoningEffort(conversationAgentPreferences, key, selectedId);
+  }
   if (purpose === 'session') await sessionStore.setThread(key, selectedId);
   navigationTasks.delete(taskId);
 
@@ -1474,7 +1482,7 @@ async function handleNavigationCardEvent(
       ? 'WeCom workspace 在进程启动时固定；请重启并设置 WECOM_WORKSPACE 后生效。'
       : purpose === 'session'
         ? `已恢复会话：${label}`
-        : `已应用${purpose === 'model' ? '模型' : '推理强度'}：${label}（当前进程后续新任务生效）`;
+        : `已应用${purpose === 'model' ? '模型' : '推理强度'}：${label}（当前会话后续新任务生效）`;
   await replyNavigationResult(
     frame,
     key,
@@ -1563,24 +1571,26 @@ function registerNavigationTask(
   timer.unref();
 }
 
-function modelSelectionOptions() {
+function modelSelectionOptions(key: string) {
+  const currentModel = effectiveModel(key);
   const known = supportedModels('codex')
     .filter((item) => item.value !== 'default')
     .map((item) => ({ id: item.value, text: item.label }));
   return [
-    { id: activeModel, text: `${activeModel}（当前）` },
-    ...known.filter((item) => item.id !== activeModel),
+    { id: currentModel, text: `${currentModel}（当前）` },
+    ...known.filter((item) => item.id !== currentModel),
   ];
 }
 
-function reasoningSelectionOptions() {
+function reasoningSelectionOptions(key: string) {
+  const currentReasoningEffort = effectiveReasoningEffort(key);
   const known = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].map((id) => ({
     id,
     text: id,
   }));
   return [
-    { id: activeReasoningEffort, text: `${activeReasoningEffort}（当前）` },
-    ...known.filter((item) => item.id !== activeReasoningEffort),
+    { id: currentReasoningEffort, text: `${currentReasoningEffort}（当前）` },
+    ...known.filter((item) => item.id !== currentReasoningEffort),
   ];
 }
 
@@ -1801,8 +1811,8 @@ async function replyStatus(frame: WsFrame, key: string): Promise<void> {
       `工作区：\`${workspace}\``,
       `权限：\`${sandbox}\``,
       `会话：\`${threadId ?? 'new'}\``,
-      `模型：\`${activeModel || 'Codex default'}\``,
-      `推理：\`${activeReasoningEffort}\``,
+      `模型：\`${effectiveModel(key) || 'Codex default'}\``,
+      `推理：\`${effectiveReasoningEffort(key)}\``,
       `排队：\`${conversationQueue.queued(key)}\``,
     ],
     busy ? 'running' : 'idle',
@@ -1979,6 +1989,18 @@ function renderStream(state: RunState, threadId: string | undefined): string {
 
 function currentThreadId(key: string): string | undefined {
   return activeRuns.get(key)?.threadId ?? sessionStore.threadId(key);
+}
+
+function effectiveModel(key: string): string {
+  return effectiveConversationModel(conversationAgentPreferences, key, model);
+}
+
+function effectiveReasoningEffort(key: string): string {
+  return effectiveConversationReasoningEffort(
+    conversationAgentPreferences,
+    key,
+    codexReasoningEffort,
+  );
 }
 
 async function persistThread(key: string, threadId: string | undefined): Promise<void> {
