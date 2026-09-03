@@ -47,7 +47,7 @@ describe('WeCom rich presentation', () => {
     expect(markdown).toContain('中文🙂');
   });
 
-  it('renders agent Markdown, tool status, and a card-like status header', () => {
+  it('renders agent Markdown, tool status, and a Claude-style live TUI header', () => {
     let state: RunState = {
       ...initialState,
       blocks: [],
@@ -72,10 +72,11 @@ describe('WeCom rich presentation', () => {
 
     const markdown = renderWeComMarkdown(state, meta);
 
-    expect(markdown).toContain('### 🤖 Codex');
-    expect(markdown).toContain('正在输出');
-    expect(markdown).toContain('STREAM');
-    expect(markdown).toContain('`workspace` web-cli');
+    expect(markdown).toContain('### 🤖 **CODEX**');
+    expect(markdown).toContain('**▌ ● STREAM**');
+    expect(markdown).toContain('**workspace** `web-cli`');
+    expect(markdown).toContain('├─ ✓ Bash');
+    expect(markdown).toContain('└─ ⟳ Response streaming');
     expect(markdown).toContain('**Bash**');
     expect(markdown).toContain('**检查完成**');
     expect(markdown).toContain('```text');
@@ -100,6 +101,47 @@ describe('WeCom rich presentation', () => {
     expect(JSON.stringify(card)).toContain('检查当前仓库状态');
   });
 
+  it('refreshes the same card from live RunState when the user requests status', () => {
+    let state = reduce(freshState(), {
+      type: 'tool_use',
+      id: 'tool-live',
+      name: 'npm run ci',
+      input: {},
+    });
+    let card = buildWeComControlCard({
+      ...meta,
+      taskId: 'codex_live_task',
+      status: 'running',
+      prompt: '测试项目',
+      runState: state,
+    });
+
+    expect(card.main_title?.title).toContain('正在执行工具');
+    expect(card.sub_title_text).toContain('TOOL');
+    expect(card.sub_title_text).toContain('⟳ npm run ci');
+    expect(card.task_id).toBe('codex_live_task');
+
+    state = reduce(state, {
+      type: 'tool_result',
+      id: 'tool-live',
+      output: 'pass',
+      isError: false,
+    });
+    state = reduce(state, { type: 'done', terminationReason: 'normal' });
+    card = buildWeComControlCard({
+      ...meta,
+      taskId: 'codex_live_task',
+      status: 'running',
+      prompt: '测试项目',
+      runState: state,
+    });
+
+    expect(card.main_title?.title).toContain('任务完成');
+    expect(card.sub_title_text).toContain('COMPLETED');
+    expect(card.button_list?.map((button) => button.key)).toEqual(['new', 'status']);
+    expect(card.task_id).toBe('codex_live_task');
+  });
+
   it('omits stop while idle and keeps a caller-provided task id stable', () => {
     const first = buildWeComControlCard({
       ...meta,
@@ -120,16 +162,16 @@ describe('WeCom rich presentation', () => {
 
   it('renders thinking, tool, streaming, and done transitions from the shared RunState', () => {
     let state = reduce(freshState(), { type: 'thinking', delta: '分析中' });
-    expect(renderWeComMarkdown(state, meta)).toContain('正在思考');
+    expect(renderWeComMarkdown(state, meta)).toContain('THINK');
 
     state = reduce(state, { type: 'tool_use', id: 'tool-1', name: 'Read', input: {} });
-    expect(renderWeComMarkdown(state, meta)).toContain('正在调用工具');
+    expect(renderWeComMarkdown(state, meta)).toContain('TOOL');
 
     state = reduce(state, { type: 'text', delta: '流式回答' });
-    expect(renderWeComMarkdown(state, meta)).toContain('正在输出');
+    expect(renderWeComMarkdown(state, meta)).toContain('STREAM');
 
     state = reduce(state, { type: 'done', terminationReason: 'normal' });
-    expect(renderWeComMarkdown(state, meta)).toContain('已完成');
+    expect(renderWeComMarkdown(state, meta)).toContain('DONE');
   });
 
   it('shows tool errors, interrupted runs, and terminal errors distinctly', () => {
@@ -146,8 +188,9 @@ describe('WeCom rich presentation', () => {
       isError: true,
     });
     expect(renderWeComMarkdown(toolState, meta)).toContain('❌ **Bash**');
+    expect(renderWeComMarkdown(toolState, meta)).toContain('├─ × Bash');
 
-    expect(renderWeComMarkdown(markInterrupted(freshState()), meta)).toContain('已中断');
+    expect(renderWeComMarkdown(markInterrupted(freshState()), meta)).toContain('STOPPED');
 
     const failed = reduce(freshState(), {
       type: 'error',
@@ -155,7 +198,7 @@ describe('WeCom rich presentation', () => {
       terminationReason: 'failed',
     });
     const failedMarkdown = renderWeComMarkdown(failed, meta);
-    expect(failedMarkdown).toContain('执行失败');
+    expect(failedMarkdown).toContain('FAILED');
     expect(failedMarkdown).toContain('boom');
 
     const timedOut = reduce(freshState(), {
@@ -163,7 +206,7 @@ describe('WeCom rich presentation', () => {
       message: 'idle timeout',
       terminationReason: 'timeout',
     });
-    expect(renderWeComMarkdown(timedOut, meta)).toContain('已超时');
+    expect(renderWeComMarkdown(timedOut, meta)).toContain('TIMEOUT');
   });
 
   it('uses final_text when the stream did not emit text blocks', () => {
