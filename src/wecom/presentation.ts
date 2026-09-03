@@ -1,6 +1,9 @@
 import { basename } from 'node:path';
 import { homedir } from 'node:os';
 import type { TemplateCard } from '@wecom/aibot-node-sdk';
+import { taskCard } from '../card-ui/cards';
+import { renderWeComAgentCard } from '../card-ui/wecom-renderer';
+import type { CardStatus } from '../card-ui/types';
 import { renderText } from '../card/text-renderer';
 import type { RunState } from '../card/run-state';
 import type { CodexSandboxMode } from '../config/permissions';
@@ -23,15 +26,15 @@ export interface WeComControlCardOptions extends WeComRenderMeta {
 /**
  * Render the same RunState used by the Feishu card renderer as a structured
  * WeCom Markdown stream. The body keeps the agent's Markdown intact while the
- * header and footer provide a card-like status surface.
+ * header uses a compact TUI-style status surface.
  */
 export function renderWeComMarkdown(state: RunState, meta: WeComRenderMeta): string {
   const status = runStatus(state);
   const thread = meta.threadId ? `\`${escapeInlineCode(shortThread(meta.threadId))}\`` : '`new`';
   const header = [
     '### 🤖 Codex',
-    `> ${status.icon} **${status.label}**`,
-    `> 工作区：\`${escapeInlineCode(compactWorkspace(meta.workspace))}\` · 权限：\`${sandboxLabel(meta.sandbox)}\` · 会话：${thread}`,
+    `> ${status.icon} **${status.label}**  ·  ${status.terminal}`,
+    `> \`workspace\` ${escapeInlineCode(compactWorkspace(meta.workspace))}  ·  \`mode\` ${sandboxLabel(meta.sandbox)}  ·  \`session\` ${thread}`,
   ].join('\n');
 
   const renderedBody = sanitizeSensitiveText(renderText(sanitizeToolInputs(state))).trim();
@@ -49,37 +52,33 @@ export function buildWeComControlCard(options: WeComControlCardOptions): Templat
   const running = options.status === 'running' || options.status === 'stopping';
   const status = cardStatus(options.status);
   const workspaceName = compactWorkspace(options.workspace);
-  const thread = options.threadId ? `继续 ${shortThread(options.threadId)}` : '新会话';
+  const thread = options.threadId ? `continue ${shortThread(options.threadId)}` : 'new';
 
-  return {
-    card_type: 'button_interaction',
-    source: {
-      desc: 'Codex Bridge',
-      desc_color: status.color,
-    },
-    main_title: {
+  return renderWeComAgentCard(
+    taskCard({
+      taskId: options.taskId,
+      status: status.semantic,
+      tone: status.tone,
+      eyebrow: 'CODEX · WECOM',
       title: 'Codex 会话控制',
-      desc: clipText(options.notice ?? '企业微信 ↔ 本机 Codex（使用 ChatGPT/Codex 订阅）', 30),
-    },
-    sub_title_text: clipText(
-      sanitizeSensitiveText(
-        options.prompt?.trim() || '发送消息开始对话；回答主体使用 Markdown 富文本流。',
+      subtitle: options.notice ?? '企业微信 ↔ 本机 Codex',
+      body: sanitizeSensitiveText(
+        options.prompt?.trim() || '发送消息开始任务；运行状态会持续更新。',
       ),
-      112,
-    ),
-    horizontal_content_list: [
-      { keyname: '状态', value: clipText(status.label, 26) },
-      { keyname: '工作区', value: clipText(workspaceName, 26) },
-      { keyname: '权限', value: clipText(sandboxLabel(options.sandbox), 26) },
-      { keyname: '会话', value: clipText(thread, 26) },
-    ],
-    button_list: [
-      ...(running ? [{ text: '停止', style: 4, key: 'stop' }] : []),
-      { text: '新会话', style: 2, key: 'new' },
-      { text: '查看状态', style: 1, key: 'status' },
-    ],
-    task_id: options.taskId,
-  };
+      fields: [
+        { label: 'status', value: status.label },
+        { label: 'workspace', value: workspaceName },
+        { label: 'mode', value: sandboxLabel(options.sandbox) },
+        { label: 'session', value: thread },
+      ],
+      steps: controlSteps(options.status),
+      actions: [
+        ...(running ? [{ key: 'stop', label: '停止', tone: 'danger' as const }] : []),
+        { key: 'new', label: '新会话', tone: 'secondary' as const },
+        { key: 'status', label: '查看状态', tone: 'primary' as const },
+      ],
+    }),
+  );
 }
 
 export function renderWeComNotice(title: string, lines: readonly string[]): string {
@@ -145,35 +144,60 @@ function sanitizeSensitiveText(value: string): string {
   return output.replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]');
 }
 
-function runStatus(state: RunState): { icon: string; label: string } {
-  if (state.terminal === 'done') return { icon: '✅', label: '已完成' };
-  if (state.terminal === 'interrupted') return { icon: '⏹', label: '已中断' };
-  if (state.terminal === 'idle_timeout') return { icon: '⏱', label: '已超时' };
-  if (state.terminal === 'error') return { icon: '⚠️', label: '执行失败' };
-  if (state.footer === 'tool_running') return { icon: '🧰', label: '正在调用工具' };
-  if (state.footer === 'streaming') return { icon: '✍️', label: '正在输出' };
-  return { icon: '🧠', label: '正在思考' };
+function runStatus(state: RunState): { icon: string; label: string; terminal: string } {
+  if (state.terminal === 'done') return { icon: '✅', label: '已完成', terminal: 'DONE' };
+  if (state.terminal === 'interrupted') return { icon: '⏹', label: '已中断', terminal: 'STOPPED' };
+  if (state.terminal === 'idle_timeout') return { icon: '⏱', label: '已超时', terminal: 'TIMEOUT' };
+  if (state.terminal === 'error') return { icon: '⚠️', label: '执行失败', terminal: 'FAILED' };
+  if (state.footer === 'tool_running') return { icon: '🧰', label: '正在调用工具', terminal: 'TOOL' };
+  if (state.footer === 'streaming') return { icon: '✍️', label: '正在输出', terminal: 'STREAM' };
+  return { icon: '🧠', label: '正在思考', terminal: 'THINK' };
 }
 
-function cardStatus(status: WeComCardStatus): { label: string; color: 0 | 1 | 2 | 3 } {
+function cardStatus(status: WeComCardStatus): {
+  label: string;
+  semantic: CardStatus;
+  tone: 'neutral' | 'info' | 'success' | 'warning' | 'danger';
+} {
   switch (status) {
     case 'running':
-      return { label: '运行中', color: 0 };
+      return { label: '运行中', semantic: 'running', tone: 'info' };
     case 'stopping':
-      return { label: '停止请求已发送', color: 2 };
+      return { label: '停止请求已发送', semantic: 'stopping', tone: 'warning' };
     case 'reset':
-      return { label: '已创建新会话', color: 3 };
+      return { label: '已创建新会话', semantic: 'success', tone: 'success' };
     case 'error':
-      return { label: '操作失败', color: 2 };
+      return { label: '操作失败', semantic: 'error', tone: 'danger' };
     case 'idle':
-      return { label: '空闲', color: 3 };
+      return { label: '空闲', semantic: 'idle', tone: 'neutral' };
   }
 }
 
+function controlSteps(status: WeComCardStatus): readonly {
+  label: string;
+  status: 'pending' | 'running' | 'done' | 'error';
+}[] {
+  if (status === 'running') {
+    return [
+      { label: 'Codex runtime connected', status: 'done' },
+      { label: 'Agent task executing', status: 'running' },
+    ];
+  }
+  if (status === 'stopping') {
+    return [
+      { label: 'Stop signal sent', status: 'done' },
+      { label: 'Waiting for process exit', status: 'running' },
+    ];
+  }
+  if (status === 'error') return [{ label: 'Action failed', status: 'error' }];
+  if (status === 'reset') return [{ label: 'Fresh session ready', status: 'done' }];
+  return [{ label: 'Ready for next task', status: 'pending' }];
+}
+
 function sandboxLabel(sandbox: CodexSandboxMode): string {
-  if (sandbox === 'workspace-write') return '工作区可写';
-  if (sandbox === 'danger-full-access') return '完全访问';
-  return '只读';
+  if (sandbox === 'workspace-write') return 'workspace-write';
+  if (sandbox === 'danger-full-access') return 'full-access';
+  return 'read-only';
 }
 
 function compactWorkspace(workspace: string): string {
