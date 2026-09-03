@@ -83,6 +83,40 @@ describe('WeCom runtime contracts', () => {
     expect(readStreamMaxBytes('invalid')).toBe(20_000);
   });
 
+  it('starts one combined live stream + control card when the SDK supports it', async () => {
+    const replyStream = vi.fn(async () => undefined);
+    const replyStreamWithCard = vi.fn(async () => undefined);
+    const client: WeComStreamClient = { replyStream, replyStreamWithCard };
+    const frame: WsFrameHeaders = { headers: { req_id: 'req-combined' } };
+    const card: TemplateCard = { card_type: 'button_interaction', task_id: 'task-combined' };
+    const stream = new WeComStreamReply(client, frame, 'stream-combined');
+
+    await expect(stream.startWithCard('**▌ ● THINK**', card)).resolves.toBe(true);
+    expect(replyStream).not.toHaveBeenCalled();
+    expect(replyStreamWithCard).toHaveBeenCalledWith(
+      frame,
+      'stream-combined',
+      '**▌ ● THINK**',
+      false,
+      { templateCard: card },
+    );
+    await expect(stream.update('**▌ ● STREAM**')).resolves.toBe(true);
+    expect(replyStream).toHaveBeenCalledWith(frame, 'stream-combined', '**▌ ● STREAM**', false);
+  });
+
+  it('falls back to a plain stream when combined card replies are unavailable', async () => {
+    const calls: StreamCall[] = [];
+    const stream = new WeComStreamReply(
+      fakeStreamClient(calls),
+      { headers: { req_id: 'req-fallback' } },
+      'stream-fallback',
+    );
+    const card: TemplateCard = { card_type: 'button_interaction', task_id: 'task-fallback' };
+
+    await expect(stream.startWithCard('first', card)).resolves.toBe(false);
+    expect(calls).toEqual([{ streamId: 'stream-fallback', finish: false }]);
+  });
+
   it('sends one standalone card, reuses one stream id, and finishes once', async () => {
     const calls: StreamCall[] = [];
     const client = fakeStreamClient(calls);
