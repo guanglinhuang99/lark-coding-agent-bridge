@@ -35,11 +35,13 @@ describe('card-ui WeCom TUI renderer', () => {
 
     expect(card.card_type).toBe('button_interaction');
     expect(card.task_id).toBe('codex_task_1');
-    expect(card.source?.desc).toBe('CODEX TASK');
+    expect(card.source?.desc).toBe('▌ CODEX TASK');
+    expect(card.source?.desc_color).toBe(0);
     expect(card.main_title?.title).toContain('检查 web-cli');
-    expect(card.sub_title_text).toContain('RUNNING');
-    expect(card.sub_title_text).toContain('├ ✓ Read AGENTS.md');
-    expect(card.sub_title_text).toContain('└ ○ Live validation');
+    expect(card.sub_title_text).toContain('▌ ● RUNNING');
+    expect(card.sub_title_text).toContain('┃ 运行完整测试并检查 Outlook Extension。');
+    expect(card.sub_title_text).toContain('├─ ✓ Read AGENTS.md');
+    expect(card.sub_title_text).toContain('└─ ○ Live validation');
     expect(card.button_list?.map((button) => button.key)).toEqual(['status', 'stop']);
     expect(card.button_list?.map((button) => button.style)).toEqual([1, 4]);
   });
@@ -58,11 +60,25 @@ describe('card-ui WeCom TUI renderer', () => {
       }),
     );
 
-    expect(body).toContain('● RUNNING');
+    expect(body).toContain('▌ ● RUNNING');
     expect(body).toContain('✓ prepare');
     expect(body).toContain('⟳ compile');
     expect(body).toContain('× test');
     expect(body).toContain('○ deploy');
+  });
+
+  it('maps semantic tones to native WeCom accent colours', () => {
+    const success = renderWeComAgentCard(resultCard({ title: '完成' }));
+    const warning = renderWeComAgentCard(
+      confirmCard({ title: '确认？', confirmKey: 'yes' }),
+    );
+    const failure = renderWeComAgentCard(errorCard({ title: '失败' }));
+
+    expect(success.source?.desc_color).toBe(1);
+    expect(warning.source?.desc_color).toBe(2);
+    expect(failure.source?.desc_color).toBe(2);
+    expect(success.main_title?.title).toContain('✓');
+    expect(failure.main_title?.title).toContain('×');
   });
 
   it('builds confirmation cards with explicit confirm and cancel actions', () => {
@@ -77,7 +93,7 @@ describe('card-ui WeCom TUI renderer', () => {
       }),
     );
 
-    expect(card.source?.desc).toBe('ACTION REQUIRED');
+    expect(card.source?.desc).toBe('▌ ACTION REQUIRED');
     expect(card.button_list?.map((button) => button.key)).toEqual(['merge', 'cancel']);
     expect(card.button_list?.map((button) => button.style)).toEqual([4, 2]);
   });
