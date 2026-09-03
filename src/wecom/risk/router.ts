@@ -21,10 +21,11 @@ import {
 export interface RiskSelectionOption {
   key: string;
   label: string;
+  value?: string;
 }
 
 export interface RiskSelectionRequest {
-  kind: 'product' | 'security';
+  kind: 'product' | 'security' | 'intent-account' | 'intent-security' | 'intent-confirm';
   title: string;
   subTitle: string;
   replyHint: string;
@@ -448,7 +449,7 @@ export class WeComRiskRouter {
     onProgress?: (progress: string) => void,
   ): Promise<RiskRouteResult> {
     if (!intent.product || !intent.action) return handled(intent.kind, riskHelp('交易参数不完整。'));
-    const action: RiskPretradeAction = { type: intent.action };
+    const action: RiskPretradeAction = { type: intent.action, market: intent.market };
     if (intent.action === 'buy' || intent.action === 'sell') {
       if (intent.quantity !== undefined) action.quantity = intent.quantity;
       else action.amount = intent.amount;

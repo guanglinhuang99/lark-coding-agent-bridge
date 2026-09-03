@@ -42,13 +42,20 @@ function installBridge(
   return child;
 }
 
-function client(options: { timeoutMs?: number; onStage?: ReturnType<typeof vi.fn> } = {}) {
+function client(
+  options: {
+    timeoutMs?: number;
+    startupTimeoutMs?: number;
+    onStage?: ReturnType<typeof vi.fn>;
+  } = {},
+) {
   return new RiskDirectClient({
     pythonPath: '/test/python',
     serviceDir: '/test/risk-service',
     stateDir: '/test/state',
     bridgePath: '/test/direct_bridge.py',
     timeoutMs: options.timeoutMs,
+    startupTimeoutMs: options.startupTimeoutMs,
     onStage: options.onStage,
   });
 }
@@ -133,6 +140,41 @@ describe('riskservice direct client', () => {
       code: 'direct-error',
       message: 'denied',
     });
+    await service.close();
+  });
+
+
+  it('times out startup, kills the stuck process, and can start cleanly on the next call', async () => {
+    const stuck = new FakeChild();
+    const healthy = new FakeChild();
+    let healthyInput = '';
+    healthy.stdin.on('data', (chunk) => {
+      healthyInput += chunk.toString();
+      const lines = healthyInput.split('\n');
+      healthyInput = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line) continue;
+        const request = JSON.parse(line) as Record<string, unknown>;
+        healthy.stdout.write(
+          `${JSON.stringify({ id: request.id, type: 'result', data: { products: ['产品B'] } })}\n`,
+        );
+      }
+    });
+    childProcessMocks.spawn
+      .mockReturnValueOnce(stuck)
+      .mockImplementationOnce(() => {
+        queueMicrotask(() => healthy.stdout.write('{"type":"ready"}\n'));
+        return healthy;
+      });
+    const service = client({ startupTimeoutMs: 5 });
+
+    await expect(service.listProducts()).rejects.toMatchObject({
+      code: 'direct-start-timeout',
+    });
+    expect(stuck.kill).toHaveBeenCalledWith('SIGTERM');
+
+    await expect(service.listProducts()).resolves.toEqual(['产品B']);
+    expect(childProcessMocks.spawn).toHaveBeenCalledTimes(2);
     await service.close();
   });
 

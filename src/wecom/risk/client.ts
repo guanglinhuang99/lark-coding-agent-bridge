@@ -11,6 +11,7 @@ export interface RiskSecuritySuggestion {
 
 export interface RiskPretradeAction {
   type: RiskActionType;
+  market?: 'primary' | 'secondary';
   amount?: number;
   quantity?: number;
   shares?: number;
@@ -39,6 +40,7 @@ export interface RiskDirectClientOptions {
   stateDir: string;
   bridgePath: string;
   timeoutMs?: number;
+  startupTimeoutMs?: number;
   workers?: number;
   onStage?: (event: RiskStageEvent) => void;
   onDiagnostic?: (line: string) => void;
@@ -59,6 +61,7 @@ interface PendingCall {
 
 export class RiskDirectClient implements RiskService {
   private readonly timeoutMs: number;
+  private readonly startupTimeoutMs: number;
   private child?: ChildProcessWithoutNullStreams;
   private lines?: ReadLineInterface;
   private ready = false;
@@ -70,6 +73,7 @@ export class RiskDirectClient implements RiskService {
 
   constructor(private readonly options: RiskDirectClientOptions) {
     this.timeoutMs = options.timeoutMs ?? 180_000;
+    this.startupTimeoutMs = options.startupTimeoutMs ?? 30_000;
   }
 
   async listProducts(): Promise<string[]> {
@@ -192,8 +196,24 @@ export class RiskDirectClient implements RiskService {
     if (this.startPromise) return await this.startPromise;
     this.closing = false;
     this.startPromise = new Promise<void>((resolve, reject) => {
-      this.startResolve = resolve;
-      this.startReject = reject;
+      const timer = setTimeout(() => {
+        const failure = new RiskServiceError(
+          'risk-service 本地进程启动超时',
+          'direct-start-timeout',
+        );
+        const child = this.child;
+        if (child && child.exitCode === null) child.kill('SIGTERM');
+        this.handleExit(failure);
+      }, this.startupTimeoutMs);
+      timer.unref();
+      this.startResolve = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      this.startReject = (reason) => {
+        clearTimeout(timer);
+        reject(reason);
+      };
     });
     const child = spawn(
       this.options.pythonPath,

@@ -89,6 +89,19 @@ import {
   RiskSelectionTaskRegistry,
 } from './risk/card';
 import { RiskProgressRelay } from './risk/progress';
+import {
+  buildIntentSelection,
+  buildRiskIntentPrompt,
+  canonicalCommand,
+  isPretradeIntentCandidate,
+  normalizeRiskDraft,
+  normalizeSecurity,
+  parseRiskIntentOutput,
+  RiskIntentClarificationError,
+  RiskIntentStateRegistry,
+  type RiskAiDraft,
+  type RiskIntentState,
+} from './risk/intent';
 
 type TextFrame = WsFrame<TextMessage>;
 type ImageFrame = WsFrame<ImageMessage>;
@@ -183,17 +196,18 @@ const artifactOptions = {
   maxFileBytes: readPositiveInt(process.env.WECOM_OUTPUT_MAX_FILE_BYTES, 25 * 1024 * 1024),
   maxTotalBytes: readPositiveInt(process.env.WECOM_OUTPUT_MAX_BYTES, 50 * 1024 * 1024),
 };
-const riskServiceDir = path.resolve(
-  process.env.WECOM_RISK_SERVICE_DIR?.trim() || path.join(process.cwd(), 'risk-service'),
-);
+const configuredRiskServiceDir = process.env.WECOM_RISK_SERVICE_DIR?.trim();
+const riskServiceDir = path.resolve(configuredRiskServiceDir || path.join(process.cwd(), 'risk-service'));
 const riskBridgePath = path.resolve(
   process.env.WECOM_RISK_BRIDGE_PATH?.trim() ||
     path.join(process.cwd(), 'src/wecom/risk/direct_bridge.py'),
 );
-const riskPython =
-  process.env.WECOM_RISK_PYTHON?.trim() ||
-  '/Users/guanglin/Documents/trae_projects/icube/bin/python';
+const riskPython = process.env.WECOM_RISK_PYTHON?.trim();
 const riskTimeoutMs = readPositiveInt(process.env.WECOM_RISK_TIMEOUT_MS, 180_000);
+const riskStartupTimeoutMs = readPositiveInt(
+  process.env.WECOM_RISK_STARTUP_TIMEOUT_MS,
+  30_000,
+);
 const riskDirectWorkers = readPositiveInt(process.env.WECOM_RISK_DIRECT_WORKERS, 4);
 const riskProductCacheTtlMs = readPositiveInt(
   process.env.WECOM_RISK_PRODUCT_CACHE_TTL_MS,
@@ -242,15 +256,18 @@ const codex = new CodexAdapter({
   ignoreRules: false,
   sandbox,
 });
-const riskDirectEnabled =
-  existsSync(riskServiceDir) && existsSync(riskBridgePath) && existsSync(riskPython);
+const riskDirectEnabled = Boolean(
+  riskPython && existsSync(riskServiceDir) && existsSync(riskBridgePath) && existsSync(riskPython),
+);
+const riskPythonPath = riskDirectEnabled ? riskPython! : undefined;
 const riskClient = riskDirectEnabled
   ? new RiskDirectClient({
-      pythonPath: riskPython,
+      pythonPath: riskPythonPath!,
       serviceDir: riskServiceDir,
       stateDir: path.join(stateDir, 'risk-service'),
       bridgePath: riskBridgePath,
       timeoutMs: riskTimeoutMs,
+      startupTimeoutMs: riskStartupTimeoutMs,
       workers: riskDirectWorkers,
       onStage: ({ stage, durationMs, outcome }) => {
         reportMetric('wecom_risk_stage_ms', durationMs, { stage, outcome });
@@ -267,12 +284,21 @@ const riskRouter = riskClient
   ? new WeComRiskRouter(riskClient, { productCacheTtlMs: riskProductCacheTtlMs })
   : undefined;
 const riskSelectionTasks = new RiskSelectionTaskRegistry();
+const riskIntents = new RiskIntentStateRegistry();
 const riskSelectionCardDelayMs = 800;
 
 if (!riskDirectEnabled) {
-  console.warn(
-    `WeCom risk fast path disabled: check local paths (${riskServiceDir}, ${riskBridgePath}, ${riskPython}).`,
-  );
+  const reasons = [
+    !riskPython ? 'WECOM_RISK_PYTHON is not configured' : undefined,
+    !existsSync(riskServiceDir)
+      ? configuredRiskServiceDir
+        ? `WECOM_RISK_SERVICE_DIR does not exist: ${riskServiceDir}`
+        : `local risk-service fallback does not exist: ${riskServiceDir}`
+      : undefined,
+    !existsSync(riskBridgePath) ? `risk bridge does not exist: ${riskBridgePath}` : undefined,
+    riskPython && !existsSync(riskPython) ? `risk Python does not exist: ${riskPython}` : undefined,
+  ].filter((item): item is string => Boolean(item));
+  console.warn(`WeCom risk fast path disabled: ${reasons.join('; ')}`);
 }
 
 await codex.prepareRun();
@@ -395,6 +421,7 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
     }
     riskRouter?.clear(key);
     riskSelectionTasks.clearConversation(key);
+    riskIntents.clearConversation(key);
     await sessionStore.clear(key);
     await replyControl(
       frame,
@@ -441,7 +468,10 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
     return;
   }
 
-  const riskCandidate = riskRouter?.shouldHandle(key, text, mediaInputs.length > 0) ?? false;
+  const riskCandidate =
+    riskIntents.has(key) ||
+    (mediaInputs.length === 0 && isPretradeIntentCandidate(text)) ||
+    (riskRouter?.shouldHandle(key, text, mediaInputs.length > 0) ?? false);
   const riskAccessDenied = riskCandidate && !isRiskUserAllowed(body.from?.userid);
   const useRiskFastPath = riskCandidate && !riskAccessDenied;
   const acknowledgement = text
@@ -565,8 +595,85 @@ async function executeConversationMessage(
           await stream.finish('未授权用户，无法使用风险限额查询。');
           return;
         }
+        if (useRiskFastPath && riskRouter && riskClient) {
+          const pendingIntent = riskIntents.get(key);
+          if (pendingIntent?.stage === 'freeform') {
+            riskIntents.delete(key);
+            if (pendingIntent.field === 'market' && pendingIntent.product) {
+              const market = /一级/.test(text)
+                ? 'primary'
+                : /二级/.test(text)
+                  ? 'secondary'
+                  : undefined;
+              if (!market) {
+                riskIntents.set(key, pendingIntent);
+                await stream.finish('请输入“一级”或“二级”。');
+                return;
+              }
+              const normalized: RiskIntentState = {
+                stage: 'confirm',
+                originalText: pendingIntent.originalText,
+                draft: { ...pendingIntent.draft, market },
+                product: pendingIntent.product,
+                ...(pendingIntent.security ? { security: pendingIntent.security } : {}),
+              };
+              riskIntents.set(key, normalized);
+              await finishRiskIntentState(body, key, stream, normalized);
+              return;
+            }
+            const revised = await analyzeRiskDraft(
+              pendingIntent.originalText,
+              pendingIntent.draft,
+              text,
+            );
+            const normalized = await normalizeRiskDraft(
+              pendingIntent.originalText,
+              revised,
+              riskClient,
+            );
+            riskIntents.set(key, normalized);
+            await finishRiskIntentState(body, key, stream, normalized);
+            return;
+          }
+          if (!pendingIntent && isPretradeIntentCandidate(text)) {
+            riskSelectionTasks.clearConversation(key);
+            riskIntents.clearTasksForConversation(key);
+            await stream.update(
+              truncateUtf8(
+                renderWeComNotice('🧠 正在理解交易意图', [
+                  'AI 正在提取账户关键词、操作、标的关键词和交易规模。',
+                ]),
+                streamMaxBytes,
+              ),
+            );
+            try {
+              const draft = await analyzeRiskDraft(text);
+              await stream.update(
+                truncateUtf8(
+                  renderWeComNotice('🔎 正在核对标准名称', [
+                    '正在通过 risk-service 匹配准确账户和证券名称/代码。',
+                  ]),
+                  streamMaxBytes,
+                ),
+              );
+              const normalized = await normalizeRiskDraft(text, draft, riskClient);
+              riskIntents.set(key, normalized);
+              await finishRiskIntentState(body, key, stream, normalized);
+              return;
+            } catch (error) {
+              if (error instanceof RiskIntentClarificationError) {
+                await stream.finish(
+                  renderWeComNotice('需要补充交易信息', [`缺少：${error.missing.join('、')}`]),
+                );
+                return;
+              }
+              throw error;
+            }
+          }
+        }
         if (useRiskFastPath && riskRouter) {
           riskSelectionTasks.clearConversation(key);
+          riskIntents.clearTasksForConversation(key);
           const startedAt = Date.now();
           const progressRelay = new RiskProgressRelay(
             async (progress) => {
@@ -629,6 +736,165 @@ async function executeConversationMessage(
     );
   } finally {
     await refreshHealth();
+  }
+}
+
+async function analyzeRiskDraft(
+  originalText: string,
+  previous?: RiskAiDraft,
+  correction?: string,
+): Promise<RiskAiDraft> {
+  const run = codex.run({
+    runId: randomUUID(),
+    prompt: buildRiskIntentPrompt(originalText, previous, correction),
+    cwd: workspace,
+    model,
+    sandbox: 'read-only',
+  });
+  let output = '';
+  try {
+    for await (const event of run.events) {
+      if (event.type === 'text' && event.delta) output += event.delta;
+      if (event.type === 'final_text' && event.content) output = event.content;
+      if (event.type === 'error') throw new Error(event.message);
+    }
+    await run.waitForExit(1500).catch(() => false);
+    return parseRiskIntentOutput(
+      output,
+      correction ? `${originalText} ${correction}` : originalText,
+    );
+  } catch (error) {
+    await run.stop().catch(() => {});
+    throw error;
+  }
+}
+
+async function finishRiskIntentState(
+  body: ConversationBody,
+  key: string,
+  stream: WeComStreamReply,
+  state: RiskIntentState,
+): Promise<void> {
+  if (state.stage === 'freeform') {
+    await stream.finish('请直接输入需要修改或补充的内容。');
+    return;
+  }
+  const selection = buildIntentSelection(state, Date.now() + 5 * 60_000);
+  const title =
+    state.stage === 'account'
+      ? '请选择准确账户'
+      : state.stage === 'security'
+        ? '请选择准确证券'
+        : '请确认交易意图';
+  await stream.finish(
+    truncateUtf8(
+      renderWeComNotice(title, [
+        selection.subTitle,
+        state.stage === 'confirm'
+          ? '确认完成前不会执行投资限额测算。'
+          : '候选来自 risk-service。',
+      ]),
+      streamMaxBytes,
+    ),
+  );
+  scheduleRiskSelectionCard(body, key, selection, state);
+}
+
+async function handleRiskIntentChoice(
+  frame: TemplateCardEventFrame,
+  body: ConversationBody,
+  key: string,
+  taskId: string,
+  state: RiskIntentState,
+  value: string,
+  label: string,
+): Promise<void> {
+  if (!riskClient) return;
+  let next: RiskIntentState;
+  if (state.stage === 'account') {
+    next =
+      value === '__other_account__'
+        ? {
+            stage: 'freeform',
+            originalText: state.originalText,
+            draft: state.draft,
+            field: 'account',
+          }
+        : await normalizeSecurity(state.originalText, state.draft, value, riskClient);
+  } else if (state.stage === 'security') {
+    next =
+      value === '__other_security__'
+        ? {
+            stage: 'freeform',
+            originalText: state.originalText,
+            draft: state.draft,
+            field: 'security',
+            product: state.product,
+          }
+        : {
+            stage: 'confirm',
+            originalText: state.originalText,
+            draft: state.draft,
+            product: state.product,
+            security: JSON.parse(value) as { name: string; code: string; label: string },
+          };
+  } else if (state.stage === 'confirm') {
+    if (value === '__confirm__') {
+      riskIntents.delete(key);
+      await client.updateTemplateCard(
+        frame,
+        buildRiskSelectionStatusCard(taskId, '已确认', '正在执行投资限额测算', label),
+      );
+      await executeRiskCardSelection(body, key, canonicalCommand(state));
+      return;
+    }
+    const field =
+      value === '__edit_account__'
+        ? 'account'
+        : value === '__edit_security__'
+          ? 'security'
+          : value === '__edit_amount__'
+            ? 'amount'
+            : value === '__edit_market__'
+              ? 'market'
+              : 'other';
+    next = {
+      stage: 'freeform',
+      originalText: state.originalText,
+      draft: state.draft,
+      field,
+      product: state.product,
+      security: state.security,
+    };
+  } else {
+    return;
+  }
+  riskIntents.set(key, next);
+  await client.updateTemplateCard(
+    frame,
+    buildRiskSelectionStatusCard(taskId, '请补充信息', '请直接输入修正内容', label),
+  );
+  const message =
+    next.stage !== 'freeform'
+      ? '正在继续确认。'
+      : next.field === 'account'
+        ? '请输入正确的账户名称或关键词。'
+        : next.field === 'security'
+          ? '请输入正确的证券名称或代码。'
+          : next.field === 'amount'
+            ? '请输入正确的金额或数量（含单位）。'
+            : next.field === 'market'
+              ? '请输入“一级”或“二级”。'
+              : '请直接输入你要修改或补充的内容。';
+  await sendRiskMarkdown(body, message);
+  if (next.stage !== 'freeform') {
+    const fakeStream = {
+      finish: async (content: string) => {
+        await sendRiskMarkdown(body, content);
+      },
+      update: async () => {},
+    } as unknown as WeComStreamReply;
+    await finishRiskIntentState(body, key, fakeStream, next);
   }
 }
 
@@ -870,6 +1136,7 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
     );
     riskRouter?.clear(key);
     riskSelectionTasks.clearConversation(key);
+    riskIntents.clearConversation(key);
     await client.updateTemplateCard(
       frame,
       buildWeComControlCard({
@@ -951,6 +1218,9 @@ async function handleRiskSelectionCardEvent(
     return;
   }
   if (resolution.status !== 'selected') {
+    if (resolution.status === 'missing' || resolution.status === 'expired') {
+      riskIntents.deleteTask(taskId);
+    }
     await client.updateTemplateCard(
       frame,
       buildRiskSelectionStatusCard(
@@ -960,6 +1230,21 @@ async function handleRiskSelectionCardEvent(
           ? '该选项不属于当前会话'
           : '该选项已处理或超过五分钟，请重新发送查询',
       ),
+    );
+    return;
+  }
+
+  const intentState = riskIntents.getTask(taskId);
+  if (intentState) {
+    riskIntents.deleteTask(taskId);
+    await handleRiskIntentChoice(
+      frame,
+      body,
+      key,
+      taskId,
+      intentState,
+      resolution.option.value ?? resolution.option.key,
+      resolution.option.label,
     );
     return;
   }
@@ -989,7 +1274,7 @@ async function handleRiskSelectionCardEvent(
   let submission: WeComConversationSubmission;
   try {
     submission = conversationQueue.submit(key, async () => {
-      await executeRiskCardSelection(body, key, resolution.option.key);
+      await executeRiskCardSelection(body, key, resolution.option.value ?? resolution.option.key);
     });
   } catch (err) {
     if (!(err instanceof WeComConversationQueueError)) throw err;
@@ -1075,9 +1360,14 @@ function scheduleRiskSelectionCard(
   body: ConversationBody,
   key: string,
   selection: RiskSelectionRequest,
+  intentState?: RiskIntentState,
 ): void {
   const taskId = createRiskTaskId();
   riskSelectionTasks.register(taskId, key, selection);
+  riskIntents.clearTasksForConversation(key);
+  if (intentState) {
+    riskIntents.registerTask(taskId, key, intentState, selection.expiresAt);
+  }
   void (async () => {
     await new Promise<void>((resolve) => setTimeout(resolve, riskSelectionCardDelayMs));
     if (!riskSelectionTasks.has(taskId, key)) return;
@@ -1085,6 +1375,7 @@ function scheduleRiskSelectionCard(
       await sendControlCard(client, body, buildRiskSelectionCard(selection, taskId));
     } catch (err) {
       riskSelectionTasks.remove(taskId);
+      riskIntents.deleteTask(taskId);
       log.fail('wecom-risk-card', err, { step: 'send' });
     }
   })();
@@ -1346,6 +1637,14 @@ async function refreshHealth(): Promise<void> {
     startingRuns: startingRuns.size,
     ...(reconnectAttempt !== undefined ? { reconnectAttempt } : {}),
     ...(lastHealthError ? { lastError: lastHealthError } : {}),
+    riskFastPath: {
+      enabled: riskDirectEnabled,
+      serviceDirConfigured: Boolean(configuredRiskServiceDir),
+      pythonConfigured: Boolean(riskPython),
+      ...(!riskDirectEnabled
+        ? { reason: !riskPython ? 'python-not-configured' : 'path-unavailable' }
+        : {}),
+    },
   }).catch((err: unknown) => {
     log.fail('wecom-health', err);
   });

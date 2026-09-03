@@ -113,11 +113,12 @@ wecom-channel-bridge
 | `WECOM_OUTPUT_MAX_COUNT` | `5` | maximum generated files returned per answer |
 | `WECOM_OUTPUT_MAX_FILE_BYTES` | `26214400` | per-file output limit (25 MiB) |
 | `WECOM_OUTPUT_MAX_BYTES` | `52428800` | aggregate generated-file output limit (50 MiB) |
-| `WECOM_RISK_SERVICE_DIR` | `./risk-service` | risk-service 本地目录或软链接；存在时启用风险快速路径 |
-| `WECOM_RISK_PYTHON` | icube Python | 安装了 `azpy`、`pandas`、`pins` 和 `openpyxl` 的 Python 解释器 |
+| `WECOM_RISK_SERVICE_DIR` | `./risk-service` fallback | 推荐显式配置 risk-service 本地目录；仓库内 `./risk-service` 软链接仅作为当前机器的便捷 fallback，不是部署前提 |
+| `WECOM_RISK_PYTHON` | required for risk fast path | 安装了 `azpy`、`pandas`、`pins` 和 `openpyxl` 的 Python 解释器；不再使用机器相关的硬编码默认路径 |
 | `WECOM_RISK_BRIDGE_PATH` | `src/wecom/risk/direct_bridge.py` | 常驻本地直接调用桥脚本 |
 | `WECOM_RISK_DIRECT_WORKERS` | `4` | bridge 可同时处理的本地请求数 |
 | `WECOM_RISK_TIMEOUT_MS` | `180000` | 单次 risk-service 本地调用超时 |
+| `WECOM_RISK_STARTUP_TIMEOUT_MS` | `30000` | 常驻 Python bridge 启动后等待 `ready` 的最长时间；超时会终止卡住的进程并允许下一次调用重新启动 |
 | `WECOM_RISK_PRODUCT_CACHE_TTL_MS` | `3600000` | product-list refresh interval; a prior successful list remains usable if refresh fails |
 | `WECOM_RISK_ALLOWED_USERIDS` | — | optional comma-separated WeCom userid allowlist; empty inherits the bot's existing audience |
 | `CODEX_BINARY` | `codex` | Codex executable path/name |

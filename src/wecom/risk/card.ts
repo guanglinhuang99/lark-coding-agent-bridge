@@ -91,7 +91,12 @@ export function buildRiskSelectionCard(
   if (options.length === 1) {
     base.horizontal_content_list = [
       {
-        keyname: selection.kind === 'product' ? '账户' : '证券',
+        keyname:
+          selection.kind === 'product' || selection.kind === 'intent-account'
+            ? '账户'
+            : selection.kind === 'security' || selection.kind === 'intent-security'
+              ? '证券'
+              : '交易',
         value: clip(options[0]?.label ?? '', 26),
       },
     ];

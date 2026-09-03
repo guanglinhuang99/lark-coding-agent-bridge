@@ -20,6 +20,12 @@ export interface WeComHealthSnapshot {
   startingRuns: number;
   reconnectAttempt?: number;
   lastError?: string;
+  riskFastPath?: {
+    enabled: boolean;
+    serviceDirConfigured: boolean;
+    pythonConfigured: boolean;
+    reason?: string;
+  };
 }
 
 export interface WeComHealthInspection {

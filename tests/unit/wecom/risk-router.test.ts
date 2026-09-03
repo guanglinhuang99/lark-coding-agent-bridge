@@ -21,7 +21,7 @@ describe('WeCom risk fast-path router', () => {
     if (result.handled) expect(result.markdown).toContain('未写单位，按亿元');
     expect(calculatePretrade).toHaveBeenCalledWith(
       '安联ESG纯债1号资产管理产品',
-      { type: 'subscription', amount: 0.1 },
+      { type: 'subscription', market: 'secondary', amount: 0.1 },
       undefined,
     );
   });
@@ -127,7 +127,7 @@ describe('WeCom risk fast-path router', () => {
     if (result.handled) expect(result.markdown).toContain('本笔投资未引发新增超限');
     expect(calculatePretrade).toHaveBeenCalledWith(
       '安联ESG纯债1号资产管理产品',
-      { type: 'buy', amount: 0.1, security_name: '100115.SZ' },
+      { type: 'buy', market: 'secondary', amount: 0.1, security_name: '100115.SZ' },
       undefined,
     );
   });
@@ -201,7 +201,7 @@ describe('WeCom risk fast-path router', () => {
     ]);
     expect(calculatePretrade).toHaveBeenCalledWith(
       '安联ESG纯债1号',
-      { type: 'buy', amount: 0.1, security_name: '019115.SH' },
+      { type: 'buy', market: 'secondary', amount: 0.1, security_name: '019115.SH' },
       expect.any(Function),
     );
   });

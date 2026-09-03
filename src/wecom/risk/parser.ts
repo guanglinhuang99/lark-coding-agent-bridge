@@ -31,6 +31,7 @@ export type RiskIntent =
       product?: string;
       productCandidates: string[];
       action?: RiskActionType;
+      market: 'primary' | 'secondary';
       amount?: number;
       quantity?: number;
       amountNote?: string;
@@ -134,6 +135,7 @@ export function parseRiskMessage(text: string, products: readonly string[]): Ris
       product,
       productCandidates,
       action,
+      market: detectMarket(value),
       amount: parsedAmount?.amount,
       quantity: parsedAmount?.quantity,
       amountNote: parsedAmount?.note,
@@ -204,6 +206,10 @@ export function matchProductCandidates(
     products: fuzzyHits.sort((a, b) => b[1] - a[1]).map(([name]) => name),
     fuzzy: fuzzyHits.length > 0,
   };
+}
+
+export function detectMarket(text: string): 'primary' | 'secondary' {
+  return /一级(?:市场)?/.test(text) ? 'primary' : 'secondary';
 }
 
 export function findAction(text: string): RiskActionType | undefined {
@@ -395,6 +401,7 @@ function extractTradeSecurity(
   if (amountSource) value = value.replace(amountSource, '');
   value = value
     .replace(/逆回购|回购|申购|认购|赎回|买入|卖出|买|卖/g, '')
+    .replace(/一级市场|二级市场|一级|二级/g, '')
     .replace(/会不会超限|是否超限|超限|限额|测算|帮我|请/g, '')
     .replace(/\d+\s*天/g, '')
     .trim();

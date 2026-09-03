@@ -20,6 +20,12 @@ describe('WeCom health state', () => {
       connected: true,
       activeRuns: 1,
       startingRuns: 0,
+      riskFastPath: {
+        enabled: false,
+        serviceDirConfigured: true,
+        pythonConfigured: false,
+        reason: 'python-not-configured',
+      },
     });
 
     await expect(
@@ -31,7 +37,12 @@ describe('WeCom health state', () => {
     ).resolves.toMatchObject({
       healthy: true,
       reason: 'ok',
-      snapshot: { pid: 42, phase: 'connected', activeRuns: 1 },
+      snapshot: {
+        pid: 42,
+        phase: 'connected',
+        activeRuns: 1,
+        riskFastPath: { enabled: false, reason: 'python-not-configured' },
+      },
     });
   });
 
