@@ -21,6 +21,13 @@ export interface WeComStreamClient {
     content: string,
     finish?: boolean,
   ): Promise<unknown>;
+  replyStreamWithCard?(
+    frame: WsFrameHeaders,
+    streamId: string,
+    content: string,
+    finish?: boolean,
+    options?: { templateCard?: TemplateCard },
+  ): Promise<unknown>;
 }
 
 export interface WeComControlCardClient {
@@ -47,6 +54,24 @@ export class WeComStreamReply {
     if (this.started) throw new Error('WeCom stream already started');
     this.started = true;
     await this.client.replyStream(this.frame, this.streamId, content, false);
+  }
+
+  /**
+   * Start one live stream with its control card attached to the same WeCom reply.
+   * Returns false when a client implementation predates replyStreamWithCard so
+   * callers can fall back to a standalone card without breaking tests/adapters.
+   */
+  async startWithCard(content: string, card: TemplateCard): Promise<boolean> {
+    if (this.started) throw new Error('WeCom stream already started');
+    this.started = true;
+    if (!this.client.replyStreamWithCard) {
+      await this.client.replyStream(this.frame, this.streamId, content, false);
+      return false;
+    }
+    await this.client.replyStreamWithCard(this.frame, this.streamId, content, false, {
+      templateCard: card,
+    });
+    return true;
   }
 
   async update(content: string): Promise<boolean> {
