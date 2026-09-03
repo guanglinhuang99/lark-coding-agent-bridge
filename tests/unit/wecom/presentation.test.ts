@@ -74,13 +74,14 @@ describe('WeCom rich presentation', () => {
 
     expect(markdown).toContain('### 🤖 Codex');
     expect(markdown).toContain('正在输出');
-    expect(markdown).toContain('web-cli');
+    expect(markdown).toContain('STREAM');
+    expect(markdown).toContain('`workspace` web-cli');
     expect(markdown).toContain('**Bash**');
     expect(markdown).toContain('**检查完成**');
     expect(markdown).toContain('```text');
   });
 
-  it('builds an interactive control card with stop/new/status actions', () => {
+  it('builds a TUI-style interactive control card with stop/new/status actions', () => {
     const card = buildWeComControlCard({
       ...meta,
       taskId: 'codex_123_abc',
@@ -90,7 +91,11 @@ describe('WeCom rich presentation', () => {
 
     expect(card.card_type).toBe('button_interaction');
     expect(card.task_id).toBe('codex_123_abc');
-    expect(card.main_title?.title).toBe('Codex 会话控制');
+    expect(card.source?.desc).toBe('CODEX · WECOM');
+    expect(card.main_title?.title).toContain('Codex 会话控制');
+    expect(card.sub_title_text).toContain('RUNNING');
+    expect(card.sub_title_text).toContain('✓ Codex runtime connected');
+    expect(card.sub_title_text).toContain('⟳ Agent task executing');
     expect(card.button_list?.map((button) => button.key)).toEqual(['stop', 'new', 'status']);
     expect(JSON.stringify(card)).toContain('检查当前仓库状态');
   });
@@ -108,6 +113,7 @@ describe('WeCom rich presentation', () => {
     });
 
     expect(first.button_list?.map((button) => button.key)).toEqual(['new', 'status']);
+    expect(first.sub_title_text).toContain('READY');
     expect(first.task_id).toBe('codex_stable_task');
     expect(second.task_id).toBe(first.task_id);
   });
