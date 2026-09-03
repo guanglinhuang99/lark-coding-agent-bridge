@@ -104,6 +104,10 @@ import {
   buildQueueCardView,
   type WeComErrorKind,
 } from './ui/builders';
+import {
+  buildAgentSettingsSummaryCardView,
+  buildResultCardView,
+} from './ui/surfaces';
 import type { WeComCardView } from './ui/model';
 import {
   buildHomeCardView,
@@ -115,6 +119,11 @@ import {
   type WeComWorkspaceOption,
 } from './ui/navigation';
 import { renderWeComCard } from './ui/renderer';
+import {
+  WeComNavigationCardRegistry,
+  type NavigationCardPurpose,
+  type NavigationSelectionResult,
+} from './ui/navigation-registry';
 import {
   cardPurposeFromTaskId,
   isHomeAction,
@@ -270,13 +279,8 @@ const sessionStore = new WeComSessionStore(sessionFile, {
 await sessionStore.load();
 const activeRuns = new Map<string, ActiveRunRecord>();
 const startingRuns = new Set<string>();
-interface NavigationTask {
-  purpose: Exclude<WeComCardPurpose, 'menu' | 'codex' | 'queue' | 'risk' | 'unknown'>;
-  conversationKey: string;
-  optionLabels: ReadonlyMap<string, string>;
-  expiresAt: number;
-}
-const navigationTasks = new Map<string, NavigationTask>();
+const navigationCardTtlMs = 5 * 60_000;
+const navigationCards = new WeComNavigationCardRegistry();
 const messageDeduplicator = new WeComMessageDeduplicator(
   messageDedupeTtlMs,
   messageDedupeMaxEntries,
@@ -467,8 +471,18 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
     return;
   }
 
+  if (command === '/reasoning') {
+    await replyReasoningSelection(frame, key);
+    return;
+  }
+
   if (command === '/resume') {
     await replySessionSelection(frame, key);
+    return;
+  }
+
+  if (command === '/settings') {
+    await replySettingsSummary(frame, key);
     return;
   }
 
@@ -487,6 +501,7 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
     riskRouter?.clear(key);
     riskSelectionTasks.clearConversation(key);
     riskIntents.clearConversation(key);
+    navigationCards.clearConversation(key);
     await sessionStore.clear(key);
     await replyControl(
       frame,
@@ -1142,8 +1157,29 @@ async function runCodexPrompt(
 
       const finalText = renderStream(state, threadId);
       await streamUpdates.finish(finalText);
+      let fileCount: number | undefined;
       if (state.terminal === 'done') {
-        await sendGeneratedArtifacts(frame, state, attachments);
+        const sentFiles = await sendGeneratedArtifacts(frame, state, attachments);
+        if (sentFiles > 0) fileCount = sentFiles;
+      }
+      if (
+        state.terminal === 'done' ||
+        state.terminal === 'interrupted' ||
+        state.terminal === 'idle_timeout'
+      ) {
+        await deliverCardView(
+          frame,
+          buildResultCardView({
+            taskId: createTaskId(),
+            durationMs: Date.now() - requestStartedAt,
+            toolCount: state.blocks.filter((block) => block.kind === 'tool').length,
+            ...(fileCount !== undefined ? { fileCount } : {}),
+            threadId,
+            terminal: state.terminal === 'done' ? 'success' : 'stopped',
+          }),
+        );
+      } else {
+        await deliverErrorCard(frame, 'execution');
       }
       await run.waitForExit(1500).catch(() => false);
     } catch (err) {
@@ -1232,6 +1268,15 @@ async function handleHomeCardEvent(
     await updateInvalidCallback(frame, taskId);
     return;
   }
+  const resolution = navigationCards.resolve(taskId, key);
+  if (resolution.status !== 'resolved') {
+    await updateCardLifecycleError(frame, taskId, resolution);
+    return;
+  }
+  if (resolution.card.purpose !== 'menu') {
+    await updateInvalidCallback(frame, taskId);
+    return;
+  }
   const active = activeRuns.get(key);
   const starting = startingRuns.has(key) || conversationQueue.has(key);
   if (rawAction === 'stop') {
@@ -1253,6 +1298,7 @@ async function handleHomeCardEvent(
     riskRouter?.clear(key);
     riskSelectionTasks.clearConversation(key);
     riskIntents.clearConversation(key);
+    navigationCards.clearConversation(key);
     await updateHomeCard(frame, key, taskId);
     return;
   }
@@ -1343,9 +1389,25 @@ async function replyHomeCard(frame: WsFrame, key: string): Promise<void> {
   await client.replyTemplateCard(frame, renderWeComCard(buildHomeCardView(homeCardOptions(key))));
 }
 
-function homeCardOptions(key: string) {
+async function replySettingsSummary(frame: WsFrame, key: string): Promise<void> {
+  await client.replyTemplateCard(
+    frame,
+    renderWeComCard(
+      buildAgentSettingsSummaryCardView({
+        taskId: createTaskId(),
+        workspace,
+        model: effectiveModel(key),
+        reasoning: effectiveReasoningEffort(key),
+        sandbox,
+      }),
+    ),
+  );
+}
+
+function homeCardOptions(key: string, taskId = createNavigationTaskId('menu')) {
+  registerHomeCard(taskId, key);
   return {
-    taskId: createNavigationTaskId('menu'),
+    taskId,
     busy: isConversationBusy(key),
     workspace,
     model: effectiveModel(key),
@@ -1439,20 +1501,17 @@ async function handleNavigationCardEvent(
     await updateInvalidCallback(frame, taskId);
     return;
   }
-  const task = navigationTasks.get(taskId);
-  if (!task || task.purpose !== purpose || task.conversationKey !== key) {
+  const resolution = navigationCards.resolve(taskId, key);
+  if (resolution.status !== 'resolved') {
+    await updateCardLifecycleError(frame, taskId, resolution);
+    return;
+  }
+  if (resolution.card.purpose !== purpose) {
     await updateInvalidCallback(frame, taskId);
     return;
   }
-  if (task.expiresAt <= Date.now()) {
-    navigationTasks.delete(taskId);
-    await client.updateTemplateCard(
-      frame,
-      renderWeComCard(buildErrorCardView({ taskId, kind: 'callback-expired' })),
-    );
-    return;
-  }
-  if (!selectedId || !task.optionLabels.has(selectedId)) {
+  const optionLabels = resolution.card.payload?.optionLabels;
+  if (!optionLabels || !selectedId || !optionLabels.has(selectedId)) {
     await updateInvalidCallback(frame, taskId);
     return;
   }
@@ -1469,13 +1528,21 @@ async function handleNavigationCardEvent(
     return;
   }
 
-  const label = task.optionLabels.get(selectedId) ?? selectedId;
+  const selection = navigationCards.consumeSelection(taskId, key, purpose, selectedId);
+  if (selection.status === 'invalid' || selection.status === 'purpose-mismatch') {
+    await updateInvalidCallback(frame, taskId);
+    return;
+  }
+  if (selection.status !== 'selected') {
+    await updateCardLifecycleError(frame, taskId, selection);
+    return;
+  }
+  const label = selection.label;
   if (purpose === 'model') setConversationModel(conversationAgentPreferences, key, selectedId);
   if (purpose === 'reasoning') {
     setConversationReasoningEffort(conversationAgentPreferences, key, selectedId);
   }
   if (purpose === 'session') await sessionStore.setThread(key, selectedId);
-  navigationTasks.delete(taskId);
 
   const message =
     purpose === 'workspace'
@@ -1538,9 +1605,10 @@ async function updateHomeCard(
   key: string,
   taskId: string,
 ): Promise<void> {
+  const options = homeCardOptions(key, taskId);
   await client.updateTemplateCard(
     frame,
-    renderWeComCard(buildHomeCardView({ ...homeCardOptions(key), taskId })),
+    renderWeComCard(buildHomeCardView(options)),
   );
 }
 
@@ -1551,24 +1619,44 @@ async function updateInvalidCallback(frame: TemplateCardEventFrame, taskId: stri
   );
 }
 
+async function updateCardLifecycleError(
+  frame: TemplateCardEventFrame,
+  taskId: string,
+  result: NavigationSelectionResult,
+): Promise<void> {
+  await client.updateTemplateCard(
+    frame,
+    renderWeComCard(
+      buildErrorCardView({
+        taskId,
+        kind: result.status === 'mismatch' ? 'callback-invalid' : 'callback-expired',
+      }),
+    ),
+  );
+}
+
 function registerNavigationTask(
   taskId: string,
-  purpose: NavigationTask['purpose'],
+  purpose: NavigationCardPurpose,
   key: string,
   options: readonly [string, string][],
 ): void {
-  const expiresAt = Date.now() + 5 * 60_000;
-  navigationTasks.set(taskId, {
+  navigationCards.register({
+    taskId,
     purpose,
     conversationKey: key,
     optionLabels: new Map(options),
-    expiresAt,
+    expiresAt: Date.now() + navigationCardTtlMs,
   });
-  const timer = setTimeout(() => {
-    const task = navigationTasks.get(taskId);
-    if (task?.expiresAt === expiresAt) navigationTasks.delete(taskId);
-  }, 5 * 60_000);
-  timer.unref();
+}
+
+function registerHomeCard(taskId: string, key: string): void {
+  navigationCards.register({
+    taskId,
+    purpose: 'menu',
+    conversationKey: key,
+    expiresAt: Date.now() + navigationCardTtlMs,
+  });
 }
 
 function modelSelectionOptions(key: string) {
@@ -1930,11 +2018,11 @@ async function sendGeneratedArtifacts(
   frame: WsFrame,
   state: RunState,
   attachments: readonly NormalizedAttachment[],
-): Promise<void> {
+): Promise<number> {
   const body = frame.body;
-  if (!body) return;
+  if (!body) return 0;
   const markdown = agentOutputText(state);
-  if (!markdown) return;
+  if (!markdown) return 0;
   try {
     const result = await sendLinkedWorkspaceArtifacts(
       client,
@@ -1956,6 +2044,7 @@ async function sendGeneratedArtifacts(
     });
     reportMetric('wecom_egress_bytes', bytes);
     reportMetric('wecom_egress_files', result.sent.length);
+    return result.sent.length;
   } catch (err) {
     log.fail('wecom-media-egress', err);
     reportMetric('wecom_egress_failures', 1, { kind: failureKind(err) });
@@ -1963,6 +2052,7 @@ async function sendGeneratedArtifacts(
       msgtype: 'markdown',
       markdown: { content: '⚠️ 生成文件回传失败，请查看本机 bridge 日志。' },
     }).catch(() => {});
+    return 0;
   }
 }
 
@@ -2114,13 +2204,16 @@ async function runMaintenance(): Promise<void> {
     const logsRemoved = await gcOldLogs();
     const mediaRemoved = await gcWeComMediaCache(mediaDir, mediaCacheMaxAgeMs);
     const sessionsRemoved = await sessionStore.prune();
+    const cardsRemoved = navigationCards.prune();
     reportMetric('wecom_maintenance_removed', logsRemoved, { kind: 'logs' });
     reportMetric('wecom_maintenance_removed', mediaRemoved, { kind: 'media' });
     reportMetric('wecom_maintenance_removed', sessionsRemoved, { kind: 'sessions' });
+    reportMetric('wecom_maintenance_removed', cardsRemoved, { kind: 'cards' });
     log.info('wecom-maintenance', 'completed', {
       logsRemoved,
       mediaRemoved,
       sessionsRemoved,
+      cardsRemoved,
     });
   } catch (err) {
     log.fail('wecom-maintenance', err);
