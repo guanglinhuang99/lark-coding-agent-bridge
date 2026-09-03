@@ -1,5 +1,7 @@
 import type { TemplateCard } from '@wecom/aibot-node-sdk';
 import type { RiskSelectionOption, RiskSelectionRequest } from './router';
+import { WECOM_CARD_ACTIONS } from '../ui/actions';
+import { renderWeComCard } from '../ui/renderer';
 
 export type RiskSelectionResolution =
   | {
@@ -77,44 +79,55 @@ export function buildRiskSelectionCard(
     throw new Error(`Risk selection card requires 1-10 options; received ${options.length}`);
   }
 
-  const base: TemplateCard = {
-    card_type: 'button_interaction',
-    card_action: { type: 0 },
-    source: { desc: '风险限额查询' },
-    main_title: {
-      title: selection.title,
-      desc: selection.replyHint,
-    },
-    sub_title_text: selection.subTitle,
-    task_id: taskId,
-  };
+  const candidateLabel =
+    selection.kind === 'product' || selection.kind === 'intent-account'
+      ? '账户'
+      : selection.kind === 'security' || selection.kind === 'intent-security'
+        ? '证券'
+        : '交易';
 
   if (options.length === 1) {
-    base.horizontal_content_list = [
-      {
-        keyname:
-          selection.kind === 'product' || selection.kind === 'intent-account'
-            ? '账户'
-            : selection.kind === 'security' || selection.kind === 'intent-security'
-              ? '证券'
-              : '交易',
-        value: clip(options[0]?.label ?? '', 26),
-      },
-    ];
-    base.button_list = [{ text: '确认选择', key: options[0]?.key ?? '1', style: 1 }];
-    return base;
+    return renderWeComCard({
+      kind: 'interactive',
+      taskId,
+      source: '风险限额查询',
+      title: selection.title,
+      description: selection.replyHint,
+      subtitle: selection.subTitle,
+      facts: [{ label: candidateLabel, value: clip(options[0]?.label ?? '', 26) }],
+      buttons: [
+        {
+          text: '确认选择',
+          key: options[0]?.key ?? '1',
+          variant: 'primary',
+        },
+      ],
+    });
   }
 
-  base.button_selection = {
-    question_key: `risk_${selection.kind}`,
+  return renderWeComCard({
+    kind: 'interactive',
+    taskId,
+    source: '风险限额查询',
     title: selection.title,
-    option_list: options.map((option) => ({
-      id: option.key,
-      text: clip(option.label, 60),
-    })),
-  };
-  base.button_list = [{ text: '确认选择', key: 'submit', style: 1 }];
-  return base;
+    description: selection.replyHint,
+    subtitle: selection.subTitle,
+    selection: {
+      questionKey: `risk_${selection.kind}`,
+      title: selection.title,
+      options: options.map((option) => ({
+        id: option.key,
+        text: clip(option.label, 60),
+      })),
+    },
+    buttons: [
+      {
+        text: '确认选择',
+        key: WECOM_CARD_ACTIONS.selection.submit,
+        variant: 'primary',
+      },
+    ],
+  });
 }
 
 export function buildRiskSelectionStatusCard(
@@ -123,17 +136,14 @@ export function buildRiskSelectionStatusCard(
   description: string,
   selectedLabel?: string,
 ): TemplateCard {
-  return {
-    card_type: 'text_notice',
-    // WeCom requires a valid whole-card action when updating a text_notice card.
-    // Use the official site as a harmless fallback target for the otherwise
-    // non-interactive status card.
-    card_action: { type: 1, url: 'https://work.weixin.qq.com/' },
-    source: { desc: '风险限额查询' },
-    main_title: { title, desc: description },
-    ...(selectedLabel ? { sub_title_text: clip(selectedLabel, 112) } : {}),
-    task_id: taskId,
-  };
+  return renderWeComCard({
+    kind: 'notice',
+    taskId,
+    source: '风险限额查询',
+    title,
+    description,
+    ...(selectedLabel ? { subtitle: clip(selectedLabel, 112) } : {}),
+  });
 }
 
 function clip(value: string, maxLength: number): string {
