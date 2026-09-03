@@ -84,7 +84,9 @@ wecom-channel-bridge
 | `WECOM_WORKSPACE` | current directory | Codex working directory |
 | `WECOM_STATE_DIR` | `~/.lark-channel/wecom` | local thread/session state |
 | `WECOM_CODEX_SANDBOX` | `read-only` | `read-only`, `workspace-write`, or `danger-full-access` |
-| `WECOM_CODEX_MODEL` | Codex default | optional Codex model override |
+| `WECOM_CODEX_MODEL` | `gpt-5.6-luna` | Codex model for normal WeCom conversations; can be overridden independently of risk intent parsing |
+| `WECOM_CODEX_REASONING_EFFORT` | `max` | Codex reasoning effort for normal WeCom conversations; forwarded as `model_reasoning_effort` |
+| `WECOM_RISK_INTENT_MODEL` | `gpt-5.3-codex-spark` | Codex model used only for structured pretrade intent extraction; runs read-only and does not reuse the conversation thread |
 | `WECOM_STREAM_MAX_BYTES` | `20000` | maximum UTF-8 byte length for the Markdown stream; capped at 20000 to retain 480 bytes of headroom below WeCom's 20480-byte protocol limit |
 | `WECOM_STREAM_MAX_CHARS` | — | deprecated compatibility alias for `WECOM_STREAM_MAX_BYTES` |
 | `WECOM_STREAM_FLUSH_MS` | `500` | minimum interval between stream refreshes |
@@ -181,7 +183,7 @@ result; missing or malformed status fields are reported as inconclusive.
 
 ## Logs and health
 
-The bridge writes redacted JSONL logs to `WECOM_STATE_DIR/logs/bridge-YYYYMMDD.jsonl`. Files rotate daily and are removed after `WECOM_LOG_RETENTION_DAYS`. Cleanup runs at startup and then every `WECOM_MAINTENANCE_INTERVAL_MS`. Credentials, authorization headers, resource IDs, raw prompts, and local attachment paths use the shared logger's redaction rules. If the optional telemetry adapter is configured, WeCom reports queue wait, run/attachment latency, time to first text, stream coalescing/failures, generated-file bytes, duplicate callbacks, capacity rejection, and maintenance results without raw message content.
+The bridge writes redacted JSONL logs to `WECOM_STATE_DIR/logs/bridge-YYYYMMDD.jsonl`. Files rotate daily and are removed after `WECOM_LOG_RETENTION_DAYS`. Cleanup runs at startup and then every `WECOM_MAINTENANCE_INTERVAL_MS`. Credentials, authorization headers, resource IDs, raw prompts, and local attachment paths use the shared logger's redaction rules. If the optional telemetry adapter is configured, WeCom reports queue wait, run/attachment latency, time to first text, stream coalescing/failures, generated-file bytes, duplicate callbacks, capacity rejection, maintenance results, and dedicated risk-intent TTFT/total latency metrics without raw message content. Risk-intent logs include the selected intent model plus timing/outcome, but not the raw transaction prompt.
 
 The live process atomically refreshes `WECOM_STATE_DIR/health.json` with mode `0600`. Check it without providing Bot ID or Secret:
 

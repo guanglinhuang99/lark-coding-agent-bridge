@@ -76,6 +76,7 @@ import {
   type WeComMediaInput,
 } from './media';
 import { sendLinkedWorkspaceArtifacts } from './egress';
+import { resolveWeComModelConfig } from './model-config';
 import type { NormalizedAttachment } from '../media/attachment';
 import { RiskDirectClient } from './risk/client';
 import {
@@ -143,7 +144,11 @@ if (!botId || !secret) {
 }
 
 const sandbox = readSandbox(process.env.WECOM_CODEX_SANDBOX);
-const model = process.env.WECOM_CODEX_MODEL?.trim() || undefined;
+const {
+  codexModel: model,
+  codexReasoningEffort,
+  riskIntentModel,
+} = resolveWeComModelConfig(process.env);
 const streamMaxBytes = readStreamMaxBytes(
   process.env.WECOM_STREAM_MAX_BYTES ?? process.env.WECOM_STREAM_MAX_CHARS,
 );
@@ -744,26 +749,53 @@ async function analyzeRiskDraft(
   previous?: RiskAiDraft,
   correction?: string,
 ): Promise<RiskAiDraft> {
+  const startedAt = Date.now();
+  let firstOutputReported = false;
   const run = codex.run({
     runId: randomUUID(),
     prompt: buildRiskIntentPrompt(originalText, previous, correction),
     cwd: workspace,
-    model,
+    model: riskIntentModel,
     sandbox: 'read-only',
   });
   let output = '';
   try {
     for await (const event of run.events) {
+      if (
+        !firstOutputReported &&
+        ((event.type === 'text' && Boolean(event.delta)) ||
+          (event.type === 'final_text' && Boolean(event.content)))
+      ) {
+        firstOutputReported = true;
+        const ttftMs = Date.now() - startedAt;
+        reportMetric('wecom_risk_intent_ttft_ms', ttftMs, { model: riskIntentModel });
+        log.info('wecom-risk-intent', 'first-output', { model: riskIntentModel, ttftMs });
+      }
       if (event.type === 'text' && event.delta) output += event.delta;
       if (event.type === 'final_text' && event.content) output = event.content;
       if (event.type === 'error') throw new Error(event.message);
     }
     await run.waitForExit(1500).catch(() => false);
-    return parseRiskIntentOutput(
+    const draft = parseRiskIntentOutput(
       output,
       correction ? `${originalText} ${correction}` : originalText,
     );
+    const durationMs = Date.now() - startedAt;
+    reportMetric('wecom_risk_intent_ms', durationMs, { model: riskIntentModel, outcome: 'ok' });
+    log.info('wecom-risk-intent', 'completed', {
+      model: riskIntentModel,
+      durationMs,
+      outcome: 'ok',
+    });
+    return draft;
   } catch (error) {
+    const durationMs = Date.now() - startedAt;
+    reportMetric('wecom_risk_intent_ms', durationMs, { model: riskIntentModel, outcome: 'failed' });
+    log.info('wecom-risk-intent', 'completed', {
+      model: riskIntentModel,
+      durationMs,
+      outcome: 'failed',
+    });
     await run.stop().catch(() => {});
     throw error;
   }
@@ -936,6 +968,7 @@ async function runCodexPrompt(
       cwd: workspace,
       threadId,
       model,
+      reasoningEffort: codexReasoningEffort,
       sandbox,
       images: attachments
         .filter((attachment) => attachment.kind === 'image' && attachment.decision === 'accepted')
