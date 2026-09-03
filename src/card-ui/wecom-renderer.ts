@@ -12,10 +12,14 @@ export function renderWeComAgentCard(card: AgentCard): TemplateCard {
   return {
     card_type: 'button_interaction',
     source: {
-      desc: clip(card.eyebrow ?? 'CODEX', 20),
+      // desc_color is the strongest reliable colour affordance exposed by the
+      // native WeCom card. The leading block makes that colour read like the
+      // accent rail used by terminal UIs such as Claude Code.
+      desc: clip(`▌ ${card.eyebrow ?? 'CODEX'}`, 20),
       desc_color: toneColor(card.tone ?? 'neutral'),
     },
     main_title: {
+      // WeCom renders main_title with its native strong/bold hierarchy.
       title: `${statusGlyph(card.status)} ${clip(card.title, 30)}`.trim(),
       desc: clip(card.subtitle ?? statusLabel(card.status), 30),
     },
@@ -33,18 +37,19 @@ export function renderWeComAgentCard(card: AgentCard): TemplateCard {
 export function renderTuiBody(card: AgentCard): string {
   const lines: string[] = [];
   if (card.status) {
-    lines.push(`${statusDot(card.status)} ${statusLabel(card.status).toUpperCase()}`);
+    lines.push(`${statusBar(card.status)} ${statusLabel(card.status).toUpperCase()}`);
   }
-  if (card.body?.trim()) lines.push(clip(singleLine(card.body), 72));
+  if (card.body?.trim()) lines.push(`┃ ${clip(singleLine(card.body), 68)}`);
 
   const steps = (card.steps ?? []).slice(0, 4);
+  if (steps.length > 0 && card.body?.trim()) lines.push('┃');
   for (let index = 0; index < steps.length; index += 1) {
     const step = steps[index]!;
-    const branch = index === steps.length - 1 ? '└' : '├';
-    lines.push(`${branch} ${stepGlyph(step.status)} ${clip(singleLine(step.label), 54)}`);
+    const branch = index === steps.length - 1 ? '└─' : '├─';
+    lines.push(`${branch} ${stepGlyph(step.status)} ${clip(singleLine(step.label), 52)}`);
   }
 
-  return lines.join('\n') || '○ READY';
+  return lines.join('\n') || '▌ ○ READY';
 }
 
 function renderAction(action: CardAction): { text: string; key: string; style: 1 | 2 | 4 } {
@@ -70,12 +75,12 @@ function statusGlyph(status: CardStatus | undefined): string {
   return '○';
 }
 
-function statusDot(status: CardStatus): string {
-  if (status === 'success') return '●';
-  if (status === 'error') return '●';
-  if (status === 'warning' || status === 'stopping') return '●';
-  if (status === 'running' || status === 'thinking' || status === 'queued') return '●';
-  return '○';
+function statusBar(status: CardStatus): string {
+  if (status === 'success') return '▌ ✓';
+  if (status === 'error') return '▌ ×';
+  if (status === 'warning' || status === 'stopping') return '▌ !';
+  if (status === 'running' || status === 'thinking' || status === 'queued') return '▌ ●';
+  return '▌ ○';
 }
 
 function statusLabel(status: CardStatus | undefined): string {
