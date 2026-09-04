@@ -85,6 +85,7 @@ wecom-channel-bridge
 | `WECOM_STATE_DIR` | `~/.lark-channel/wecom` | local thread/session state |
 | `WECOM_CODEX_SANDBOX` | `read-only` | `read-only`, `workspace-write`, or `danger-full-access` |
 | `WECOM_CODEX_MODEL` | `gpt-5.6-luna` | Codex model for normal WeCom conversations; can be overridden independently of risk intent parsing |
+| `WECOM_CODEX_MODEL_OPTIONS` | — | optional comma-separated model allowlist for `/model`; the current and startup models remain available automatically |
 | `WECOM_CODEX_REASONING_EFFORT` | `max` | Codex reasoning effort for normal WeCom conversations; forwarded as `model_reasoning_effort` |
 | `WECOM_RISK_INTENT_MODEL` | `gpt-5.3-codex-spark` | Codex model used only for structured pretrade intent extraction; runs read-only and does not reuse the conversation thread |
 | `WECOM_STREAM_MAX_BYTES` | `20000` | maximum UTF-8 byte length for the Markdown stream; capped at 20000 to retain 480 bytes of headroom below WeCom's 20480-byte protocol limit |

@@ -8,9 +8,16 @@ describe('WeCom user-facing errors', () => {
   });
 
   it('never embeds raw backend diagnostics in the canned user copy', () => {
+    const rawInput =
+      '{"error":{"message":"model unsupported","internal":"..."}} stderr stack traceback';
     for (const kind of ['agent-startup', 'execution'] as const) {
       const text = weComUserErrorMarkdown(kind);
       expect(containsBackendDiagnostic(text)).toBe(false);
+      expect(text.toLowerCase()).not.toContain('error');
+      expect(text.toLowerCase()).not.toContain('stderr');
+      expect(text.toLowerCase()).not.toContain('stack');
+      expect(text.toLowerCase()).not.toContain('traceback');
+      expect(text).not.toContain(rawInput);
       expect(text.length).toBeLessThan(80);
     }
   });
