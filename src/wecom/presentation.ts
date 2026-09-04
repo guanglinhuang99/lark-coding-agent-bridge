@@ -6,6 +6,7 @@ import type { RunState } from '../card/run-state';
 import type { CodexSandboxMode } from '../config/permissions';
 import { buildRunCardView, type WeComRunCardStatus } from './ui/builders';
 import { renderWeComCard } from './ui/renderer';
+import { weComUserErrorMarkdown } from './user-error';
 
 export type WeComCardStatus = WeComRunCardStatus;
 
@@ -36,14 +37,24 @@ export function renderWeComMarkdown(state: RunState, meta: WeComRenderMeta): str
     `> 工作区：\`${escapeInlineCode(compactWorkspace(meta.workspace))}\` · 权限：\`${sandboxLabel(meta.sandbox)}\` · 会话：${thread}`,
   ].join('\n');
 
-  const renderedBody = sanitizeSensitiveText(renderText(sanitizeToolInputs(state))).trim();
-  const finalFallback = state.finalText?.trim() ?? '';
-  const finalBody = sanitizeSensitiveText(finalFallback);
-  const body = [renderedBody, shouldAppendFinalText(state, finalFallback) ? finalBody : '']
-    .filter(Boolean)
-    .join('\n\n') || emptyBody(state);
+  const body = state.terminal === 'error'
+    ? userFacingError(state)
+    : (() => {
+        const renderedBody = sanitizeSensitiveText(renderText(sanitizeToolInputs(state))).trim();
+        const finalFallback = state.finalText?.trim() ?? '';
+        const finalBody = sanitizeSensitiveText(finalFallback);
+        return [renderedBody, shouldAppendFinalText(state, finalFallback) ? finalBody : '']
+          .filter(Boolean)
+          .join('\n\n') || emptyBody(state);
+      })();
 
   return [header, body].filter(Boolean).join('\n\n');
+}
+
+function userFacingError(state: RunState): string {
+  return state.errorMsg === weComUserErrorMarkdown('agent-startup')
+    ? weComUserErrorMarkdown('agent-startup')
+    : weComUserErrorMarkdown('execution');
 }
 
 /** Build the persistent WeCom interaction card displayed beside the stream. */

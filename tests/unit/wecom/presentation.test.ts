@@ -160,7 +160,7 @@ describe('WeCom rich presentation', () => {
     });
     const failedMarkdown = renderWeComMarkdown(failed, meta);
     expect(failedMarkdown).toContain('执行失败');
-    expect(failedMarkdown).toContain('boom');
+    expect(failedMarkdown).not.toContain('boom');
 
     const timedOut = reduce(freshState(), {
       type: 'error',
@@ -168,6 +168,28 @@ describe('WeCom rich presentation', () => {
       terminationReason: 'timeout',
     });
     expect(renderWeComMarkdown(timedOut, meta)).toContain('已超时');
+  });
+
+  it('sanitizes raw diagnostics from an error RunState before final Markdown rendering', () => {
+    const rawDiagnostic =
+      '{"error":{"message":"model unsupported","internal":"..."}} stderr stack traceback';
+    let state = reduce(freshState(), { type: 'text', delta: rawDiagnostic });
+    state = reduce(
+      { ...state, finalText: rawDiagnostic },
+      { type: 'error', message: rawDiagnostic, terminationReason: 'failed' },
+    );
+
+    const markdown = renderWeComMarkdown(state, meta);
+    const normalized = markdown.toLowerCase();
+
+    expect(markdown).toContain('❌ Codex 执行失败');
+    expect(normalized).not.toContain('error');
+    expect(normalized).not.toContain('internal');
+    expect(normalized).not.toContain('stderr');
+    expect(normalized).not.toContain('stack');
+    expect(normalized).not.toContain('traceback');
+    expect(markdown).not.toContain('model unsupported');
+    expect(markdown).not.toContain('{"');
   });
 
   it('uses final_text when the stream did not emit text blocks', () => {

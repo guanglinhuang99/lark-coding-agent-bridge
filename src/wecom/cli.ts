@@ -446,7 +446,7 @@ function handleMessageEvent<T extends BaseMessage>(frame: WsFrame<T>): void {
     log.fail('wecom-message', err);
     reportMetric('wecom_message_failures', 1, { kind: failureKind(err) });
     console.error(`Message handling failed: ${message}`);
-    await replyOnce(frame, '⚠️ 处理失败', [`${message}`]).catch(() => {});
+    await replyOnce(frame, '⚠️ 处理失败', [weComUserErrorMarkdown('execution')]).catch(() => {});
   });
 }
 
@@ -649,7 +649,10 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
       reportMetric('wecom_message_failures', 1, { kind: failureKind(err) });
       console.error(`Message handling failed: ${message}`);
       await stream.finish(
-        truncateUtf8(renderWeComNotice('⚠️ 处理失败', [message]), streamMaxBytes),
+        truncateUtf8(
+          renderWeComNotice('⚠️ 处理失败', [weComUserErrorMarkdown('execution')]),
+          streamMaxBytes,
+        ),
       ).catch(() => {});
       await deliverErrorCard(frame, 'execution');
       return;
