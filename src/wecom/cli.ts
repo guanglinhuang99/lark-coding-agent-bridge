@@ -17,7 +17,6 @@ import type {
   TextMessage,
   WsFrame,
 } from '@wecom/aibot-node-sdk';
-import { supportedModels } from '../agent/models';
 import { CodexAdapter } from '../agent/codex/adapter';
 import { listCodexThreadHistory } from '../session/codex-history';
 import { formatRelTime } from '../session/history';
@@ -80,6 +79,10 @@ import {
 } from './media';
 import { sendLinkedWorkspaceArtifacts } from './egress';
 import { resolveWeComModelConfig } from './model-config';
+import { readWeComModelAllowlist, weComModelOptions } from './model-options';
+import { handleEnterChat as handleEnterChatEvent } from './enter-chat-handler';
+import { enterChatObservation } from './enter-chat-observability';
+import { weComUserErrorMarkdown } from './user-error';
 import {
   effectiveModel as effectiveConversationModel,
   effectiveReasoningEffort as effectiveConversationReasoningEffort,
@@ -191,6 +194,9 @@ const {
   codexReasoningEffort,
   riskIntentModel,
 } = resolveWeComModelConfig(process.env);
+const configuredModelAllowlist = readWeComModelAllowlist(
+  process.env.WECOM_CODEX_MODEL_OPTIONS,
+);
 const conversationAgentPreferences = new Map<string, ConversationAgentPreferences>();
 const streamMaxBytes = readStreamMaxBytes(
   process.env.WECOM_STREAM_MAX_BYTES ?? process.env.WECOM_STREAM_MAX_CHARS,
@@ -405,9 +411,7 @@ client.on('message.mixed', (frame: MixedFrame) => {
   handleMessageEvent(frame);
 });
 client.on('event.enter_chat', (frame: EnterChatFrame) => {
-  void handleEnterChat(frame).catch((err: unknown) => {
-    console.error(`Welcome card failed: ${err instanceof Error ? err.message : String(err)}`);
-  });
+  void handleEnterChat(frame);
 });
 client.on('event.template_card_event', (frame: TemplateCardEventFrame) => {
   void handleTemplateCardEvent(frame).catch((err: unknown) => {
@@ -442,7 +446,7 @@ function handleMessageEvent<T extends BaseMessage>(frame: WsFrame<T>): void {
     log.fail('wecom-message', err);
     reportMetric('wecom_message_failures', 1, { kind: failureKind(err) });
     console.error(`Message handling failed: ${message}`);
-    await replyOnce(frame, '⚠️ 处理失败', [`${message}`]).catch(() => {});
+    await replyOnce(frame, '⚠️ 处理失败', [weComUserErrorMarkdown('execution')]).catch(() => {});
   });
 }
 
@@ -645,7 +649,10 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
       reportMetric('wecom_message_failures', 1, { kind: failureKind(err) });
       console.error(`Message handling failed: ${message}`);
       await stream.finish(
-        truncateUtf8(renderWeComNotice('⚠️ 处理失败', [message]), streamMaxBytes),
+        truncateUtf8(
+          renderWeComNotice('⚠️ 处理失败', [weComUserErrorMarkdown('execution')]),
+          streamMaxBytes,
+        ),
       ).catch(() => {});
       await deliverErrorCard(frame, 'execution');
       return;
@@ -1086,7 +1093,7 @@ async function runCodexPrompt(
     const message = err instanceof Error ? err.message : String(err);
     state = reduce(state, {
       type: 'error',
-      message,
+      message: weComUserErrorMarkdown('agent-startup'),
       terminationReason: 'failed',
     });
     await stream.finish(renderStream(state, threadId)).catch(() => {});
@@ -1094,7 +1101,7 @@ async function runCodexPrompt(
     log.fail('wecom-run', err, { step: 'start', kind: failureKind(err) });
     reportMetric('wecom_run_failures', 1, { kind: failureKind(err), step: 'start' });
     reportMetric('wecom_run_e2e_ms', Date.now() - requestStartedAt, { terminal: 'failed-start' });
-    console.error(`Failed to start Codex run: ${message}`);
+    console.error(`Failed to start Codex run: ${redactDiagnosticText(message)}`);
     return;
   }
 
@@ -1137,7 +1144,19 @@ async function runCodexPrompt(
           reportMetric('wecom_run_ttft_ms', ttftMs);
         }
 
-        state = reduce(state, event);
+        if (event.type === 'error') {
+          log.fail('wecom-run', new Error(event.message), {
+            step: 'event',
+            kind: failureKind(event),
+          });
+          console.error(`Codex run event failed: ${redactDiagnosticText(event.message)}`);
+        }
+        state = reduce(
+          state,
+          event.type === 'error'
+            ? { ...event, message: weComUserErrorMarkdown('execution') }
+            : event,
+        );
         active.state = state;
         active.threadId = threadId;
 
@@ -1189,7 +1208,7 @@ async function runCodexPrompt(
       const message = err instanceof Error ? err.message : String(err);
       state = reduce(state, {
         type: 'error',
-        message,
+        message: weComUserErrorMarkdown('execution'),
         terminationReason: 'failed',
       });
       active.state = state;
@@ -1204,7 +1223,7 @@ async function runCodexPrompt(
       await deliverErrorCard(frame, 'execution');
       log.fail('wecom-run', err, { step: 'run', kind: failureKind(err) });
       reportMetric('wecom_run_failures', 1, { kind: failureKind(err), step: 'run' });
-      console.error(`Codex run failed: ${message}`);
+      console.error(`Codex run failed: ${redactDiagnosticText(message)}`);
     }
   });
   const streamStats = streamUpdates.snapshot();
@@ -1224,10 +1243,25 @@ async function handleEnterChat(frame: EnterChatFrame): Promise<void> {
   const body = frame.body;
   if (!body) return;
   const key = conversationKey(body);
-
-  await client.replyWelcome(frame, {
-    msgtype: 'template_card',
-    template_card: renderWeComCard(buildHomeCardView(homeCardOptions(key))),
+  await handleEnterChatEvent(frame, {
+    homeCard: renderWeComCard(buildHomeCardView(homeCardOptions(key))),
+    replyWelcome: (eventFrame, reply) => client.replyWelcome(eventFrame, reply),
+    classifyError: failureKind,
+    onStage: (stage, errorKind) => {
+      const observation = enterChatObservation(stage, key, errorKind);
+      if (stage === 'welcome-failed') {
+        log.warn('wecom-enter-chat', 'welcome-failed', {
+          ...observation,
+          diagnostic: '[REDACTED]',
+        });
+      } else {
+        log.info('wecom-enter-chat', stage, { ...observation });
+      }
+      reportMetric('wecom_enter_chat_events', 1, {
+        stage,
+        ...(errorKind ? { kind: errorKind } : {}),
+      });
+    },
   });
 }
 
@@ -1665,13 +1699,11 @@ function registerHomeCard(taskId: string, key: string): void {
 
 function modelSelectionOptions(key: string) {
   const currentModel = effectiveModel(key);
-  const known = supportedModels('codex')
-    .filter((item) => item.value !== 'default')
-    .map((item) => ({ id: item.value, text: item.label }));
-  return [
-    { id: currentModel, text: `${currentModel}（当前）` },
-    ...known.filter((item) => item.id !== currentModel),
-  ];
+  return weComModelOptions({
+    startupModel: model,
+    currentModel,
+    configuredModels: configuredModelAllowlist,
+  }).map((item) => ({ id: item.value, text: item.label }));
 }
 
 function reasoningSelectionOptions(key: string) {
