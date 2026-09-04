@@ -21,11 +21,13 @@ export interface WeComSessionOption {
   id: string;
   label: string;
   workspace?: string;
+  hint?: string;
 }
 
 /**
- * Compact, actually actionable home surface. Only expose actions already
- * supported by the current WeCom callback dispatcher.
+ * Compact home surface. Keep the proven three-button control layout and make
+ * richer navigation discoverable through commands until multi-button layouts
+ * have been validated in the real WeCom client.
  */
 export function buildHomeCardView(options: WeComHomeCardOptions): WeComCardView {
   return {
@@ -35,7 +37,7 @@ export function buildHomeCardView(options: WeComHomeCardOptions): WeComCardView 
     sourceColor: statusColor(options.busy ? 'running' : 'idle'),
     title: '🤖 Codex Bridge',
     description: options.busy ? 'Codex 正在处理当前会话' : '发送消息即可开始新的 Codex 任务',
-    subtitle: 'Card 负责操作和状态；AI 长回复继续使用 Markdown。',
+    subtitle: '快捷入口：/model · /reasoning · /resume · /settings',
     facts: [
       { label: '工作区', value: clip(options.workspace, 26) },
       { label: '模型', value: clip(options.model?.trim() || 'Codex default', 26) },
@@ -102,9 +104,16 @@ export function buildSessionSelectionCardView(options: {
     actionKey: WECOM_CARD_ACTIONS.session.resume,
     options: options.sessions.map((session) => ({
       id: session.id,
-      text: session.workspace ? `${session.label} · ${session.workspace}` : session.label,
+      text: sessionLabel(session),
     })),
   });
+}
+
+function sessionLabel(session: WeComSessionOption): string {
+  return [session.label, session.workspace, session.hint]
+    .map((item) => item?.trim())
+    .filter((item): item is string => Boolean(item))
+    .join(' · ');
 }
 
 function buildNavigationSelection(options: {
