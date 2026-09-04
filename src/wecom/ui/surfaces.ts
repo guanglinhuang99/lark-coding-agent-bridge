@@ -18,14 +18,12 @@ export interface WeComResultCardOptions {
   toolCount?: number;
   fileCount?: number;
   threadId?: string;
+  model?: string;
+  reasoning?: string;
   terminal?: 'success' | 'stopped' | 'error';
 }
 
-/**
- * Compact settings summary. Selection remains in the dedicated model/reasoning
- * cards so this surface never exposes a button whose callback cannot be safely
- * completed with the current WeCom payload shape.
- */
+/** Compact settings summary with command affordances that already exist. */
 export function buildAgentSettingsSummaryCardView(
   options: WeComAgentSettingsSummaryOptions,
 ): WeComCardView {
@@ -36,7 +34,7 @@ export function buildAgentSettingsSummaryCardView(
     sourceColor: statusColor('idle'),
     title: '⚙️ Agent Settings',
     description: '当前会话的 Agent 配置',
-    subtitle: '使用 /model 调整模型；推理强度通过对应选择卡修改。',
+    subtitle: '使用 /model、/reasoning 调整；/menu 返回主控制台。',
     facts: [
       { label: '工作区', value: clip(options.workspace, 26) },
       { label: '模型', value: clip(options.model, 26) },
@@ -57,6 +55,8 @@ export function buildResultCardView(options: WeComResultCardOptions): WeComCardV
   if (options.durationMs !== undefined) facts.push({ label: '耗时', value: formatDuration(options.durationMs) });
   if (options.toolCount !== undefined) facts.push({ label: '工具', value: String(Math.max(0, options.toolCount)) });
   if (options.fileCount !== undefined) facts.push({ label: '文件', value: String(Math.max(0, options.fileCount)) });
+  if (options.model) facts.push({ label: '模型', value: clip(options.model, 26) });
+  if (options.reasoning) facts.push({ label: '推理', value: clip(options.reasoning, 26) });
   if (options.threadId) facts.push({ label: '会话', value: shortThread(options.threadId) });
 
   return {
@@ -83,7 +83,7 @@ function titleForTerminal(terminal: NonNullable<WeComResultCardOptions['terminal
 function descriptionForTerminal(terminal: NonNullable<WeComResultCardOptions['terminal']>): string {
   if (terminal === 'error') return '任务未能完成，详细信息请查看 Markdown 输出。';
   if (terminal === 'stopped') return '任务已停止。';
-  return '完整结果已通过 Markdown 输出。';
+  return '完整结果已通过 Markdown 输出；使用 /menu 返回主控制台。';
 }
 
 function formatDuration(durationMs: number): string {

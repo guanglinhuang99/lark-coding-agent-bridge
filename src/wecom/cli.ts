@@ -20,6 +20,7 @@ import type {
 import { supportedModels } from '../agent/models';
 import { CodexAdapter } from '../agent/codex/adapter';
 import { listCodexThreadHistory } from '../session/codex-history';
+import { formatRelTime } from '../session/history';
 import type { AgentRun } from '../agent/types';
 import {
   finalizeIfRunning,
@@ -1175,6 +1176,8 @@ async function runCodexPrompt(
             toolCount: state.blocks.filter((block) => block.kind === 'tool').length,
             ...(fileCount !== undefined ? { fileCount } : {}),
             threadId,
+            model: effectiveModel(key),
+            reasoning: effectiveReasoningEffort(key),
             terminal: state.terminal === 'done' ? 'success' : 'stopped',
           }),
         );
@@ -1463,6 +1466,7 @@ async function replySessionSelection(frame: WsFrame, key: string): Promise<void>
       id: entry.threadId,
       label: entry.name || entry.preview || '(空会话)',
       workspace: path.basename(entry.cwd),
+      ...(entry.updatedAtMs > 0 ? { hint: formatRelTime(entry.updatedAtMs) } : {}),
     }));
     if (sessions.length === 0) {
       await replyNoticeCard(frame, {

@@ -19,6 +19,9 @@ describe('WeCom card surfaces', () => {
 
     expect(card.card_type).toBe('text_notice');
     expect(card.main_title?.title).toBe('⚙️ Agent Settings');
+    expect(card.sub_title_text).toContain('/model');
+    expect(card.sub_title_text).toContain('/reasoning');
+    expect(card.sub_title_text).toContain('/menu');
     expect(card.horizontal_content_list).toEqual([
       { keyname: '工作区', value: 'wecom-bot' },
       { keyname: '模型', value: 'gpt-5.6' },
@@ -35,6 +38,8 @@ describe('WeCom card surfaces', () => {
         durationMs: 18_400,
         toolCount: 6,
         fileCount: 3,
+        model: 'gpt-5.6',
+        reasoning: 'high',
         threadId: 'thread_1234567890abcdef',
       }),
     );
@@ -45,6 +50,8 @@ describe('WeCom card surfaces', () => {
       { keyname: '耗时', value: '18s' },
       { keyname: '工具', value: '6' },
       { keyname: '文件', value: '3' },
+      { keyname: '模型', value: 'gpt-5.6' },
+      { keyname: '推理', value: 'high' },
       { keyname: '会话', value: 'thread_12345…' },
     ]);
     expect(card.button_list).toEqual([

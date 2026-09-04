@@ -20,6 +20,10 @@ describe('WeCom navigation cards', () => {
       }),
     );
     expect(idle.button_list?.map((button) => button.key)).toEqual(['new', 'status']);
+    expect(idle.sub_title_text).toContain('/model');
+    expect(idle.sub_title_text).toContain('/reasoning');
+    expect(idle.sub_title_text).toContain('/resume');
+    expect(idle.sub_title_text).toContain('/settings');
 
     const busy = renderWeComCard(
       buildHomeCardView({
@@ -70,12 +74,17 @@ describe('WeCom navigation cards', () => {
     expect(reasoning.button_list?.[0]?.key).toBe('reasoning.select');
   });
 
-  it('builds a recent-session selector and keeps workspace context visible', () => {
+  it('builds a recent-session selector with workspace and optional hint context', () => {
     const card = renderWeComCard(
       buildSessionSelectionCardView({
         taskId: 'session_1',
         sessions: [
-          { id: 'thread-1', label: 'Fix Outlook extension', workspace: 'web-cli' },
+          {
+            id: 'thread-1',
+            label: 'Fix Outlook extension',
+            workspace: 'web-cli',
+            hint: '2h ago',
+          },
           { id: 'thread-2', label: 'WeCom Card UI', workspace: 'wecom-bot' },
         ],
       }),
@@ -83,6 +92,7 @@ describe('WeCom navigation cards', () => {
 
     expect(card.button_selection?.question_key).toBe('session');
     expect(card.button_selection?.option_list[0]?.text).toContain('web-cli');
+    expect(card.button_selection?.option_list[0]?.text).toContain('2h ago');
     expect(card.button_list?.[0]?.key).toBe('session.resume');
   });
 });
