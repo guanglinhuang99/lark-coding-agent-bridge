@@ -308,12 +308,14 @@ function validateState(value: unknown, file: string): WeComTaskDiskState {
   for (const [taskId, raw] of Object.entries(root.tasks as Record<string, unknown>)) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw damaged(file, taskId);
     const item = raw as Record<string, unknown>;
+    const kind = item.kind;
+    const status = item.status;
     if (
       item.id !== taskId ||
       typeof item.operationKey !== 'string' ||
       typeof item.conversationKey !== 'string' ||
-      !isTaskKind(item.kind) ||
-      !isTaskStatus(item.status) ||
+      !isTaskKind(kind) ||
+      !isTaskStatus(status) ||
       typeof item.label !== 'string' ||
       !Number.isInteger(item.attempts) ||
       (item.attempts as number) <= 0 ||
@@ -331,8 +333,8 @@ function validateState(value: unknown, file: string): WeComTaskDiskState {
       id: taskId,
       operationKey: item.operationKey,
       conversationKey: item.conversationKey,
-      kind: item.kind,
-      status: item.status,
+      kind,
+      status,
       label: item.label,
       attempts: item.attempts as number,
       createdAt: item.createdAt,
