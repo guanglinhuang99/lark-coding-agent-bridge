@@ -39,7 +39,7 @@ export function buildWeComDoctorCardView(options: {
     tui: {
       status: overall === 'ok' ? 'success' : overall,
       eyebrow: 'WECOM · DOCTOR',
-      body: `任务：运行 ${options.tasks.running} · 排队 ${options.tasks.queued} · 失败 ${options.tasks.failed} · 中断 ${options.tasks.interrupted}`,
+      body: `任务：运行 ${options.tasks.running} · 排队 ${options.tasks.queued} · 失败 ${options.tasks.failed} · 中断 ${options.tasks.interrupted} · /runs 查看`,
       steps: options.dependencies.map((item) => ({
         label: `${item.name}: ${item.detail}`,
         status: stepStatus(item.status),
