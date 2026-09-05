@@ -82,6 +82,6 @@ This phase avoids a high-risk rewrite of the large WeCom entry point. Cross-cutt
 
 ## State semantics
 
-A task remains `queued` while waiting for the per-conversation or global run gate. It becomes `running` only after the global run slot is acquired.
+A task remains `queued` while waiting for the per-conversation or global run gate. It becomes `running` only after the global run slot is acquired. Recording `running` is fail-safe: if that state cannot be persisted, execution does not begin, which protects restart idempotency.
 
-A user stop request immediately records `interrupted` before the agent process finishes stopping. Soft failures that are handled for presentation purposes (queue rejection, queue timeout, global capacity rejection, or an internally rendered execution failure) must still persist as failed tasks rather than being overwritten as `done` by the outer message handler.
+A user stop request immediately records `interrupted` before the agent process finishes stopping. Soft failures that are handled for presentation purposes (queue rejection, queue timeout, global capacity rejection, or an internally rendered execution failure) must still persist as failed tasks rather than being overwritten as `done` by the outer message handler. After a successful/terminal user result has already been produced, terminal task-ledger writes are best-effort observability: a storage failure is logged and measured but must not turn an otherwise successful user-visible result into a second failure response.
