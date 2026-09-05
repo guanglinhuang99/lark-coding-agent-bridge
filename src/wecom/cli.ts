@@ -1576,6 +1576,17 @@ async function runCodexPrompt(
       }
       await run.waitForExit(1500).catch(() => false);
     } catch (err) {
+      if (state.terminal === 'done') {
+        // Execution is complete; delivery/persistence failure must never
+        // invite an automatic rerun of side-effectful work.
+        log.fail('wecom-delivery', err, { step: 'after-completion' });
+        reportMetric('wecom_delivery_failures', 1, { step: 'after-completion' });
+        if (durableTaskId) await taskStore.markDone(durableTaskId).catch(() => {});
+        await replyOnce(frame, '任务已完成，结果发送未完成', [
+          '执行结果已产生；请检查连接或本地结果，不要直接重复执行写操作。',
+        ]).catch(() => {});
+        return;
+      }
       const message = err instanceof Error ? err.message : String(err);
       state = reduce(state, {
         type: 'error',

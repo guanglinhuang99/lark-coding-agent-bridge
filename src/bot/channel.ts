@@ -188,18 +188,18 @@ export interface StartChannelDeps {
 
 export async function startChannel(deps: StartChannelDeps): Promise<BridgeChannel> {
   const { cfg, agent, controls } = deps;
-  const identity: BridgeIdentity = {
+  const bridgeIdentity: BridgeIdentity = {
     channel: 'lark', accountId: cfg.accounts.app.id, instanceId: controls.profile || 'default',
   };
   const scoped = deps.appPaths?.sessionsFile && deps.appPaths.workspacesFile
     ? await openLarkConversationViews(deps.sessions, {
         sessionsFile: deps.appPaths.sessionsFile, workspacesFile: deps.appPaths.workspacesFile,
-      }, identity)
+      }, bridgeIdentity)
     : undefined;
   const { sessions, sessionCatalog, workspaces } = scoped ?? deps;
   const taskLedger = deps.taskLedger ?? (deps.appPaths?.sessionsFile
     ? await openLarkTaskLedger(deps.sessions, deps.appPaths.sessionsFile) : undefined);
-  const inbound = taskLedger ? new InboundCoordinator(taskLedger, identity) : undefined;
+  const inbound = taskLedger ? new InboundCoordinator(taskLedger, bridgeIdentity) : undefined;
   const activeRuns = new ActiveRuns();
   // ChatModeCache stays per-bridge-instance — invalidated on restart along
   // with everything else. Topic-mode chats only need one chat.get() call ever.
