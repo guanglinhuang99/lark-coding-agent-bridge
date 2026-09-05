@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildRiskSelectionCard,
   buildRiskSelectionStatusCard,
   RiskSelectionTaskRegistry,
+  updateRiskCardBestEffort,
 } from '../../../src/wecom/risk/card';
 import type { RiskSelectionRequest } from '../../../src/wecom/risk/router';
 
@@ -59,10 +60,44 @@ describe('WeCom risk selection cards', () => {
     expect(card).toMatchObject({
       card_type: 'text_notice',
       task_id: 'risk_done',
-      main_title: { title: '已收到选择' },
+      main_title: { title: '● 已收到选择' },
     });
     expect(card.card_action).toMatchObject({ type: 1 });
     expect(card.button_list).toBeUndefined();
+  });
+
+  it('keeps correction status cards actionable instead of completed', () => {
+    const card = buildRiskSelectionStatusCard(
+      'risk_edit',
+      '请补充信息',
+      '请直接输入修正内容',
+      '其他',
+    );
+
+    expect(card.sub_title_text).toContain('ACTION REQUIRED');
+    expect(card.sub_title_text).not.toContain('COMPLETED');
+  });
+
+  it('renders a completed measurement status as success', () => {
+    const card = buildRiskSelectionStatusCard(
+      'risk_complete',
+      '风险限额测算完成',
+      '业务结果已生成，请查看下方结果。',
+    );
+
+    expect(card.sub_title_text).toContain('COMPLETED');
+    expect(card.sub_title_text).not.toContain('RUNNING');
+  });
+
+  it('renders a submitted measurement request as a terminal acknowledgement', () => {
+    const card = buildRiskSelectionStatusCard(
+      'risk_submitted',
+      '测算请求提交成功',
+      '进度与结果将在同一查询界面更新。',
+    );
+
+    expect(card.sub_title_text).toContain('COMPLETED');
+    expect(card.sub_title_text).not.toContain('RUNNING');
   });
 
   it('consumes a valid task once and rejects invalid, expired, or mismatched callbacks', () => {
@@ -93,6 +128,21 @@ describe('WeCom risk selection cards', () => {
     expect(registry.has('risk_new', 'single:u1')).toBe(true);
     registry.clearConversation('single:u1');
     expect(registry.has('risk_new', 'single:u1')).toBe(false);
+  });
+
+  it('continues the measurement path when a stale-card update is rejected', async () => {
+    const update = vi.fn(async () => {
+      throw new Error('card expired');
+    });
+    const onError = vi.fn();
+    const continueMeasurement = vi.fn();
+
+    await updateRiskCardBestEffort(update, onError);
+    continueMeasurement();
+
+    expect(update).toHaveBeenCalledOnce();
+    expect(onError).toHaveBeenCalledOnce();
+    expect(continueMeasurement).toHaveBeenCalledOnce();
   });
 });
 

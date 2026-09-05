@@ -1,5 +1,29 @@
 export type WeComCardColor = 0 | 1 | 2 | 3;
 export type WeComCardButtonVariant = 'primary' | 'secondary' | 'danger';
+export type WeComTuiStatus =
+  | 'idle'
+  | 'queued'
+  | 'thinking'
+  | 'running'
+  | 'streaming'
+  | 'stopping'
+  | 'success'
+  | 'warning'
+  | 'error'
+  | 'stopped';
+export type WeComTuiStepStatus = 'pending' | 'running' | 'done' | 'error';
+
+export interface WeComTuiStep {
+  label: string;
+  status: WeComTuiStepStatus;
+}
+
+export interface WeComTuiPanel {
+  status: WeComTuiStatus;
+  eyebrow?: string;
+  body?: string;
+  steps?: WeComTuiStep[];
+}
 
 export interface WeComCardFact {
   label: string;
@@ -31,6 +55,7 @@ export interface WeComCardView {
   title: string;
   description?: string;
   subtitle?: string;
+  tui?: WeComTuiPanel;
   facts?: WeComCardFact[];
   selection?: WeComCardSelection;
   buttons?: WeComCardButton[];

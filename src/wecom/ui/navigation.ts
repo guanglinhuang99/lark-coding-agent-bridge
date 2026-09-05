@@ -1,5 +1,6 @@
 import { WECOM_CARD_ACTIONS } from './actions';
 import { buildSelectionCardView } from './builders';
+import { WECOM_COMMAND_HINT } from '../commands';
 import type { WeComCardSelectionOption, WeComCardView } from './model';
 import { statusColor } from './theme';
 
@@ -35,9 +36,18 @@ export function buildHomeCardView(options: WeComHomeCardOptions): WeComCardView 
     taskId: options.taskId,
     source: 'Codex Bridge',
     sourceColor: statusColor(options.busy ? 'running' : 'idle'),
-    title: '🤖 Codex Bridge',
+    title: 'Codex Bridge',
     description: options.busy ? 'Codex 正在处理当前会话' : '发送消息即可开始新的 Codex 任务',
-    subtitle: '快捷入口：/model · /reasoning · /resume · /settings',
+    subtitle: WECOM_COMMAND_HINT,
+    tui: {
+      status: options.busy ? 'running' : 'idle',
+      eyebrow: 'CODEX · WECOM',
+      body: `${options.busy ? '当前会话正在运行。' : '发送消息开始任务。'} ${WECOM_COMMAND_HINT}`,
+      steps: [
+        { label: 'Runtime connected', status: 'done' },
+        { label: options.busy ? 'Agent task executing' : 'Ready for next task', status: options.busy ? 'running' : 'pending' },
+      ],
+    },
     facts: [
       { label: '工作区', value: clip(options.workspace, 26) },
       { label: '模型', value: clip(options.model?.trim() || 'Codex default', 26) },

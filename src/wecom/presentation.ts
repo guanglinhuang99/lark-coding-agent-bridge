@@ -1,4 +1,3 @@
-import { basename } from 'node:path';
 import { homedir } from 'node:os';
 import type { TemplateCard } from '@wecom/aibot-node-sdk';
 import { renderText } from '../card/text-renderer';
@@ -21,26 +20,33 @@ export interface WeComControlCardOptions extends WeComRenderMeta {
   status: WeComCardStatus;
   prompt?: string;
   notice?: string;
+  runState?: RunState;
+}
+
+export type WeComMessageStatus =
+  | 'idle'
+  | 'thinking'
+  | 'running'
+  | 'success'
+  | 'warning'
+  | 'error'
+  | 'stopped';
+
+export interface WeComNoticeOptions {
+  status?: WeComMessageStatus;
+  eyebrow?: string;
 }
 
 /**
  * Render the same RunState used by the Feishu card renderer as a structured
- * WeCom Markdown stream. The body keeps the agent's Markdown intact while the
- * header and footer provide a card-like status surface.
+ * WeCom Markdown stream. Running states use a concise TUI progress header;
+ * completed states expose only the user-facing answer body.
  */
-export function renderWeComMarkdown(state: RunState, meta: WeComRenderMeta): string {
-  const status = runStatus(state);
-  const thread = meta.threadId ? `\`${escapeInlineCode(shortThread(meta.threadId))}\`` : '`new`';
-  const header = [
-    '### 🤖 Codex',
-    `> ${status.icon} **${status.label}**`,
-    `> 工作区：\`${escapeInlineCode(compactWorkspace(meta.workspace))}\` · 权限：\`${sandboxLabel(meta.sandbox)}\` · 会话：${thread}`,
-  ].join('\n');
-
+export function renderWeComMarkdown(state: RunState, _meta: WeComRenderMeta): string {
   const body = state.terminal === 'error'
     ? userFacingError(state)
     : (() => {
-        const renderedBody = sanitizeSensitiveText(renderText(sanitizeToolInputs(state))).trim();
+        const renderedBody = sanitizeSensitiveText(renderText(withoutToolDetails(state))).trim();
         const finalFallback = state.finalText?.trim() ?? '';
         const finalBody = sanitizeSensitiveText(finalFallback);
         return [renderedBody, shouldAppendFinalText(state, finalFallback) ? finalBody : '']
@@ -48,6 +54,8 @@ export function renderWeComMarkdown(state: RunState, meta: WeComRenderMeta): str
           .join('\n\n') || emptyBody(state);
       })();
 
+  if (state.terminal === 'done') return body;
+  const header = renderLifecyclePanel(state);
   return [header, body].filter(Boolean).join('\n\n');
 }
 
@@ -62,9 +70,27 @@ export function buildWeComControlCard(options: WeComControlCardOptions): Templat
   return renderWeComCard(buildRunCardView(options));
 }
 
-export function renderWeComNotice(title: string, lines: readonly string[]): string {
-  const content = lines.filter((line) => line.trim()).map((line) => `> ${line}`).join('\n');
-  return [`### ${title}`, content].filter(Boolean).join('\n\n');
+export function renderWeComNotice(
+  title: string,
+  lines: readonly string[],
+  options: WeComNoticeOptions = {},
+): string {
+  const status = options.status ?? inferMessageStatus(title);
+  const visual = messageStatus(status);
+  const cleanTitle = sanitizeSensitiveText(stripLeadingStatusIcon(title)).trim() || '状态更新';
+  const eyebrow = options.eyebrow ?? inferEyebrow(cleanTitle);
+  const body = lines
+    .flatMap((line) => sanitizeSensitiveText(line).split('\n'))
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  return [
+    `### ${visual.icon} **${eyebrow}**`,
+    `> **▌ ${visual.glyph} ${visual.label}** · **${cleanTitle}**`,
+    ...(body.length > 0
+      ? ['>', ...body.map((line, index) => `> ${index === body.length - 1 ? '└─' : '├─'} ${line}`)]
+      : []),
+  ].join('\n');
 }
 
 export function renderWeComAcknowledgement(
@@ -73,9 +99,30 @@ export function renderWeComAcknowledgement(
 ): string {
   const compact = sanitizeSensitiveText(value).replace(/\s+/g, ' ').trim();
   const echoed = clipText(compact || '空消息', 120);
-  return kind === 'selection'
-    ? `收到，您选择了「${echoed}」。`
-    : `收到，您输入了「${echoed}」。`;
+  return renderWeComNotice(
+    kind === 'selection' ? '选择已接收' : '输入已接收',
+    [kind === 'selection' ? `已选择「${echoed}」。` : `已输入「${echoed}」。`],
+    { status: 'idle', eyebrow: 'WECOM · INPUT' },
+  );
+}
+
+/** Add the shared TUI result header while preserving a long Markdown body. */
+export function renderWeComRiskOutput(markdown: string, interactive = false): string {
+  const content = sanitizeSensitiveText(markdown).trim();
+  const status = interactive ? 'warning' : inferRiskOutputStatus(content);
+  const title = interactive
+    ? '等待用户操作'
+    : status === 'error'
+      ? '风险检查未通过'
+      : status === 'warning'
+        ? '风险检查存在待确认项'
+        : '风险检查完成';
+  const summary = firstMeaningfulLine(content) || '风险限额查询已返回结果。';
+  const panel = renderWeComNotice(title, [clipText(stripMarkdown(summary), 100)], {
+    status,
+    eyebrow: 'RISK · WECOM',
+  });
+  return [panel, content].filter(Boolean).join('\n\n');
 }
 
 /**
@@ -100,29 +147,11 @@ function shouldAppendFinalText(state: RunState, finalText: string): boolean {
   );
 }
 
-function sanitizeToolInputs(state: RunState): RunState {
+function withoutToolDetails(state: RunState): RunState {
   return {
     ...state,
-    blocks: state.blocks.map((block) => {
-      if (block.kind !== 'tool') return block;
-      return {
-        ...block,
-        tool: {
-          ...block.tool,
-          input: sanitizeUnknown(block.tool.input),
-        },
-      };
-    }),
+    blocks: state.blocks.filter((block) => block.kind !== 'tool'),
   };
-}
-
-function sanitizeUnknown(value: unknown): unknown {
-  if (typeof value === 'string') return sanitizeSensitiveText(value);
-  if (Array.isArray(value)) return value.map(sanitizeUnknown);
-  if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(
-    Object.entries(value).map(([key, nested]) => [key, sanitizeUnknown(nested)]),
-  );
 }
 
 function sanitizeSensitiveText(value: string): string {
@@ -136,39 +165,88 @@ function sanitizeSensitiveText(value: string): string {
   return output.replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]');
 }
 
-function runStatus(state: RunState): { icon: string; label: string } {
-  if (state.terminal === 'done') return { icon: '✅', label: '已完成' };
-  if (state.terminal === 'interrupted') return { icon: '⏹', label: '已中断' };
-  if (state.terminal === 'idle_timeout') return { icon: '⏱', label: '已超时' };
-  if (state.terminal === 'error') return { icon: '⚠️', label: '执行失败' };
-  if (state.footer === 'tool_running') return { icon: '🧰', label: '正在调用工具' };
-  if (state.footer === 'streaming') return { icon: '✍️', label: '正在输出' };
-  return { icon: '🧠', label: '正在思考' };
+function renderLifecyclePanel(state: RunState): string {
+  const status = runStatus(state);
+  const steps = lifecycleTextSteps(state);
+  return [
+    '### 🤖 **CODEX**',
+    `> **▌ ${status.icon} ${status.terminal}** · **${status.label}**`,
+    ...(steps.length > 0 ? ['>', ...steps.map((step) => `> ${step}`)] : []),
+  ].join('\n');
 }
 
-function sandboxLabel(sandbox: CodexSandboxMode): string {
-  if (sandbox === 'workspace-write') return '工作区可写';
-  if (sandbox === 'danger-full-access') return '完全访问';
-  return '只读';
+function lifecycleTextSteps(state: RunState): string[] {
+  if (state.terminal === 'interrupted') return ['└─ ! 任务已停止'];
+  if (state.terminal === 'idle_timeout') return ['└─ ! 处理超时'];
+  if (state.terminal === 'error') return ['└─ × 处理失败'];
+  if (state.footer === 'streaming') return ['└─ ⟳ 正在整理回答…'];
+  return ['└─ ⟳ 正在处理，请稍候…'];
 }
 
-function compactWorkspace(workspace: string): string {
-  const name = basename(workspace);
-  return clipText(name || workspace, 40);
+function runStatus(state: RunState): { icon: string; label: string; terminal: string } {
+  if (state.terminal === 'done') return { icon: '✓', label: '已完成', terminal: 'DONE' };
+  if (state.terminal === 'interrupted') return { icon: '■', label: '已中断', terminal: 'STOPPED' };
+  if (state.terminal === 'idle_timeout') return { icon: '!', label: '已超时', terminal: 'TIMEOUT' };
+  if (state.terminal === 'error') return { icon: '×', label: '执行失败', terminal: 'FAILED' };
+  if (state.footer === 'tool_running') return { icon: '●', label: '正在处理', terminal: 'RUNNING' };
+  if (state.footer === 'streaming') return { icon: '●', label: '正在输出', terminal: 'STREAM' };
+  return { icon: '●', label: '正在思考', terminal: 'THINK' };
 }
 
-function shortThread(threadId: string): string {
-  return threadId.length > 12 ? `${threadId.slice(0, 12)}…` : threadId;
+function messageStatus(status: WeComMessageStatus): {
+  icon: string;
+  glyph: string;
+  label: string;
+} {
+  if (status === 'thinking') return { icon: '🧠', glyph: '●', label: 'THINKING' };
+  if (status === 'running') return { icon: '⏳', glyph: '●', label: 'RUNNING' };
+  if (status === 'success') return { icon: '✅', glyph: '✓', label: 'COMPLETED' };
+  if (status === 'warning') return { icon: '⚠️', glyph: '!', label: 'ACTION REQUIRED' };
+  if (status === 'error') return { icon: '❌', glyph: '×', label: 'FAILED' };
+  if (status === 'stopped') return { icon: '⏹', glyph: '■', label: 'STOPPED' };
+  return { icon: '◇', glyph: '○', label: 'READY' };
+}
+
+function inferMessageStatus(title: string): WeComMessageStatus {
+  if (/失败|错误|无效|未授权|无法使用|未通过/.test(title)) return 'error';
+  if (/已确认|已收到/.test(title)) return 'running';
+  if (/补充|修改|选择|确认|缺少|排队|较多|未执行|需要/.test(title)) return 'warning';
+  if (/停止|中断/.test(title)) return 'stopped';
+  if (/完成|成功|通过/.test(title)) return 'success';
+  if (/理解|核对|分析/.test(title)) return 'thinking';
+  if (/查询|处理|执行|准备|继续|已确认|收到/.test(title)) return 'running';
+  return 'idle';
+}
+
+function inferRiskOutputStatus(content: string): WeComMessageStatus {
+  if (/🔴|未通过|失败|现金不足/.test(content)) return 'error';
+  if (/NO_DATA|NODATA|未知|未检查|待确认|请选择|请补充/.test(content)) return 'warning';
+  return 'success';
+}
+
+function inferEyebrow(title: string): string {
+  return /风险|交易|账户|证券|测算|投资限额/.test(title) ? 'RISK · WECOM' : 'CODEX · WECOM';
+}
+
+function stripLeadingStatusIcon(value: string): string {
+  return value.replace(/^(?:🕒|⏳|⚠️?|🧠|🔎|✅|❌|🟢|🔴|⏹)\s*/u, '');
+}
+
+function firstMeaningfulLine(value: string): string {
+  return value.split('\n').map((line) => line.trim()).find(Boolean) ?? '';
+}
+
+function stripMarkdown(value: string): string {
+  return value
+    .replace(/^#{1,6}\s+/, '')
+    .replace(/[>*_`]/g, '')
+    .trim();
 }
 
 function emptyBody(state: RunState): string {
   if (state.terminal === 'done') return '_（未返回文本内容）_';
-  if (state.terminal === 'running') return '_🧠 正在思考…_';
+  if (state.terminal === 'running') return '_**▌ Codex 正在工作…**_';
   return '';
-}
-
-function escapeInlineCode(value: string): string {
-  return value.replace(/`/g, '′');
 }
 
 function clipText(value: string, maxCodePoints: number): string {

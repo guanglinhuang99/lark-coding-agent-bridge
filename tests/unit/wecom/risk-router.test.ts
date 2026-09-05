@@ -14,7 +14,7 @@ describe('WeCom risk fast-path router', () => {
     const service = fakeService({ calculatePretrade });
     const router = new WeComRiskRouter(service);
 
-    expect(router.shouldHandle('single:u1', '安联ESG纯债1号 申购 0.1', false)).toBe(true);
+    expect(router.shouldHandle('single:u1', '安联ESG纯债1号 申购 0.1', false)).toBe(false);
     const result = await router.handle('single:u1', '安联ESG纯债1号 申购 0.1');
 
     expect(result).toMatchObject({ handled: true, intent: 'pretrade_calc' });
@@ -24,6 +24,23 @@ describe('WeCom risk fast-path router', () => {
       { type: 'subscription', market: 'secondary', amount: 0.1 },
       undefined,
     );
+  });
+
+  it('routes risk-limit questions to restrictions without searching securities', async () => {
+    const getRestrictions = vi.fn(async () => ({
+      product: '安联ESG纯债1号资产管理产品',
+      investment_restrictions: [],
+    }));
+    const searchSecurities = vi.fn(async () => []);
+    const router = new WeComRiskRouter(
+      fakeService({ getRestrictions, searchSecurities }),
+    );
+
+    const result = await router.handle('single:restrictions', '安联ESG纯债1号有哪些风险限额');
+
+    expect(result).toMatchObject({ handled: true, intent: 'query_restrictions' });
+    expect(getRestrictions).toHaveBeenCalledWith('安联ESG纯债1号资产管理产品');
+    expect(searchSecurities).not.toHaveBeenCalled();
   });
 
   it('requires a product before checking a counterparty', async () => {

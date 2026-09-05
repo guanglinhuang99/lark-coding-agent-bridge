@@ -2,25 +2,32 @@ import type { RiskSecuritySuggestion, RiskService } from './client';
 import {
   detectMarket,
   extractAmount,
+  extractDays,
   findAction,
   matchProductCandidates,
+  parseRiskMessage,
   type RiskActionType,
 } from './parser';
 import type { RiskSelectionRequest } from './router';
 
 export interface RiskAiDraft {
   accountQuery: string;
-  action: RiskActionType;
+  action?: RiskActionType;
   securityQuery?: string;
-  amountText: string;
+  amountText?: string;
   days?: number;
   market: 'primary' | 'secondary';
 }
 
+type CompleteRiskAiDraft = RiskAiDraft & {
+  action: RiskActionType;
+  amountText: string;
+};
+
 export type RiskIntentState =
   | { stage: 'account'; originalText: string; draft: RiskAiDraft; products: string[] }
   | { stage: 'security'; originalText: string; draft: RiskAiDraft; product: string; securities: RiskSecuritySuggestion[] }
-  | { stage: 'confirm'; originalText: string; draft: RiskAiDraft; product: string; security?: RiskSecuritySuggestion }
+  | { stage: 'confirm'; originalText: string; draft: CompleteRiskAiDraft; product: string; security?: RiskSecuritySuggestion }
   | { stage: 'freeform'; originalText: string; draft: RiskAiDraft; field: 'account' | 'security' | 'amount' | 'market' | 'other'; product?: string; security?: RiskSecuritySuggestion };
 
 export function isPretradeIntentCandidate(text: string): boolean {
@@ -31,6 +38,11 @@ export function isPretradeIntentCandidate(text: string): boolean {
     /(?:金额|数量|\d+(?:\.\d+)?\s*(?:亿|万|元|块|股|手|张|份))/.test(text) ||
     extractAmount(text) !== undefined
   );
+}
+
+/** A pending confirmation must treat explicit edit language as a revision. */
+export function isRiskIntentCorrection(text: string): boolean {
+  return /(?:改成|改为|修改|调整|换成|替换|设为|改回|变更为)/.test(text.trim());
 }
 
 export class RiskIntentStateRegistry {
@@ -116,6 +128,7 @@ export function buildRiskIntentPrompt(userText: string, previous?: RiskAiDraft, 
     '字段：account_query, action, security_query, amount_text, days。',
     'action 只能是 subscription/redemption/buy/sell/repo/reverse_repo。',
     'account_query 保留用户描述投资账户/资管产品的关键词；security_query 保留用户描述交易标的的关键词。',
+    'security_query 不得包含 account_query 中的账户或资管产品名称。',
     'amount_text 保留原始金额/数量及单位。buy/sell 必须提取 security_query。',
     '不要输出 market；程序按用户原话确定：明确出现“一级”才是一级，否则一律二级。',
     ...(previous ? [`上次结果：${JSON.stringify(previous)}`] : []),
@@ -124,29 +137,31 @@ export function buildRiskIntentPrompt(userText: string, previous?: RiskAiDraft, 
   ].join('\n');
 }
 
-export function parseRiskIntentOutput(raw: string, originalText: string): RiskAiDraft {
-  const value = jsonObject(raw);
-  const accountQuery = str(value.account_query) || inferAccountQuery(originalText);
-  const action = actionValue(value.action);
-  const securityQuery = str(value.security_query);
-  const amountText = str(value.amount_text);
-  const days = num(value.days);
-  const market = detectMarket(originalText);
-  const needsSecurity =
-    action === 'buy' || action === 'sell' || (market === 'primary' && action === 'subscription');
+export function parseRiskIntentOutput(raw: string, originalText: string): CompleteRiskAiDraft {
+  const draft = parseRiskIntentOutputPartial(raw, originalText);
   const missing = [
-    ...(!accountQuery ? ['账户'] : []),
-    ...(!action ? ['交易动作'] : []),
-    ...(!amountText ? ['金额/数量'] : []),
-    ...(needsSecurity && !securityQuery ? ['交易标的'] : []),
+    ...(!draft.accountQuery ? ['账户'] : []),
+    ...(!draft.action ? ['交易动作'] : []),
+    ...(!draft.amountText ? ['金额/数量'] : []),
+    ...(needsSecurity(draft) && !draft.securityQuery ? ['交易标的'] : []),
   ];
   if (missing.length) throw new RiskIntentClarificationError(missing);
-  if (!action) throw new RiskIntentClarificationError(['交易动作']);
+  return draft as CompleteRiskAiDraft;
+}
+
+export function parseRiskIntentOutputPartial(raw: string, originalText: string): RiskAiDraft {
+  const value = jsonObject(raw);
+  const accountQuery = str(value.account_query) || inferAccountQuery(originalText);
+  const action = findAction(originalText) ?? actionValue(value.action);
+  const securityQuery = str(value.security_query);
+  const amountText = str(value.amount_text) || extractAmount(originalText)?.source;
+  const days = extractDays(originalText) ?? num(value.days);
+  const market = detectMarket(originalText);
   return {
     accountQuery,
-    action,
+    ...(action ? { action } : {}),
     ...(securityQuery ? { securityQuery } : {}),
-    amountText,
+    ...(amountText ? { amountText } : {}),
     ...(days !== undefined ? { days } : {}),
     market,
   };
@@ -161,22 +176,117 @@ export class RiskIntentClarificationError extends Error {
 
 export async function normalizeRiskDraft(originalText: string, draft: RiskAiDraft, service: RiskService): Promise<RiskIntentState> {
   const products = await service.listProducts();
-  const matched = matchProductCandidates(draft.accountQuery, products).products;
-  if (matched.length !== 1) return { stage: 'account', originalText, draft, products: matched.slice(0, 9) };
-  return normalizeSecurity(originalText, draft, matched[0]!, service);
+  const productMatch = matchProductCandidates(draft.accountQuery, products);
+  const matched = productMatch.products;
+  if (productMatch.fuzzy || matched.length !== 1) {
+    return { stage: 'account', originalText, draft, products: matched.slice(0, 9) };
+  }
+  const product = matched[0]!;
+  return normalizeSecurity(
+    originalText,
+    removeProductFromSecurityQuery(originalText, draft, products, product),
+    product,
+    service,
+  );
 }
 
 export async function normalizeSecurity(originalText: string, draft: RiskAiDraft, product: string, service: RiskService): Promise<RiskIntentState> {
-  const needsSecurity =
-    draft.action === 'buy' ||
-    draft.action === 'sell' ||
-    (draft.market === 'primary' && draft.action === 'subscription');
-  if (!needsSecurity) return { stage: 'confirm', originalText, draft, product };
-  const securities = await service.searchSecurities(draft.securityQuery ?? '');
+  if (!needsSecurity(draft)) return completeOrMissing(originalText, draft, product);
+  if (!draft.securityQuery?.trim()) {
+    return { stage: 'security', originalText, draft, product, securities: [] };
+  }
+  const securities = await service.searchSecurities(draft.securityQuery);
   const exact = exactSecurity(draft.securityQuery ?? '', securities);
-  if (exact) return { stage: 'confirm', originalText, draft, product, security: exact };
-  if (securities.length === 1) return { stage: 'confirm', originalText, draft, product, security: securities[0] };
-  return { stage: 'security', originalText, draft, product, securities: securities.slice(0, 9) };
+  if (exact) return completeOrMissing(originalText, draft, product, exact);
+  // A single master-data result is unambiguous even when the user searched by
+  // name.  Ambiguous name searches stay on the selection path below.
+  if (securities.length === 1) {
+    return completeOrMissing(originalText, draft, product, securities[0]);
+  }
+  // Keep the selection path bounded. A large result set must never turn into
+  // a freeform guess, while the first nine still give the user an actionable
+  // card (including duplicate names with different codes).
+  return {
+    stage: 'security',
+    originalText,
+    draft,
+    product,
+    securities: prioritizeDuplicateSecurityNames(securities).slice(0, 9),
+  };
+}
+
+export async function applyDirectRiskIntentInput(
+  state: RiskIntentState,
+  text: string,
+  service: RiskService,
+): Promise<RiskIntentState | undefined> {
+  const value = text.trim();
+  if (!value) return undefined;
+
+  if (state.stage === 'account' || (state.stage === 'freeform' && state.field === 'account')) {
+    return normalizeRiskDraft(
+      state.originalText,
+      { ...state.draft, accountQuery: value },
+      service,
+    );
+  }
+
+  if (state.stage === 'security' || (state.stage === 'freeform' && state.field === 'security')) {
+    if (!state.product) return undefined;
+    return normalizeSecurity(
+      state.originalText,
+      { ...state.draft, securityQuery: value },
+      state.product,
+      service,
+    );
+  }
+
+  if (state.stage === 'freeform' && state.field === 'amount') {
+    if (!extractAmount(value) || !state.product) return undefined;
+    return completeOrMissing(
+      state.originalText,
+      { ...state.draft, amountText: value },
+      state.product,
+      state.security,
+    );
+  }
+
+  return undefined;
+}
+
+/** Merge a confirmation-stage correction without discarding untouched fields. */
+export function mergeRiskIntentDraft(
+  previous: RiskAiDraft,
+  revised: RiskAiDraft,
+  correction: string,
+): RiskAiDraft {
+  const explicitAmount = extractAmount(correction);
+  const explicitAction = findAction(correction);
+  const explicitDays = extractDays(correction);
+  const explicitMarket = /一级/.test(correction)
+    ? 'primary'
+    : /二级/.test(correction)
+      ? 'secondary'
+      : undefined;
+  const explicitAccount = correctionField(correction, /(?:产品|账户)(?:名称)?\s*(?:改成|改为|修改成|修改为|换成|替换为|调整成|调整为|设为|为)\s*([^\s，,。；;]+)/);
+  const explicitSecurity = correctionField(correction, /(?:证券|标的)(?:名称)?\s*(?:改成|改为|修改成|修改为|换成|替换为|调整成|调整为|设为|为)\s*([^\s，,。；;]+)/);
+
+  return {
+    accountQuery: explicitAccount || previous.accountQuery || revised.accountQuery,
+    ...(explicitAction || previous.action || revised.action
+      ? { action: explicitAction ?? previous.action ?? revised.action }
+      : {}),
+    ...(explicitSecurity || previous.securityQuery || revised.securityQuery
+      ? { securityQuery: explicitSecurity ?? previous.securityQuery ?? revised.securityQuery }
+      : {}),
+    ...(explicitAmount?.source || previous.amountText || revised.amountText
+      ? { amountText: explicitAmount?.source ?? previous.amountText ?? revised.amountText }
+      : {}),
+    ...(explicitDays !== undefined || previous.days !== undefined || revised.days !== undefined
+      ? { days: explicitDays ?? previous.days ?? revised.days }
+      : {}),
+    market: explicitMarket ?? previous.market ?? revised.market,
+  };
 }
 
 export function buildIntentSelection(state: RiskIntentState, expiresAt: number): RiskSelectionRequest {
@@ -186,11 +296,11 @@ export function buildIntentSelection(state: RiskIntentState, expiresAt: number):
       kind: 'intent-account',
       title: '请选择准确账户',
       subTitle: noCandidates
-        ? '未找到匹配的产品，请选择“其他”并输入产品名称。'
+        ? '未找到匹配的产品，请直接输入准确的产品名称或关键词。'
         : '请选择匹配的产品。',
       replyHint: noCandidates
-        ? '如果列表中没有合适的产品，请选择“其他”。'
-        : '如果列表中没有合适的产品，请选择“其他”。',
+        ? '也可以选择“其他”后再输入。'
+        : '可以直接输入准确的产品名称或关键词。',
       options: [...state.products.map((label, i) => ({ key: `p${i + 1}`, label, value: label })), { key: 'other', label: '其他', value: '__other_account__' }],
       expiresAt,
     };
@@ -201,11 +311,11 @@ export function buildIntentSelection(state: RiskIntentState, expiresAt: number):
       kind: 'intent-security',
       title: '请选择准确证券',
       subTitle: noCandidates
-        ? '未找到匹配的证券，请选择“其他”并输入证券名称或代码。'
+        ? '未找到匹配的证券，请直接输入证券名称或代码。'
         : '请选择匹配的证券。',
       replyHint: noCandidates
-        ? '如果列表中没有合适的证券，请选择“其他”。'
-        : '如果列表中没有合适的证券，请选择“其他”。',
+        ? '也可以选择“其他”后再输入。'
+        : '可以直接输入准确的证券名称或代码。',
       options: [...state.securities.map((item, i) => ({ key: `s${i + 1}`, label: item.label, value: JSON.stringify(item) })), { key: 'other', label: '其他', value: '__other_security__' }],
       expiresAt,
     };
@@ -252,8 +362,92 @@ export function canonicalCommand(state: Extract<RiskIntentState, { stage: 'confi
 
 function exactSecurity(query: string, options: RiskSecuritySuggestion[]): RiskSecuritySuggestion | undefined {
   const q = query.trim().toUpperCase();
-  return options.find((x) => x.code.toUpperCase() === q || x.name.trim() === query.trim());
+  return options.find((x) => x.code.trim().toUpperCase() === q);
 }
+
+function prioritizeDuplicateSecurityNames(
+  options: readonly RiskSecuritySuggestion[],
+): RiskSecuritySuggestion[] {
+  const counts = new Map<string, number>();
+  for (const option of options) {
+    const name = option.name.trim();
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  return [
+    ...options.filter((option) => (counts.get(option.name.trim()) ?? 0) > 1),
+    ...options.filter((option) => (counts.get(option.name.trim()) ?? 0) <= 1),
+  ];
+}
+
+function needsSecurity(draft: RiskAiDraft): boolean {
+  return (
+    draft.action === 'buy' ||
+    draft.action === 'sell' ||
+    (draft.market === 'primary' && draft.action === 'subscription')
+  );
+}
+
+function completeOrMissing(
+  originalText: string,
+  draft: RiskAiDraft,
+  product: string,
+  security?: RiskSecuritySuggestion,
+): RiskIntentState {
+  if (!draft.action) {
+    return {
+      stage: 'freeform',
+      originalText,
+      draft,
+      field: 'other',
+      product,
+      ...(security ? { security } : {}),
+    };
+  }
+  if (!draft.amountText) {
+    return {
+      stage: 'freeform',
+      originalText,
+      draft,
+      field: 'amount',
+      product,
+      ...(security ? { security } : {}),
+    };
+  }
+  return {
+    stage: 'confirm',
+    originalText,
+    draft: draft as CompleteRiskAiDraft,
+    product,
+    ...(security ? { security } : {}),
+  };
+}
+
+function removeProductFromSecurityQuery(
+  originalText: string,
+  draft: RiskAiDraft,
+  products: readonly string[],
+  product: string,
+): RiskAiDraft {
+  if (!draft.securityQuery) return draft;
+  const containsProduct =
+    matchProductCandidates(draft.securityQuery, [product]).products.length === 1;
+  if (!containsProduct) return draft;
+  const parsed = parseRiskMessage(originalText, products);
+  if (
+    parsed.kind !== 'pretrade_calc' ||
+    parsed.action !== draft.action ||
+    !parsed.securityQuery
+  ) {
+    return draft;
+  }
+  return { ...draft, securityQuery: parsed.securityQuery };
+}
+
+function correctionField(text: string, pattern: RegExp): string | undefined {
+  const match = pattern.exec(text);
+  return match?.[1]?.replace(/[。；;，,]+$/, '').trim() || undefined;
+}
+
 function actionLabel(action: RiskActionType): string {
   return ({ subscription: '申购', redemption: '赎回', buy: '买入', sell: '卖出', repo: '正回购', reverse_repo: '逆回购' } as const)[action];
 }

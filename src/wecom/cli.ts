@@ -33,6 +33,7 @@ import {
   renderWeComAcknowledgement,
   renderWeComMarkdown,
   renderWeComNotice,
+  renderWeComRiskOutput,
   truncateUtf8,
   type WeComCardStatus,
 } from './presentation';
@@ -101,6 +102,7 @@ import {
   buildRiskSelectionCard,
   buildRiskSelectionStatusCard,
   RiskSelectionTaskRegistry,
+  updateRiskCardBestEffort,
 } from './risk/card';
 import {
   buildErrorCardView,
@@ -108,10 +110,7 @@ import {
   buildQueueCardView,
   type WeComErrorKind,
 } from './ui/builders';
-import {
-  buildAgentSettingsSummaryCardView,
-  buildResultCardView,
-} from './ui/surfaces';
+import { buildAgentSettingsSummaryCardView } from './ui/surfaces';
 import type { WeComCardView } from './ui/model';
 import {
   buildHomeCardView,
@@ -136,13 +135,22 @@ import {
 } from './card-routing';
 import { RiskProgressRelay } from './risk/progress';
 import {
+  parseWeComCommand,
+  shouldUseRiskFastPath,
+  WECOM_HELP_LINES,
+  WECOM_RISK_USAGE_LINES,
+} from './commands';
+import {
+  applyDirectRiskIntentInput,
   buildIntentSelection,
   buildRiskIntentPrompt,
   canonicalCommand,
   isPretradeIntentCandidate,
+  isRiskIntentCorrection,
+  mergeRiskIntentDraft,
   normalizeRiskDraft,
   normalizeSecurity,
-  parseRiskIntentOutput,
+  parseRiskIntentOutputPartial,
   RiskIntentClarificationError,
   RiskIntentStateRegistry,
   type RiskAiDraft,
@@ -454,11 +462,23 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
   const body = frame.body;
   if (!body) return;
 
-  const text = normalizeIncomingText(textFromWeComMessage(body), body.chattype);
+  let text = normalizeIncomingText(textFromWeComMessage(body), body.chattype);
   const mediaInputs = collectWeComMediaInputs(body);
   if (!text && mediaInputs.length === 0) return;
 
   const key = conversationKey(body);
+  const parsedCommand = parseWeComCommand(text);
+  if (parsedCommand.kind === 'help') {
+    await replyOnce(frame, '使用帮助', WECOM_HELP_LINES);
+    return;
+  }
+  if (parsedCommand.kind === 'risk-measurement') {
+    if (!parsedCommand.payload) {
+      await replyOnce(frame, '风险限额测算用法', WECOM_RISK_USAGE_LINES);
+      return;
+    }
+    text = parsedCommand.payload;
+  }
   const command = text.toLowerCase();
 
   if (command === '/menu') {
@@ -512,7 +532,7 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
       frame,
       key,
       '✅ 已创建新会话',
-      ['下一条消息会创建新的 Codex thread。'],
+      ['下一条消息会创建新的会话。'],
       'reset',
       '会话已重置',
     );
@@ -553,10 +573,14 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
     return;
   }
 
-  const riskCandidate =
+  const hasActiveRiskState =
     riskIntents.has(key) ||
-    (mediaInputs.length === 0 && isPretradeIntentCandidate(text)) ||
     (riskRouter?.shouldHandle(key, text, mediaInputs.length > 0) ?? false);
+  const riskCandidate = shouldUseRiskFastPath(
+    parsedCommand,
+    hasActiveRiskState,
+    mediaInputs.length > 0,
+  );
   const riskAccessDenied = riskCandidate && !isRiskUserAllowed(body.from?.userid);
   const useRiskFastPath = riskCandidate && !riskAccessDenied;
   const acknowledgement = text
@@ -568,6 +592,8 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
       log.fail('wecom-ack', err, { step: 'input' });
     });
   const stream = new WeComStreamReply(client, frame, generateReqId('stream'));
+  const controlTaskId = createTaskId();
+  let controlCardAttached = false;
   let markStreamReady!: () => void;
   let markStreamFailed!: (err: unknown) => void;
   const streamReady = new Promise<void>((resolve, reject) => {
@@ -586,6 +612,8 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
         stream,
         useRiskFastPath,
         riskAccessDenied,
+        controlTaskId,
+        controlCardAttached,
       );
     });
   } catch (err) {
@@ -613,7 +641,30 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
             : '正在准备 Codex 任务。',
       ]);
   try {
-    await stream.start(truncateUtf8(initialNotice, streamMaxBytes));
+    const initialContent = truncateUtf8(
+      !submission.queued && !useRiskFastPath && !riskAccessDenied
+        ? renderStream(freshRunState(), currentThreadId(key))
+        : initialNotice,
+      streamMaxBytes,
+    );
+    if (!submission.queued && !useRiskFastPath && !riskAccessDenied) {
+      controlCardAttached = await stream.startWithCard(
+        initialContent,
+        buildWeComControlCard({
+          taskId: controlTaskId,
+          status: 'running',
+          workspace,
+          sandbox,
+          threadId: currentThreadId(key),
+          prompt: text || `处理 ${mediaInputs.length} 个附件`,
+          runState: freshRunState(),
+        }),
+      );
+    } else if (!submission.queued && (useRiskFastPath || riskAccessDenied)) {
+      await stream.start(initialContent);
+    } else {
+      await stream.start(initialContent);
+    }
     markStreamReady();
   } catch (err) {
     if (!submission.cancel(err)) markStreamFailed(err);
@@ -676,6 +727,8 @@ async function executeConversationMessage(
   stream: WeComStreamReply,
   useRiskFastPath: boolean,
   riskAccessDenied: boolean,
+  controlTaskId: string,
+  controlCardAttached: boolean,
 ): Promise<void> {
   const submittedAt = Date.now();
   try {
@@ -689,11 +742,55 @@ async function executeConversationMessage(
         if (!body) return;
         if (riskAccessDenied) {
           reportMetric('wecom_risk_access_denied', 1);
-          await stream.finish('未授权用户，无法使用风险限额查询。');
+          await stream.finish(
+            renderWeComNotice('无法使用风险查询', ['当前用户没有风险限额查询权限。'], {
+              status: 'error',
+              eyebrow: 'RISK · WECOM',
+            }),
+          );
           return;
         }
         if (useRiskFastPath && riskRouter && riskClient) {
           const pendingIntent = riskIntents.get(key);
+          if (
+            pendingIntent &&
+            isPretradeIntentCandidate(text) &&
+            !isRiskIntentCorrection(text)
+          ) {
+            await startRiskIntentFlow(body, key, text, stream);
+            return;
+          }
+          const acceptsDirectInput =
+            pendingIntent?.stage === 'account' ||
+            pendingIntent?.stage === 'security' ||
+            (pendingIntent?.stage === 'freeform' &&
+              (pendingIntent.field === 'account' ||
+                pendingIntent.field === 'security' ||
+                pendingIntent.field === 'amount'));
+          if (pendingIntent && acceptsDirectInput) {
+            riskIntents.delete(key);
+            riskSelectionTasks.clearConversation(key);
+            riskIntents.clearTasksForConversation(key);
+            const normalized = await applyDirectRiskIntentInput(pendingIntent, text, riskClient);
+            if (!normalized) {
+              riskIntents.set(key, pendingIntent);
+              await stream.finish(
+                renderWeComNotice(
+                  '需要修正输入',
+                  [
+                    pendingIntent.stage === 'freeform' && pendingIntent.field === 'amount'
+                      ? '请输入正确的金额或数量（含单位）。'
+                      : '请输入有效的修正内容。',
+                  ],
+                  { status: 'warning', eyebrow: 'RISK · WECOM' },
+                ),
+              );
+              return;
+            }
+            riskIntents.set(key, normalized);
+            await finishRiskIntentState(body, key, stream, normalized);
+            return;
+          }
           if (pendingIntent?.stage === 'freeform') {
             riskIntents.delete(key);
             if (pendingIntent.field === 'market' && pendingIntent.product) {
@@ -704,13 +801,33 @@ async function executeConversationMessage(
                   : undefined;
               if (!market) {
                 riskIntents.set(key, pendingIntent);
-                await stream.finish('请输入“一级”或“二级”。');
+                await stream.finish(
+                  renderWeComNotice('需要选择交易市场', ['请输入“一级”或“二级”。'], {
+                    status: 'warning',
+                    eyebrow: 'RISK · WECOM',
+                  }),
+                );
+                return;
+              }
+              if (!pendingIntent.draft.action || !pendingIntent.draft.amountText) {
+                const normalized = await normalizeRiskDraft(
+                  pendingIntent.originalText,
+                  { ...pendingIntent.draft, market },
+                  riskClient,
+                );
+                riskIntents.set(key, normalized);
+                await finishRiskIntentState(body, key, stream, normalized);
                 return;
               }
               const normalized: RiskIntentState = {
                 stage: 'confirm',
                 originalText: pendingIntent.originalText,
-                draft: { ...pendingIntent.draft, market },
+                draft: {
+                  ...pendingIntent.draft,
+                  action: pendingIntent.draft.action,
+                  amountText: pendingIntent.draft.amountText,
+                  market,
+                },
                 product: pendingIntent.product,
                 ...(pendingIntent.security ? { security: pendingIntent.security } : {}),
               };
@@ -741,49 +858,25 @@ async function executeConversationMessage(
             riskIntents.delete(key);
             riskSelectionTasks.clearConversation(key);
             riskIntents.clearTasksForConversation(key);
-            await stream.finish(
+            await stream.update(
               truncateUtf8(
                 renderWeComNotice('已确认交易信息', ['正在执行投资限额测算。']),
                 streamMaxBytes,
               ),
             );
-            await executeRiskCardSelection(body, key, canonicalCommand(pendingIntent), true);
+            await executeRiskCardSelection(body, key, canonicalCommand(pendingIntent), true, {
+              kind: 'stream',
+              stream,
+            });
+            return;
+          }
+          if (pendingIntent?.stage === 'confirm') {
+            await revisePendingRiskConfirmation(body, key, text, stream, pendingIntent);
             return;
           }
           if (!pendingIntent && isPretradeIntentCandidate(text)) {
-            riskSelectionTasks.clearConversation(key);
-            riskIntents.clearTasksForConversation(key);
-            await stream.update(
-              truncateUtf8(
-                renderWeComNotice('🧠 正在理解交易意图', [
-                  '正在提取账户、操作、标的和交易规模。',
-                ]),
-                streamMaxBytes,
-              ),
-            );
-            try {
-              const draft = await analyzeRiskDraft(text);
-              await stream.update(
-                truncateUtf8(
-                  renderWeComNotice('🔎 正在核对交易信息', [
-                    '正在核对账户和证券名称/代码。',
-                  ]),
-                  streamMaxBytes,
-                ),
-              );
-              const normalized = await normalizeRiskDraft(text, draft, riskClient);
-              riskIntents.set(key, normalized);
-              await finishRiskIntentState(body, key, stream, normalized);
-              return;
-            } catch (error) {
-              if (error instanceof RiskIntentClarificationError) {
-                await stream.finish(
-                  renderWeComNotice('需要补充交易信息', [`缺少：${error.missing.join('、')}`]),
-                );
-                return;
-              }
-              throw error;
-            }
+            await startRiskIntentFlow(body, key, text, stream);
+            return;
           }
         }
         if (useRiskFastPath && riskRouter && !isPretradeIntentCandidate(text)) {
@@ -800,6 +893,7 @@ async function executeConversationMessage(
               );
             },
             (err) => log.fail('wecom-risk-progress', err, { step: 'message' }),
+            { includeStageCount: true },
           );
           const result = await riskRouter.handle(key, text, (progress) => {
             progressRelay.push(progress);
@@ -814,7 +908,12 @@ async function executeConversationMessage(
               intent: result.intent,
               durationMs: Date.now() - startedAt,
             });
-            await stream.finish(truncateUtf8(result.markdown, streamMaxBytes));
+            await stream.finish(
+              truncateUtf8(
+                renderWeComRiskOutput(result.markdown, Boolean(result.selection)),
+                streamMaxBytes,
+              ),
+            );
             if (result.selection) {
               scheduleRiskSelectionCard(body, key, result.selection);
             }
@@ -828,7 +927,16 @@ async function executeConversationMessage(
           promptContextFromWeComMessage(body),
         );
         const displayPrompt = text || attachmentSummary(attachments);
-        await runCodexPrompt(frame, key, prompt, displayPrompt, attachments, stream);
+        await runCodexPrompt(
+          frame,
+          key,
+          prompt,
+          displayPrompt,
+          attachments,
+          stream,
+          controlTaskId,
+          controlCardAttached,
+        );
       }),
     );
   } catch (err) {
@@ -891,7 +999,7 @@ async function analyzeRiskDraft(
       if (event.type === 'error') throw new Error(event.message);
     }
     await run.waitForExit(1500).catch(() => false);
-    const draft = parseRiskIntentOutput(
+    const draft = parseRiskIntentOutputPartial(
       output,
       correction ? `${originalText} ${correction}` : originalText,
     );
@@ -916,6 +1024,94 @@ async function analyzeRiskDraft(
   }
 }
 
+async function startRiskIntentFlow(
+  body: ConversationBody,
+  key: string,
+  text: string,
+  stream: WeComStreamReply,
+): Promise<void> {
+  if (!riskClient) return;
+  riskSelectionTasks.clearConversation(key);
+  riskIntents.clearTasksForConversation(key);
+  await stream.update(
+    truncateUtf8(
+      renderWeComNotice('🧠 正在理解交易意图', [
+        '正在提取账户、操作、标的和交易规模。',
+      ]),
+      streamMaxBytes,
+    ),
+  );
+  try {
+    const draft = await analyzeRiskDraft(text);
+    await stream.update(
+      truncateUtf8(
+        renderWeComNotice('🔎 正在核对交易信息', [
+          '正在核对账户和证券名称/代码。',
+        ]),
+        streamMaxBytes,
+      ),
+    );
+    const normalized = await normalizeRiskDraft(text, draft, riskClient);
+    riskIntents.set(key, normalized);
+    await finishRiskIntentState(body, key, stream, normalized);
+  } catch (error) {
+    if (error instanceof RiskIntentClarificationError) {
+      await stream.finish(
+        renderWeComNotice('需要补充交易信息', [`缺少：${error.missing.join('、')}`], {
+          status: 'warning',
+          eyebrow: 'RISK · WECOM',
+        }),
+      );
+      return;
+    }
+    log.fail('wecom-risk-intent', error, { step: 'analysis' });
+    await stream.finish(
+      renderWeComNotice('风险查询暂时不可用', ['暂时无法解析交易信息，请稍后重试。'], {
+        status: 'error',
+        eyebrow: 'RISK · WECOM',
+      }),
+    );
+  }
+}
+
+async function revisePendingRiskConfirmation(
+  body: ConversationBody,
+  key: string,
+  correction: string,
+  stream: WeComStreamReply,
+  pending: Extract<RiskIntentState, { stage: 'confirm' }>,
+): Promise<void> {
+  if (!riskClient) return;
+  try {
+    await stream.update(
+      truncateUtf8(
+        renderWeComNotice('🧠 正在应用交易修正', ['正在保留未修改字段并重新核对交易信息。']),
+        streamMaxBytes,
+      ),
+    );
+    const revised = await analyzeRiskDraft(pending.originalText, pending.draft, correction);
+    const merged = mergeRiskIntentDraft(pending.draft, revised, correction);
+    const normalized = await normalizeRiskDraft(
+      `${pending.originalText} ${correction}`,
+      merged,
+      riskClient,
+    );
+    riskIntents.set(key, normalized);
+    await finishRiskIntentState(body, key, stream, normalized);
+  } catch (error) {
+    riskIntents.set(key, pending);
+    const detail = error instanceof RiskIntentClarificationError
+      ? `仍需补充：${error.missing.join('、')}`
+      : '修正未应用，请直接修改金额、证券或产品后重试。';
+    await stream.finish(
+      renderWeComNotice('需要重新确认交易信息', [detail], {
+        status: 'warning',
+        eyebrow: 'RISK · WECOM',
+      }),
+    ).catch(() => {});
+  }
+}
+
 async function finishRiskIntentState(
   body: ConversationBody,
   key: string,
@@ -923,7 +1119,12 @@ async function finishRiskIntentState(
   state: RiskIntentState,
 ): Promise<void> {
   if (state.stage === 'freeform') {
-    await stream.finish('请直接输入需要修改或补充的内容。');
+    await stream.finish(
+      renderWeComNotice('请补充信息', [riskIntentInputPrompt(state)], {
+        status: 'warning',
+        eyebrow: 'RISK · WECOM',
+      }),
+    );
     return;
   }
   const selection = buildIntentSelection(state, Date.now() + 5 * 60_000);
@@ -939,7 +1140,7 @@ async function finishRiskIntentState(
         selection.subTitle,
         state.stage === 'confirm'
           ? '确认完成前不会执行投资限额测算。'
-          : '请选择最符合的一项。',
+          : '可选择最符合的一项，也可以直接输入准确名称或代码。',
       ]),
       streamMaxBytes,
     ),
@@ -969,30 +1170,59 @@ async function handleRiskIntentChoice(
           }
         : await normalizeSecurity(state.originalText, state.draft, value, riskClient);
   } else if (state.stage === 'security') {
-    next =
-      value === '__other_security__'
-        ? {
-            stage: 'freeform',
-            originalText: state.originalText,
-            draft: state.draft,
-            field: 'security',
-            product: state.product,
-          }
-        : {
-            stage: 'confirm',
-            originalText: state.originalText,
-            draft: state.draft,
-            product: state.product,
-            security: JSON.parse(value) as { name: string; code: string; label: string },
-          };
+    if (value === '__other_security__') {
+      next = {
+        stage: 'freeform',
+        originalText: state.originalText,
+        draft: state.draft,
+        field: 'security',
+        product: state.product,
+      };
+    } else {
+      const security = JSON.parse(value) as {
+        name: string;
+        code: string;
+        label: string;
+      };
+      const action = state.draft.action;
+      const amountText = state.draft.amountText;
+      next =
+        action && amountText
+          ? {
+              stage: 'confirm',
+              originalText: state.originalText,
+              draft: { ...state.draft, action, amountText },
+              product: state.product,
+              security,
+            }
+          : {
+              stage: 'freeform',
+              originalText: state.originalText,
+              draft: state.draft,
+              field: 'amount',
+              product: state.product,
+              security,
+            };
+    }
   } else if (state.stage === 'confirm') {
     if (value === '__confirm__') {
       riskIntents.delete(key);
-      await client.updateTemplateCard(
-        frame,
-        buildRiskSelectionStatusCard(taskId, '已确认', '正在执行投资限额测算', label),
+      await updateRiskCardBestEffort(
+        () =>
+          client.updateTemplateCard(
+            frame,
+            buildRiskSelectionStatusCard(
+              taskId,
+              '测算请求提交成功',
+              '交易信息已锁定；当前阶段：正在准备测算；已完成 0/4。结果将在下方更新。',
+              label,
+            ),
+          ),
+        (error) => log.fail('wecom-risk-card', error, { step: 'confirmation-status' }),
       );
-      await executeRiskCardSelection(body, key, canonicalCommand(state));
+      await executeRiskCardSelection(body, key, canonicalCommand(state), false, {
+        kind: 'card',
+      });
       return;
     }
     const field =
@@ -1017,23 +1247,19 @@ async function handleRiskIntentChoice(
     return;
   }
   riskIntents.set(key, next);
-  await client.updateTemplateCard(
-    frame,
-    buildRiskSelectionStatusCard(taskId, '请补充信息', '请直接输入修正内容', label),
+  await updateRiskCardBestEffort(
+    () =>
+      client.updateTemplateCard(
+        frame,
+        buildRiskSelectionStatusCard(
+          taskId,
+          '请补充信息',
+          next.stage === 'freeform' ? riskIntentInputPrompt(next) : '正在继续确认。',
+          label,
+        ),
+      ),
+    (error) => log.fail('wecom-risk-card', error, { step: 'selection-status' }),
   );
-  const message =
-    next.stage !== 'freeform'
-      ? '正在继续确认。'
-      : next.field === 'account'
-        ? '请输入正确的账户名称或关键词。'
-        : next.field === 'security'
-          ? '请输入正确的证券名称或代码。'
-          : next.field === 'amount'
-            ? '请输入正确的金额或数量（含单位）。'
-            : next.field === 'market'
-              ? '请输入“一级”或“二级”。'
-              : '请直接输入你要修改或补充的内容。';
-  await sendRiskMarkdown(body, message);
   if (next.stage !== 'freeform') {
     const fakeStream = {
       finish: async (content: string) => {
@@ -1045,6 +1271,20 @@ async function handleRiskIntentChoice(
   }
 }
 
+function riskIntentInputPrompt(
+  state: Extract<RiskIntentState, { stage: 'freeform' }>,
+): string {
+  return state.field === 'account'
+    ? '请直接输入准确的账户名称或关键词。'
+    : state.field === 'security'
+      ? '请直接输入准确的证券名称或代码。'
+      : state.field === 'amount'
+        ? '请直接输入正确的金额或数量（含单位）。'
+        : state.field === 'market'
+          ? '请直接输入“一级”或“二级”。'
+          : '请直接输入需要修改或补充的内容。';
+}
+
 async function runCodexPrompt(
   frame: WsFrame,
   key: string,
@@ -1052,10 +1292,11 @@ async function runCodexPrompt(
   displayPrompt: string,
   attachments: readonly NormalizedAttachment[],
   stream: WeComStreamReply,
+  taskId: string,
+  controlCardAttached: boolean,
 ): Promise<void> {
   const requestStartedAt = Date.now();
   const streamUpdates = new WeComStreamUpdatePump(stream);
-  const taskId = createTaskId();
   let threadId = sessionStore.threadId(key);
   let state = freshRunState();
   let lastSent = renderStream(state, threadId);
@@ -1063,17 +1304,20 @@ async function runCodexPrompt(
   let firstOutputReported = false;
 
   await stream.update(lastSent);
-  await deliverControlCard(
-    frame,
-    buildWeComControlCard({
-      taskId,
-      status: 'running',
-      workspace,
-      sandbox,
-      threadId,
-      prompt: displayPrompt,
-    }),
-  );
+  if (!controlCardAttached) {
+    await deliverControlCard(
+      frame,
+      buildWeComControlCard({
+        taskId,
+        status: 'running',
+        workspace,
+        sandbox,
+        threadId,
+        prompt: displayPrompt,
+        runState: state,
+      }),
+    );
+  }
 
   let run: AgentRun;
   try {
@@ -1177,30 +1421,10 @@ async function runCodexPrompt(
 
       const finalText = renderStream(state, threadId);
       await streamUpdates.finish(finalText);
-      let fileCount: number | undefined;
       if (state.terminal === 'done') {
-        const sentFiles = await sendGeneratedArtifacts(frame, state, attachments);
-        if (sentFiles > 0) fileCount = sentFiles;
+        await sendGeneratedArtifacts(frame, state, attachments);
       }
-      if (
-        state.terminal === 'done' ||
-        state.terminal === 'interrupted' ||
-        state.terminal === 'idle_timeout'
-      ) {
-        await deliverCardView(
-          frame,
-          buildResultCardView({
-            taskId: createTaskId(),
-            durationMs: Date.now() - requestStartedAt,
-            toolCount: state.blocks.filter((block) => block.kind === 'tool').length,
-            ...(fileCount !== undefined ? { fileCount } : {}),
-            threadId,
-            model: effectiveModel(key),
-            reasoning: effectiveReasoningEffort(key),
-            terminal: state.terminal === 'done' ? 'success' : 'stopped',
-          }),
-        );
-      } else {
+      if (state.terminal === 'error') {
         await deliverErrorCard(frame, 'execution');
       }
       await run.waitForExit(1500).catch(() => false);
@@ -1384,6 +1608,7 @@ async function handleLegacyControlCardEvent(
           threadId: active?.threadId,
           prompt: active?.prompt,
           notice: active ? '任务运行中，请先停止' : '任务正在启动，请稍候',
+          ...(active ? { runState: active.state } : {}),
         }),
       );
       return;
@@ -1415,6 +1640,7 @@ async function handleLegacyControlCardEvent(
         threadId: currentThreadId(key),
         prompt: active?.prompt,
         notice: active ? 'Codex 正在运行' : starting ? 'Codex 正在启动' : '当前为空闲状态',
+        ...(active ? { runState: active.state } : {}),
       }),
     );
     return;
@@ -1785,59 +2011,57 @@ async function handleRiskSelectionCardEvent(
     return;
   }
 
-  await Promise.all([
-    sendRiskMarkdown(
-      body,
-      renderWeComAcknowledgement('selection', resolution.option.label),
-    ).catch((err: unknown) => {
-      log.fail('wecom-ack', err, { step: 'selection-message' });
-    }),
-    client
-      .updateTemplateCard(
-        frame,
-        buildRiskSelectionStatusCard(
-          taskId,
-          '已收到选择',
-          '正在继续风险查询',
-          resolution.option.label,
-        ),
-      )
-      .catch((err: unknown) => {
-        log.fail('wecom-risk-card', err, { step: 'selection-status' });
-      }),
-  ]);
-
   let submission: WeComConversationSubmission;
   try {
     submission = conversationQueue.submit(key, async () => {
-      await executeRiskCardSelection(body, key, resolution.option.value ?? resolution.option.key);
+      await executeRiskCardSelection(
+        body,
+        key,
+        resolution.option.value ?? resolution.option.key,
+        false,
+        { kind: 'card' },
+      );
     });
   } catch (err) {
     if (!(err instanceof WeComConversationQueueError)) throw err;
-    await sendRiskMarkdown(
-      body,
-      renderWeComNotice('⚠️ 当前会话排队较多', [conversationQueueNotice(err.reason)]),
+    await updateRiskCardBestEffort(
+      () =>
+        client.updateTemplateCard(
+          frame,
+          buildRiskSelectionStatusCard(
+            taskId,
+            '无法开始风险查询',
+            conversationQueueNotice(err.reason),
+            resolution.option.label,
+          ),
+        ),
+      (error) => log.fail('wecom-risk-card', error, { step: 'queue-rejected-status' }),
     );
     return;
   }
 
-  if (submission.queued) {
-    await sendRiskMarkdown(
-      body,
-      renderWeComNotice('🕒 已加入会话队列', [
-        `当前排队位置：${submission.position}`,
-        '前一项完成后会自动处理本次选择。',
-      ]),
-    );
-  }
+  await client
+    .updateTemplateCard(
+      frame,
+      buildRiskSelectionStatusCard(
+        taskId,
+        submission.queued ? '已加入会话队列' : '已收到选择',
+        submission.queued
+          ? `当前排队位置：${submission.position}；前一项完成后会自动处理。`
+          : '正在继续风险查询',
+        resolution.option.label,
+      ),
+    )
+    .catch((err: unknown) => {
+      log.fail('wecom-risk-card', err, { step: 'selection-status' });
+    });
+
   void submission.completion.catch(async (err: unknown) => {
     log.fail('wecom-risk-card', err, { step: 'selection' });
     await sendRiskMarkdown(
       body,
       renderWeComNotice('⚠️ 风险查询失败', ['暂时无法完成查询，请稍后重试。']),
-    ).catch(
-      () => {},
-    );
+    ).catch(() => {});
   });
 }
 
@@ -1846,6 +2070,9 @@ async function executeRiskCardSelection(
   key: string,
   selectedKey: string,
   withinConversationRun = false,
+  progressTarget?:
+    | { kind: 'card' }
+    | { kind: 'stream'; stream: WeComStreamReply },
 ): Promise<void> {
   if (!riskRouter) return;
   try {
@@ -1853,18 +2080,49 @@ async function executeRiskCardSelection(
       await refreshHealth();
       const progressRelay = new RiskProgressRelay(
         (progress) =>
-          sendRiskMarkdown(
-            body,
-            renderWeComNotice('⏳ 风险限额查询中', [progress]),
-          ),
+          progressTarget?.kind === 'stream'
+            ? progressTarget.stream.update(
+                truncateUtf8(
+                  renderWeComNotice('⏳ 风险限额查询中', [progress]),
+                  streamMaxBytes,
+                ),
+              )
+            : progressTarget?.kind === 'card'
+              ? Promise.resolve()
+            : sendRiskMarkdown(
+                body,
+                renderWeComNotice('⏳ 风险限额查询中', [progress]),
+              ),
         (err) => log.fail('wecom-risk-progress', err, { step: 'card-selection' }),
+        { includeStageCount: true },
       );
       const result = await riskRouter.handle(key, selectedKey, (progress) => {
         if (progress.startsWith('已确认：')) return;
         progressRelay.push(progress);
       });
       await progressRelay.flush();
-      if (result.handled) await sendRiskRouteResult(body, key, result);
+      if (result.handled) {
+        if (progressTarget?.kind === 'stream') {
+          await progressTarget.stream.finish(
+            truncateUtf8(
+              renderWeComNotice('风险限额测算完成', [
+                '业务结果已生成，请查看下方结果。',
+              ]),
+              streamMaxBytes,
+            ),
+          );
+        }
+        await sendRiskRouteResult(body, key, result);
+      } else if (progressTarget?.kind === 'stream') {
+        await progressTarget.stream.finish(
+          renderWeComNotice('无法继续风险查询', [
+            '当前选择已失效，请重新发起查询。',
+          ], {
+            status: 'warning',
+            eyebrow: 'RISK · WECOM',
+          }),
+        );
+      }
     };
     if (withinConversationRun) {
       await execute();
@@ -1872,11 +2130,27 @@ async function executeRiskCardSelection(
       await withReservation(startingRuns, key, async () => runGate.run(execute));
     }
   } catch (err) {
-    if (!(err instanceof WeComRunCapacityError)) throw err;
-    await sendRiskMarkdown(
-      body,
+    if (!(err instanceof WeComRunCapacityError)) {
+      if (progressTarget?.kind === 'stream') {
+        await progressTarget.stream
+          .finish(
+            renderWeComNotice('⚠️ 风险限额测算失败', [
+              '暂时无法完成测算，请稍后重试。',
+            ]),
+          )
+          .catch(() => {});
+      }
+      throw err;
+    }
+    const content = truncateUtf8(
       renderWeComNotice('⚠️ 当前任务较多', [capacityNotice(err.reason)]),
+      streamMaxBytes,
     );
+    if (progressTarget?.kind === 'stream') {
+      await progressTarget.stream.finish(content);
+    } else {
+      await sendRiskMarkdown(body, content);
+    }
   } finally {
     await refreshHealth();
   }
@@ -1887,14 +2161,16 @@ async function sendRiskRouteResult(
   key: string,
   result: Extract<RiskRouteResult, { handled: true }>,
 ): Promise<void> {
-  await sendRiskMarkdown(body, result.markdown);
+  const content = renderWeComRiskOutput(result.markdown, Boolean(result.selection));
+  await sendRiskMarkdown(body, content);
   if (result.selection) scheduleRiskSelectionCard(body, key, result.selection);
 }
 
 async function sendRiskMarkdown(body: ConversationBody, content: string): Promise<void> {
+  const rendered = content.includes('**▌ ') ? content : renderWeComRiskOutput(content);
   await client.sendMessage(messageTarget(body), {
     msgtype: 'markdown',
-    markdown: { content: truncateUtf8(content, streamMaxBytes) },
+    markdown: { content: truncateUtf8(rendered, streamMaxBytes) },
   });
 }
 
@@ -1957,7 +2233,7 @@ async function replyControl(
   const streamId = generateReqId('stream');
   const content = truncateUtf8(renderWeComNotice(title, lines), streamMaxBytes);
   const stream = new WeComStreamReply(client, frame, streamId);
-  await stream.finish(content);
+  if (status !== 'reset') await stream.finish(content);
   await deliverControlCard(
     frame,
     buildWeComControlCard({
@@ -2086,7 +2362,13 @@ async function sendGeneratedArtifacts(
     reportMetric('wecom_egress_failures', 1, { kind: failureKind(err) });
     await client.sendMessage(messageTarget(body), {
       msgtype: 'markdown',
-      markdown: { content: '⚠️ 生成文件回传失败，请查看本机 bridge 日志。' },
+      markdown: {
+        content: renderWeComNotice(
+          '生成文件回传失败',
+          ['请查看本机 bridge 日志。'],
+          { status: 'error', eyebrow: 'CODEX · WECOM' },
+        ),
+      },
     }).catch(() => {});
     return 0;
   }

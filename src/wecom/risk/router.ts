@@ -17,6 +17,7 @@ import {
   formatRestrictions,
   formatSecurityCheck,
 } from './formatter';
+import { WECOM_RISK_USAGE_LINES } from '../commands';
 
 export interface RiskSelectionOption {
   key: string;
@@ -77,7 +78,9 @@ export class WeComRiskRouter {
 
   shouldHandle(conversationKey: string, text: string, hasAttachments: boolean): boolean {
     if (hasAttachments) return false;
-    return this.pending.has(conversationKey) || isRiskCandidate(text);
+    // Initial risk entry is explicitly gated by `/测算` in the WeCom CLI.
+    // This predicate only identifies a pending risk follow-up.
+    return this.pending.has(conversationKey);
   }
 
   async handle(
@@ -602,7 +605,7 @@ function pretradeMissing(intent: Extract<RiskIntent, { kind: 'pretrade_calc' }>)
 }
 
 function riskHelp(prefix: string): string {
-  return `${prefix}\n\n可以这样问：\n- 安联ESG纯债1号 申购 0.1\n- 安联ESG纯债1号 买 1000万 国债0115\n- 安联ESG纯债1号 能不能买 国债0115\n- 有哪些产品`;
+  return [prefix, '', ...WECOM_RISK_USAGE_LINES].join('\n');
 }
 
 function formatRiskError(error: unknown): string {

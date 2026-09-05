@@ -17,6 +17,18 @@ export type RiskSelectionResolution =
   | { status: 'invalid'; selection: RiskSelectionRequest }
   | { status: 'missing' | 'expired' | 'mismatch' };
 
+/** A stale WeCom card must not abort the follow-up measurement path. */
+export async function updateRiskCardBestEffort(
+  update: () => Promise<unknown>,
+  onError: (error: unknown) => void = () => {},
+): Promise<void> {
+  try {
+    await update();
+  } catch (error) {
+    onError(error);
+  }
+}
+
 interface RiskSelectionTask {
   conversationKey: string;
   selection: RiskSelectionRequest;
@@ -129,12 +141,22 @@ export function buildRiskSelectionStatusCard(
   description: string,
   selectedLabel?: string,
 ): TemplateCard {
+  const status = /失败|错误|无效|无法|未授权|过期/.test(title)
+    ? 'error'
+    : /已收到|已确认/.test(title)
+      ? 'running'
+      : /补充|修改|选择|确认/.test(title)
+        ? 'warning'
+        : /完成|成功/.test(title)
+          ? 'success'
+          : 'running';
   return renderWeComCard(
     buildNoticeCardView({
       taskId,
       source: '风险限额查询',
       title,
       description,
+      status,
       ...(selectedLabel ? { subtitle: clip(selectedLabel, 112) } : {}),
     }),
   );

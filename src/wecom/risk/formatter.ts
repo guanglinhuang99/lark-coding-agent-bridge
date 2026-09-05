@@ -1,3 +1,4 @@
+import { redactDiagnosticText } from '../../core/logger';
 import { isRecord, stringValue } from './client';
 
 const STATUS_ORDER = ['FAIL', 'WARN', 'NO_DATA', 'UNSUPPORTED', 'EXPIRED', 'N/A', 'PASS'];
@@ -79,7 +80,7 @@ export function formatCalculation(data: Record<string, unknown>, amountNote?: st
     lines.push('', '**未检查/未知项**');
     for (const item of unavailable) {
       const message = stringValue(item.message) || stringValue(item.code) || stringValue(item['原文摘录']) || '未取得数据';
-      lines.push(`- ❓ ${message}`);
+      lines.push(`- ❓ ${businessSafeDetail(message, '检查数据暂不可用')}`);
     }
   }
 
@@ -90,7 +91,7 @@ export function formatSecurityCheck(data: Record<string, unknown>): string {
   if (data.hit === true) {
     const evidence = Array.isArray(data.blacklist_matches) ? data.blacklist_matches : [];
     return truncate(
-      ['🚫 **命中关联方禁投 / 禁投证券**', evidence.length ? `证据：${JSON.stringify(evidence)}` : '']
+      ['🚫 **命中关联方禁投 / 禁投证券**', evidence.length ? `已匹配 ${evidence.length} 项证据。` : '']
         .filter(Boolean)
         .join('\n'),
       4_000,
@@ -189,7 +190,7 @@ function formatIssue(item: Record<string, unknown>): string {
     const cash = numberValue(item.available_cash);
     return cash === undefined ? '现金不足' : `现金不足：可用现金仅 ${(cash / 10_000).toFixed(2)} 万元`;
   }
-  return [code, stringValue(item.message)].filter(Boolean).join('：') || '未知问题';
+  return businessSafeDetail(stringValue(item.message), '存在一项未通过规则');
 }
 
 function friendlyError(message: string): string {
@@ -197,7 +198,7 @@ function friendlyError(message: string): string {
   if (/参考价格/.test(message)) return '证券在测算日缺少参考价格，无法完成换算。';
   if (/必须填写证券名称或代码/.test(message)) return '买入/卖出需要证券名称或代码。';
   if (/相近候选/.test(message)) return '证券名称有多个相近候选，请提供更精确的证券代码。';
-  return message || '未知错误';
+  return '暂时无法完成测算，请稍后重试。';
 }
 
 function recordArray(value: unknown): Record<string, unknown>[] {
@@ -205,9 +206,20 @@ function recordArray(value: unknown): Record<string, unknown>[] {
 }
 
 function displayValue(value: unknown): string {
-  if (typeof value === 'string') return value;
+  if (typeof value === 'string') return businessSafeDetail(value, '—');
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);
   return '';
+}
+
+/** Keep business explanations while hiding backend internals from WeCom. */
+export function businessSafeDetail(value: unknown, fallback: string): string {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!text || isDiagnosticText(text)) return fallback;
+  return redactDiagnosticText(text);
+}
+
+function isDiagnosticText(value: string): boolean {
+  return /(?:\bpins?\b|ptf[_-]|runtimeerror|exception|traceback|stderr|stack|(?:^|\s)error(?:\s|$)|["'](?:error|exception|traceback)["']\s*:|\/(?:Users|home|private|tmp|var|opt|workspace|root|data)\/|[A-Za-z]:\\)/i.test(value);
 }
 
 function numberValue(value: unknown): number | undefined {

@@ -24,6 +24,8 @@ describe('WeCom navigation cards', () => {
     expect(idle.sub_title_text).toContain('/reasoning');
     expect(idle.sub_title_text).toContain('/resume');
     expect(idle.sub_title_text).toContain('/settings');
+    expect(idle.sub_title_text).toContain('/测算');
+    expect(idle.sub_title_text).toContain('/help');
 
     const busy = renderWeComCard(
       buildHomeCardView({

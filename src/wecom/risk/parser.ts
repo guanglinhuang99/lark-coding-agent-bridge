@@ -50,7 +50,7 @@ const ACTION_PATTERNS: ReadonlyArray<[RegExp, RiskActionType]> = [
   [/卖出|卖(?!出)/, 'sell'],
 ];
 
-const EXPLICIT_AMOUNT_RE = /(\d+(?:\.\d+)?)\s*(亿|万|元|块|股|手|张|份)/;
+const EXPLICIT_AMOUNT_RE = /(\d+(?:\.\d+)?)\s*(亿元|万元|亿|万|元|块|股|手|张|份)/;
 const UNITLESS_AFTER_ACTION_RE =
   /(?:逆回购|回购|申购|认购|赎回|买入|卖出|买|卖)\s*(\d+(?:\.\d+)?)(?![0-9A-Za-z.-])(?!\s*(?:亿|万|元|块|股|手|张|份|天|年|月|日|号|%))/;
 const UNITLESS_TRAILING_RE = /(?:^|\s)(\d+(?:\.\d+)?)\s*$/;
@@ -112,6 +112,10 @@ export function parseRiskMessage(text: string, products: readonly string[]): Ris
     return { kind: 'query_credit', entity: extractCreditEntity(value) };
   }
 
+  if (!findAction(value) && /(?:风险)?限额/.test(value)) {
+    return { kind: 'query_restrictions', product, productCandidates };
+  }
+
   if (/禁投|能不能买|是否能买|会不会禁|关联方证券/.test(value)) {
     return {
       kind: 'check_security',
@@ -171,15 +175,17 @@ export function matchProductCandidates(
   const normalizedText = normalizeProductText(text);
   const fragments = productMatchFragments(text);
   const hits = new Map<string, number>();
+  let hasExactAlias = false;
   for (const product of products) {
     for (const alias of normalizedProductAliases(product)) {
       if (alias.length < 2) continue;
       if (normalizedText.includes(alias)) {
         hits.set(product, Math.max(hits.get(product) ?? 0, alias.length));
+        hasExactAlias = true;
         continue;
       }
       for (const fragment of fragments) {
-        if (fragment.length >= 3 && alias.includes(fragment)) {
+        if (fragment.length >= 2 && alias.includes(fragment)) {
           hits.set(product, Math.max(hits.get(product) ?? 0, fragment.length));
         }
       }
@@ -188,9 +194,12 @@ export function matchProductCandidates(
   if (hits.size > 0) {
     const ranked = [...hits.entries()].sort((a, b) => b[1] - a[1]);
     const bestScore = ranked[0]?.[1];
+    const candidates = hasProductDiscriminator(text)
+      ? ranked.filter(([, score]) => score === bestScore)
+      : ranked;
     return {
-      products: ranked.filter(([, score]) => score === bestScore).map(([name]) => name),
-      fuzzy: false,
+      products: candidates.map(([name]) => name),
+      fuzzy: !hasExactAlias,
     };
   }
 
@@ -228,8 +237,8 @@ export function extractAmount(text: string): ParsedAmount | undefined {
     const value = Number(explicit[1]);
     const unit = explicit[2];
     if (!Number.isFinite(value) || !unit) return undefined;
-    if (unit === '亿') return { amount: value, note: `${value} 亿元`, source: explicit[0] };
-    if (unit === '万') {
+    if (unit === '亿' || unit === '亿元') return { amount: value, note: `${value} 亿元`, source: explicit[0] };
+    if (unit === '万' || unit === '万元') {
       return { amount: value / 10_000, note: `${value} 万元 ≈ ${value / 10_000} 亿元`, source: explicit[0] };
     }
     if (unit === '元' || unit === '块') {
@@ -277,6 +286,14 @@ function productMatchFragments(text: string): string[] {
   if (boundary?.index) values.push(text.slice(0, boundary.index));
   for (const part of text.split(/[，,。；;！？!?]/)) values.push(part);
   return [...new Set(values.map(normalizeProductText).filter(Boolean))];
+}
+
+function hasProductDiscriminator(text: string): boolean {
+  const boundary = PRODUCT_BOUNDARY_RE.exec(text);
+  const firstPart = boundary?.index
+    ? text.slice(0, boundary.index)
+    : text.split(/[，,。；;！？!?]/)[0] ?? text;
+  return /\d/.test(normalizeProductText(firstPart));
 }
 
 function normalizeChineseNumerals(value: string): string {
@@ -427,7 +444,7 @@ function stripProducts(text: string, products: readonly string[]): string {
   return value.trim();
 }
 
-function extractDays(text: string): number | undefined {
+export function extractDays(text: string): number | undefined {
   const match = /(\d+)\s*天/.exec(text);
   if (!match) return undefined;
   const days = Number(match[1]);
