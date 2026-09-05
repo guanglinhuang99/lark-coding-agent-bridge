@@ -23,7 +23,7 @@ export const WECOM_HELP_LINES = [
 ] as const;
 
 export const WECOM_COMMAND_HINT =
-  '快捷入口：/测算 <文本> · /doctor · /runs · /model · /reasoning · /resume · /settings';
+  '快捷：/doctor · /runs · /resume · /model · /reasoning · /settings · /测算';
 
 export function parseWeComCommand(text: string): WeComCommand {
   const value = text.trim();
