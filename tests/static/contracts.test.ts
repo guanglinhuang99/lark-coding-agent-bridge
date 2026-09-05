@@ -21,6 +21,7 @@ const collectTsFiles = (path: string): string[] => {
 describe('static architecture contracts', () => {
   it('does not route production runs by importing Codex internals in shared bot/card code', () => {
     const sharedFiles = [
+      ...collectTsFiles('src/bridge'),
       ...collectTsFiles('src/bot'),
       ...collectTsFiles('src/card'),
       'src/commands/index.ts',
@@ -47,7 +48,15 @@ describe('static architecture contracts', () => {
   });
 
   it('persists profile runtime state through atomic 0600 writes', () => {
-    for (const file of ['src/session/store.ts', 'src/workspace/store.ts', 'src/card/callback-store.ts']) {
+    // Check the implementations, not the legacy import-path re-export shims.
+    for (const file of [
+      'src/bridge/session-store.ts',
+      'src/bridge/session-catalog.ts',
+      'src/bridge/thread-session-store.ts',
+      'src/bridge/workspace-store.ts',
+      'src/bridge/task-ledger.ts',
+      'src/card/callback-store.ts',
+    ]) {
       const source = read(file);
       expect(source, file).toContain('writeFileAtomic');
       expect(source, file).toContain('mode: 0o600');
