@@ -46,15 +46,18 @@ describe('WeComOperationRunner', () => {
       }),
     ).rejects.toBeInstanceOf(WeComOperationTimeoutError);
 
-    await expect(
+    const fail = () =>
       runner.run(
         'downstream',
         async () => {
           throw Object.assign(new Error('down'), { code: 'ECONNREFUSED' });
         },
-        { idempotent: true, maxAttempts: 1, circuitThreshold: 1, circuitResetMs: 60_000 },
-      ),
-    ).rejects.toThrow('down');
+        { idempotent: true, maxAttempts: 1, circuitThreshold: 2, circuitResetMs: 60_000 },
+      );
+    await expect(fail()).rejects.toThrow('down');
+    expect(runner.snapshot('downstream').state).toBe('closed');
+    await expect(fail()).rejects.toThrow('down');
+    expect(runner.snapshot('downstream').state).toBe('open');
 
     await expect(runner.run('downstream', async () => 'never')).rejects.toBeInstanceOf(
       WeComCircuitOpenError,
