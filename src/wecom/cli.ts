@@ -635,6 +635,9 @@ async function handleMessage<T extends BaseMessage>(
     }
 
     active.state = markInterrupted(active.state);
+    if (active.durableTaskId) {
+      await taskStore.markInterrupted(active.durableTaskId).catch(() => {});
+    }
     await active.run.stop();
     await replyControl(
       frame,
@@ -811,10 +814,10 @@ async function executeConversationMessage(
   durableTaskId?: string,
 ): Promise<void> {
   const submittedAt = Date.now();
-  if (durableTaskId) await taskStore.markRunning(durableTaskId);
   try {
     await withReservation(startingRuns, key, async () =>
       runGate.run(async () => {
+        if (durableTaskId) await taskStore.markRunning(durableTaskId);
         const queueWaitMs = Date.now() - submittedAt;
         reportMetric('wecom_queue_wait_ms', queueWaitMs);
         log.info('wecom-run', 'admitted', { queueWaitMs });
@@ -1635,6 +1638,9 @@ async function handleHomeCardEvent(
     await updateHomeCard(frame, key, taskId);
     if (active) {
       active.state = markInterrupted(active.state);
+      if (active.durableTaskId) {
+        void taskStore.markInterrupted(active.durableTaskId).catch(() => {});
+      }
       void active.run.stop().catch((err: unknown) => {
         console.error(`Failed to stop Codex run: ${err instanceof Error ? err.message : String(err)}`);
       });
@@ -1681,6 +1687,9 @@ async function handleLegacyControlCardEvent(
     );
     if (active) {
       active.state = markInterrupted(active.state);
+      if (active.durableTaskId) {
+        void taskStore.markInterrupted(active.durableTaskId).catch(() => {});
+      }
       void active.run.stop().catch((err: unknown) => {
         console.error(`Failed to stop Codex run: ${err instanceof Error ? err.message : String(err)}`);
       });
