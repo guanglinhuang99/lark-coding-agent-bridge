@@ -28,6 +28,7 @@ export interface WeComTaskRecord {
   updatedAt: string;
   errorKind?: string;
   recoveryReason?: 'process-restart';
+  recoveryFrom?: 'queued' | 'running';
   replayedAfterRestart?: boolean;
 }
 
@@ -107,8 +108,10 @@ export class WeComTaskStore {
     let changed = false;
     for (const task of Object.values(this.tasks)) {
       if (task.status !== 'queued' && task.status !== 'running') continue;
+      const recoveryFrom = task.status;
       task.status = 'interrupted';
       task.recoveryReason = 'process-restart';
+      task.recoveryFrom = recoveryFrom;
       task.updatedAt = now;
       this.recoveredAtStartup++;
       changed = true;
@@ -122,10 +125,12 @@ export class WeComTaskStore {
     const existingId = this.operations[operationKey];
     const existing = existingId ? this.tasks[existingId] : undefined;
     if (existing) {
+      const safeToReplay = existing.recoveryFrom === 'queued' || existing.kind === 'risk';
       if (
         existing.status === 'interrupted' &&
         existing.recoveryReason === 'process-restart' &&
-        !existing.replayedAfterRestart
+        !existing.replayedAfterRestart &&
+        safeToReplay
       ) {
         existing.status = 'queued';
         existing.attempts += 1;
@@ -236,7 +241,10 @@ export class WeComTaskStore {
     task.status = status;
     task.updatedAt = this.now().toISOString();
     task.errorKind = errorKind;
-    if (status !== 'interrupted') task.recoveryReason = undefined;
+    if (status !== 'interrupted') {
+      task.recoveryReason = undefined;
+      task.recoveryFrom = undefined;
+    }
     await this.persist();
   }
 
@@ -312,7 +320,10 @@ function validateState(value: unknown, file: string): WeComTaskDiskState {
       typeof item.createdAt !== 'string' ||
       !Number.isFinite(Date.parse(item.createdAt)) ||
       typeof item.updatedAt !== 'string' ||
-      !Number.isFinite(Date.parse(item.updatedAt))
+      !Number.isFinite(Date.parse(item.updatedAt)) ||
+      (item.recoveryFrom !== undefined &&
+        item.recoveryFrom !== 'queued' &&
+        item.recoveryFrom !== 'running')
     ) {
       throw damaged(file, taskId);
     }
@@ -329,6 +340,9 @@ function validateState(value: unknown, file: string): WeComTaskDiskState {
       ...(typeof item.errorKind === 'string' ? { errorKind: item.errorKind } : {}),
       ...(item.recoveryReason === 'process-restart'
         ? { recoveryReason: 'process-restart' as const }
+        : {}),
+      ...(item.recoveryFrom === 'queued' || item.recoveryFrom === 'running'
+        ? { recoveryFrom: item.recoveryFrom }
         : {}),
       ...(typeof item.replayedAfterRestart === 'boolean'
         ? { replayedAfterRestart: item.replayedAfterRestart }
