@@ -1,0 +1,28 @@
+name: WeCom Terminal Persistence Fixup
+
+on:
+  push:
+    branches:
+      - feat/wecom-reliability-p0-p1
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/wecom-reliability-p0-p1
+          fetch-depth: 0
+      - run: node scripts/apply-wecom-terminal-persistence-fixup.mjs
+      - shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix(wecom): keep successful replies successful on task-store errors"
+          git push origin HEAD:feat/wecom-reliability-p0-p1
