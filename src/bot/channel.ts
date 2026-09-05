@@ -52,6 +52,7 @@ import { attachMeetingAgent, summarizeEndedMeeting } from '../meeting/orchestrat
 import type { ScopeContext } from '../policy/run-policy';
 import { createOwnerRefreshController } from '../policy/owner';
 import { RunExecutor } from '../runtime/run-executor';
+import type { TaskLedger } from '../bridge/task-ledger';
 import type { SessionCatalog } from '../session/catalog';
 import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
@@ -172,6 +173,7 @@ export interface BridgeChannel {
 }
 
 export interface StartChannelDeps {
+  taskLedger?: TaskLedger;
   cfg: AppConfig;
   agent: AgentAdapter;
   sessions: SessionStore;
@@ -190,7 +192,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   // Concurrency cap — reads `preferences.maxConcurrentRuns` on each acquire,
   // so /config bumps take effect for the next run.
   const pool = new ProcessPool(() => getMaxConcurrentRuns(controls.cfg));
-  const executor = new RunExecutor({ agent, pool, activeRuns });
+  const executor = new RunExecutor({ agent, pool, activeRuns, taskLedger: deps.taskLedger });
 
   // Resolve the App Secret to plaintext. The config field can be a literal
   // string, a "${VAR}" template, or a {source, id} SecretRef referencing

@@ -2,6 +2,7 @@ import { ClaudeAdapter } from '../agent/claude/adapter';
 import { CodexAdapter } from '../agent/codex/adapter';
 import { AgentPreflightError, type AgentAvailability } from '../agent/preflight';
 import type { AgentAdapter } from '../agent/types';
+import { OperationRunner } from '../bridge/reliability';
 import type { AppPaths } from '../config/app-paths';
 import type { AgentKind, ProfileConfig } from '../config/profile-schema';
 import type { AcquiredRuntimeLock } from './locks';
@@ -52,7 +53,15 @@ export function createRuntimeAgent(
   return new ClaudeAdapter({ larkChannel });
 }
 
+const availabilityRunners = new WeakMap<AgentAdapter, OperationRunner>();
 export async function checkRuntimeAgentAvailability(agent: AgentAdapter): Promise<AgentAvailability> {
+  let runner = availabilityRunners.get(agent);
+  if (!runner) { runner = new OperationRunner(); availabilityRunners.set(agent, runner); }
+  return runner.run('agent-availability', () => probeRuntimeAgentAvailability(agent), {
+    idempotent: true, maxAttempts: 1, timeoutMs: 15_000,
+  });
+}
+async function probeRuntimeAgentAvailability(agent: AgentAdapter): Promise<AgentAvailability> {
   if (agent.checkAvailability) return agent.checkAvailability();
   const ok = await agent.isAvailable();
   if (ok) return { ok: true };

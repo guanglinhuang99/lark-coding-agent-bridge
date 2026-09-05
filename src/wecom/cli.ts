@@ -18,6 +18,9 @@ import type {
   WsFrame,
 } from '@wecom/aibot-node-sdk';
 import { CodexAdapter } from '../agent/codex/adapter';
+import { ActiveRuns } from '../bridge/active-runs';
+import { RunExecutor } from '../bridge/run-executor';
+import { startWeComAgentRun } from './agent-runtime';
 import { listCodexThreadHistory } from '../session/codex-history';
 import { formatRelTime } from '../session/history';
 import type { AgentRun } from '../agent/types';
@@ -348,6 +351,8 @@ const codex = new CodexAdapter({
   ignoreRules: false,
   sandbox,
 });
+const agentRuns = new ActiveRuns();
+const runExecutor = new RunExecutor({ agent: codex, pool: runGate.pool, activeRuns: agentRuns });
 const riskDirectEnabled = Boolean(
   riskPython && existsSync(riskServiceDir) && existsSync(riskBridgePath) && existsSync(riskPython),
 );
@@ -1076,13 +1081,13 @@ async function analyzeRiskDraft(
 ): Promise<RiskAiDraft> {
   const startedAt = Date.now();
   let firstOutputReported = false;
-  const run = codex.run({
+  const run = await startWeComAgentRun(runExecutor, {
     runId: randomUUID(),
     prompt: buildRiskIntentPrompt(originalText, previous, correction),
     cwd: workspace,
     model: riskIntentModel,
     sandbox: 'read-only',
-  });
+  }, `risk-intent:${randomUUID()}`, runGate.currentPermit());
   let output = '';
   try {
     for await (const event of run.events) {
@@ -1424,7 +1429,7 @@ async function runCodexPrompt(
 
   let run: AgentRun;
   try {
-    run = codex.run({
+    run = await startWeComAgentRun(runExecutor, {
       runId: randomUUID(),
       prompt,
       cwd: workspace,
@@ -1435,7 +1440,7 @@ async function runCodexPrompt(
       images: attachments
         .filter((attachment) => attachment.kind === 'image' && attachment.decision === 'accepted')
         .map((attachment) => attachment.absPath),
-    });
+    }, key, runGate.currentPermit());
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     state = reduce(state, {
@@ -2734,6 +2739,7 @@ async function shutdown(signal: 'SIGINT' | 'SIGTERM'): Promise<void> {
   shuttingDown = true;
   conversationQueue.close();
   runGate.close();
+  await agentRuns.stopAll();
   clearInterval(heartbeat);
   clearInterval(maintenance);
   connected = false;
