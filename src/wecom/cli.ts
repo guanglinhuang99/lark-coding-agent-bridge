@@ -512,7 +512,12 @@ async function processMessageEvent<T extends BaseMessage>(frame: WsFrame<T>): Pr
 
   try {
     await handleMessage(frame, durableTaskId);
-    if (durableTaskId) await taskStore.markDone(durableTaskId);
+    if (durableTaskId) {
+      await taskStore.markDone(durableTaskId).catch((err: unknown) => {
+        log.fail('wecom-task', err, { step: 'mark-done' });
+        reportMetric('wecom_task_store_failures', 1, { step: 'mark-done' });
+      });
+    }
   } catch (err) {
     if (durableTaskId) await taskStore.markFailed(durableTaskId, failureKind(err)).catch(() => {});
     throw err;
@@ -1518,9 +1523,19 @@ async function runCodexPrompt(
       active.state = state;
       active.threadId = threadId;
       if (durableTaskId) {
-        if (state.terminal === 'done') await taskStore.markDone(durableTaskId);
-        else if (state.terminal === 'interrupted') await taskStore.markInterrupted(durableTaskId);
-        else await taskStore.markFailed(durableTaskId, state.terminal);
+        const persistTerminal =
+          state.terminal === 'done'
+            ? taskStore.markDone(durableTaskId)
+            : state.terminal === 'interrupted'
+              ? taskStore.markInterrupted(durableTaskId)
+              : taskStore.markFailed(durableTaskId, state.terminal);
+        await persistTerminal.catch((err: unknown) => {
+          log.fail('wecom-task', err, { step: 'mark-terminal', terminal: state.terminal });
+          reportMetric('wecom_task_store_failures', 1, {
+            step: 'mark-terminal',
+            terminal: state.terminal,
+          });
+        });
       }
       await persistThread(key, threadId);
 
