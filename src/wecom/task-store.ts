@@ -195,6 +195,12 @@ export class WeComTaskStore {
       .map(cloneTask);
   }
 
+  active(conversationKey: string): WeComTaskRecord | undefined {
+    return this.recent(conversationKey, this.maxEntries).find(
+      (task) => task.status === 'running' || task.status === 'queued',
+    );
+  }
+
   snapshot(): WeComTaskStoreSnapshot {
     const records = Object.values(this.tasks);
     const count = (status: WeComTaskStatus) => records.filter((task) => task.status === status).length;
@@ -226,6 +232,7 @@ export class WeComTaskStore {
   ): Promise<void> {
     const task = this.tasks[taskId];
     if (!task) return;
+    if (status === 'done' && (task.status === 'failed' || task.status === 'interrupted')) return;
     task.status = status;
     task.updatedAt = this.now().toISOString();
     task.errorKind = errorKind;
