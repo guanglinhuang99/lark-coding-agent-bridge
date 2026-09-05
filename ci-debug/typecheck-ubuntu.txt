@@ -1,0 +1,16 @@
+
+> lark-channel-bridge@0.7.2 typecheck /home/runner/work/lark-coding-agent-bridge/lark-coding-agent-bridge
+> tsc --noEmit
+
+src/wecom/cli.ts(715,31): error TS2345: Argument of type 'WeComConversationQueueReason' is not assignable to parameter of type '"closed" | "queue-full" | "queue-timeout"'.
+  Type '"shutting-down"' is not assignable to type '"closed" | "queue-full" | "queue-timeout"'.
+src/wecom/cli.ts(807,66): error TS2345: Argument of type 'WeComConversationQueueReason' is not assignable to parameter of type '"closed" | "queue-full" | "queue-timeout"'.
+  Type '"shutting-down"' is not assignable to type '"closed" | "queue-full" | "queue-timeout"'.
+src/wecom/cli.ts(1052,26): error TS2345: Argument of type 'WeComRunCapacityReason' is not assignable to parameter of type '"closed" | "queue-full" | "queue-timeout"'.
+  Type '"shutting-down"' is not assignable to type '"closed" | "queue-full" | "queue-timeout"'.
+src/wecom/cli.ts(2232,37): error TS2345: Argument of type 'WeComConversationQueueReason' is not assignable to parameter of type '"closed" | "queue-full" | "queue-timeout"'.
+  Type '"shutting-down"' is not assignable to type '"closed" | "queue-full" | "queue-timeout"'.
+src/wecom/cli.ts(2344,54): error TS2345: Argument of type 'WeComRunCapacityReason' is not assignable to parameter of type '"closed" | "queue-full" | "queue-timeout"'.
+  Type '"shutting-down"' is not assignable to type '"closed" | "queue-full" | "queue-timeout"'.
+ ELIFECYCLE  Command failed with exit code 2.
+exit_code=2
