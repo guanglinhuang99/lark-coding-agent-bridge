@@ -700,6 +700,7 @@ async function handleMessage<T extends BaseMessage>(
     });
   } catch (err) {
     if (!(err instanceof WeComConversationQueueError)) throw err;
+    if (durableTaskId) await taskStore.markFailed(durableTaskId, err.reason).catch(() => {});
     reportMetric('wecom_conversation_queue_rejected', 1, { reason: err.reason });
     await replyOnce(frame, '⚠️ 当前会话排队较多', [
       '本条消息没有入队，请稍后重新发送。',
@@ -788,8 +789,10 @@ async function handleMessage<T extends BaseMessage>(
         ),
       ).catch(() => {});
       await deliverErrorCard(frame, 'execution');
+      if (durableTaskId) await taskStore.markFailed(durableTaskId, failureKind(err)).catch(() => {});
       return;
     }
+    if (durableTaskId) await taskStore.markFailed(durableTaskId, err.reason).catch(() => {});
     reportMetric('wecom_conversation_queue_rejected', 1, { reason: err.reason });
     await stream.finish(
       truncateUtf8(
@@ -1033,6 +1036,7 @@ async function executeConversationMessage(
       queued: capacity.queued,
     });
     reportMetric('wecom_run_rejected', 1, { reason: err.reason });
+    if (durableTaskId) await taskStore.markFailed(durableTaskId, err.reason).catch(() => {});
     await stream.finish(
       truncateUtf8(
         renderWeComNotice('⚠️ 当前任务较多', [
