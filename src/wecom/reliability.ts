@@ -90,14 +90,18 @@ export class WeComOperationRunner {
 
   snapshot(operation: string): { state: 'closed' | 'open'; retryAfterMs: number } {
     const state = this.circuits.get(operation);
+    if (!state || state.openedUntil === 0) return { state: 'closed', retryAfterMs: 0 };
     const now = this.now();
-    if (!state || state.openedUntil <= now) return { state: 'closed', retryAfterMs: 0 };
+    if (state.openedUntil <= now) {
+      this.circuits.delete(operation);
+      return { state: 'closed', retryAfterMs: 0 };
+    }
     return { state: 'open', retryAfterMs: state.openedUntil - now };
   }
 
   private assertCircuit(operation: string): void {
     const state = this.circuits.get(operation);
-    if (!state) return;
+    if (!state || state.openedUntil === 0) return;
     const now = this.now();
     if (state.openedUntil <= now) {
       this.circuits.delete(operation);
