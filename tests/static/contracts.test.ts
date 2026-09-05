@@ -51,7 +51,6 @@ describe('static architecture contracts', () => {
     // Check the implementations, not the legacy import-path re-export shims.
     for (const file of [
       'src/bridge/session-store.ts',
-      'src/bridge/session-catalog.ts',
       'src/bridge/thread-session-store.ts',
       'src/bridge/workspace-store.ts',
       'src/bridge/task-ledger.ts',
@@ -62,5 +61,18 @@ describe('static architecture contracts', () => {
       expect(source, file).toContain('mode: 0o600');
       expect(source, file).not.toMatch(/\bwriteFile\(/);
     }
+
+    // SessionCatalog retains its pre-existing explicit fsync-and-rename writer.
+    // Validate that path rather than requiring a different helper by name.
+    const catalog = read('src/bridge/session-catalog.ts');
+    expect(catalog).toContain("open(tmp, 'w', 0o600)");
+    expect(catalog).toContain("await fh.writeFile(payload, 'utf8')");
+    expect(catalog).toContain('await fh.sync()');
+    expect(catalog).toContain('await fh.close()');
+    expect(catalog).toContain('await rename(tmp, this.path)');
+    expect(catalog.indexOf('await fh.sync()')).toBeLessThan(
+      catalog.indexOf('await rename(tmp, this.path)'),
+    );
+    expect(catalog).not.toMatch(/\bwriteFile\(this\.path/);
   });
 });
