@@ -71,7 +71,7 @@ export class RunExecutor {
     this.assertAllowed(input);
     const releaseScope = this.activeRuns.reserve(input.scopeId);
     if (!releaseScope) throw new RunRejected('run-already-active', 'another run is already active for this scope');
-    const runId = input.runId ?? this.createRunId();
+    let runId = input.runId;
     let release: (() => void) | undefined;
     let taskId: string | undefined;
     let run: AgentRun;
@@ -86,6 +86,9 @@ export class RunExecutor {
     };
     try {
       if (this.ledger) {
+        // Durable queued work needs its identity before admission. Without a
+        // ledger, preserve the legacy contract: rejected nowait calls use no ID.
+        runId ??= this.createRunId();
         const claim = await this.ledger.claimInbound(input.operationId ?? runId, input.scopeId);
         if (!claim.accepted) throw new RunRejected('duplicate-operation', 'operation was already accepted');
         taskId = claim.task.id;
@@ -95,6 +98,7 @@ export class RunExecutor {
         : input.nowait ? this.pool.tryAcquire() : await this.pool.acquire();
       if (!release) throw new RunRejected('pool-full', 'process pool is full');
       this.assertAllowed(input);
+      runId ??= this.createRunId();
       if (taskId) await this.ledger!.markRunning(taskId);
       const options: AgentRunOptions = {
         runId, prompt: input.policy.prompt, cwd: input.policy.cwdRealpath,
