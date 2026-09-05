@@ -1,0 +1,1373 @@
+
+> lark-channel-bridge@0.7.2 pretest D:\a\lark-coding-agent-bridge\lark-coding-agent-bridge
+> pnpm build:web
+
+
+> lark-channel-bridge@0.7.2 build:web D:\a\lark-coding-agent-bridge\lark-coding-agent-bridge
+> vite build web
+
+[36mvite v8.1.5 [32mbuilding client environment for production...[36m[39m
+[2K
+transforming...✓ 1868 modules transformed.
+rendering chunks...
+[plugin vite:singlefile] 
+
+[plugin vite:singlefile] Inlining: index-BziXrpnZ.js
+[plugin vite:singlefile] Inlining: style-DomQPRom.css
+computing gzip size...
+src/ui/generated/index.html  428.41 kB │ gzip: 131.84 kB
+
+[32m✓ built in 471ms[39m
+> lark-channel-bridge@0.7.2 test D:\a\lark-coding-agent-bridge\lark-coding-agent-bridge
+> vitest run
+
+
+[1m[7m[36m RUN [39m[27m[22m [36mv2.1.9 [39m[90mD:/a/lark-coding-agent-bridge/lark-coding-agent-bridge[39m
+
+[?25l│
+◇  lark-cli configuration ready
+[?25h│
+└  Done
+
+[?25l│
+◇  lark-cli configuration ready
+[?25h│
+└  Done
+
+stderr | tests/unit/cli/preflight.test.ts > lark-cli preflight > falls back through a locked root source overlay for lark-cli builds without LARK_CHANNEL_CONFIG support
+⚠ [lark-cli.profile-config-persist-failed] profile=codex err=profile schemaVersion must be 2
+
+[?25l│
+◇  lark-cli configuration ready
+[?25h│
+└  Done
+
+stderr | tests/unit/cli/preflight.test.ts > lark-cli preflight > falls back when lark-cli prints a JSON-escaped bridge root path
+⚠ [lark-cli.profile-config-persist-failed] profile=codex err=profile schemaVersion must be 2
+
+[90mstdout[2m | tests/unit/runtime/profile-runtime.test.ts[2m > [22m[2mprofile runtime resolver[2m > [22m[2mbootstraps first-run profile from existing app credentials without QR registration
+[22m[39m✓ 应用凭证校验通过: Bridge Bot
+
+[?25l│
+▲  lark-cli configuration failed
+[?25h[90mstdout[2m | tests/unit/cli/preflight.test.ts[2m > [22m[2mlark-cli preflight[2m > [22m[2mrestores the bridge root config when legacy overlay bind fails
+[22m[39m
+Bridge will keep listening for messages, but this profile did not finish lark-cli configuration.
+Impact: the agent may be unable to send messages, send cards, or call Feishu/Lark APIs through lark-cli.
+
+Recovery:
+  1. Restart the current profile: lark-channel-bridge restart --profile codex; for foreground runs, press Ctrl+C and rerun lark-channel-bridge run --profile codex.
+  2. If it still fails, check that this profile has a valid App Secret and that the lark-cli config directory is writable.
+
+Diagnostic details:
+keychain unavailable: test failure
+
+
+stderr | tests/unit/cli/preflight.test.ts > lark-cli preflight > restores the bridge root config when legacy overlay bind fails
+⚠ [lark-cli.profile-config-persist-failed] profile=codex err=profile schemaVersion must be 2
+
+[?25l│
+▲  lark-cli configuration failed
+[?25h[90mstdout[2m | tests/unit/cli/preflight.test.ts[2m > [22m[2mlark-cli preflight[2m > [22m[2mdoes not overlay the bridge root config when lark-cli is too old for lark-channel source
+[22m[39m
+The installed lark-cli does not support the lark-channel source required by bridge auto-configuration.
+Bridge will keep listening for messages, but the agent cannot use lark-cli to call Feishu/Lark APIs.
+
+Recovery:
+  1. Install a lark-cli build that supports the lark-channel source.
+  2. Restart the current profile: lark-channel-bridge restart --profile codex; for foreground runs, press Ctrl+C and rerun lark-channel-bridge run --profile codex.
+
+Diagnostic details:
+invalid --source "lark-channel"; valid values: env, file
+
+
+stderr | tests/unit/cli/preflight.test.ts > lark-cli preflight > does not overlay the bridge root config when lark-cli is too old for lark-channel source
+⚠ [lark-cli.profile-config-persist-failed] profile=codex err=profile schemaVersion must be 2
+
+[?25l│
+▲  lark-cli configuration failed
+stderr | tests/unit/cli/preflight.test.ts > lark-cli preflight > treats lark-cli builds without config bind source support as too old
+⚠ [lark-cli.profile-config-persist-failed] profile=codex err=profile schemaVersion must be 2
+
+[?25h[90mstdout[2m | tests/unit/runtime/profile-runtime.test.ts[2m > [22m[2mprofile runtime resolver[2m > [22m[2mbootstraps first-run profile from existing app credentials without QR registration
+[22m[39m配置已保存到 C:\Users\RUNNER~1\AppData\Local\Temp\bridge-profile-runtime-RrpEHV\config.json
+
+
+[?25l│
+▲  lark-cli configuration failed
+[?25h[90mstdout[2m | tests/unit/runtime/profile-runtime.test.ts[2m > [22m[2mprofile runtime resolver[2m > [22m[2mbootstraps a managed default workspace when no workspace is provided
+[22m[39m✓ 应用凭证校验通过: Bridge Bot
+
+[90mstdout[2m | tests/unit/runtime/profile-runtime.test.ts[2m > [22m[2mprofile runtime resolver[2m > [22m[2mbootstraps a managed default workspace when no workspace is provided
+[22m[39m配置已保存到 C:\Users\RUNNER~1\AppData\Local\Temp\bridge-profile-runtime-c4qCfb\config.json
+
+
+[90mstdout[2m | tests/unit/runtime/profile-runtime.test.ts[2m > [22m[2mprofile runtime resolver[2m > [22m[2mcontinues first-run bootstrap with the selected local agent when multiple are detected
+[22m[39m配置已保存到 C:\Users\RUNNER~1\AppData\Local\Temp\bridge-profile-runtime-IFl54U\config.json
+
+
+[?25l│
+◇  lark-cli configuration ready
+[?25h│
+└  Done
+
+[?25l│
+◇  lark-cli configuration ready
+[?25h│
+└  Done
+
+[?25l│
+◇  lark-cli configuration ready
+[?25h│
+└  Done
+
+[90mstdout[2m | tests/integration/bot/topic-quote.test.ts[2m > [22m[2mtopic message quote handling[2m > [22m[2mdoes not quote the topic root when a user directly mentions the bot inside the topic
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Fake Agent (fake-agent)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ topic/c_chat scope=_topic sender=...u_user msg=ect_at: @Bridge 继续说一下
+
+[?25l│
+◇  lark-cli configuration ready
+[?25h│
+└  Done
+
+[?25l│
+◇  lark-cli configuration ready
+[?25h│
+└  Done
+
+[?25l│
+◇  lark-cli configuration ready
+[?25h│
+└  Done
+
+ [32m✓[39m tests/unit/cli/preflight.test.ts [2m([22m[2m21 tests[22m[2m)[22m[33m 1964[2mms[22m[39m
+[90mstdout[2m | tests/unit/runtime/profile-runtime.test.ts[2m > [22m[2mprofile runtime resolver[2m > [22m[2mbootstraps an explicit missing profile into an existing v2 root config
+[22m[39m配置已保存到 C:\Users\RUNNER~1\AppData\Local\Temp\bridge-profile-runtime-2bUDph\config.json
+
+
+ [32m✓[39m tests/unit/runtime/profile-runtime.test.ts [2m([22m[2m32 tests[22m[2m)[22m[33m 2110[2mms[22m[39m
+stderr | tests/integration/bot/topic-quote.test.ts > topic message quote handling > does not quote the topic root when a user directly mentions the bot inside the topic
+⚠ [reaction.add-failed] t=bnv0hjqq c=c_chat messageId=...ect_at err=channel.addReaction is not a function
+
+[90mstdout[2m | tests/integration/bot/topic-quote.test.ts[2m > [22m[2mtopic message quote handling[2m > [22m[2mdoes not quote the topic root when a user directly mentions the bot inside the topic
+[22m[39m  ▶ run start scope=_topic run=71ca2e queue=1ms
+  ✓ run normal scope=_topic run=71ca2e duration=4ms
+  ✓ _topic done
+
+[90mstdout[2m | tests/integration/bot/topic-quote.test.ts[2m > [22m[2mtopic message quote handling[2m > [22m[2mtreats messages with threadId as topic messages even when chat mode cache says group
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Fake Agent (fake-agent)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ topic/c_chat scope=_topic sender=...u_user msg=_topic: @Bridge 继续说一下
+
+stderr | tests/integration/bot/topic-quote.test.ts > topic message quote handling > treats messages with threadId as topic messages even when chat mode cache says group
+⚠ [chat.mode-overridden-by-thread] t=9glb2x2e c=c_chat _chatId=...c_chat cachedMode=group threadId=..._topic
+
+[90mstdout[2m | tests/integration/bot/topic-quote.test.ts[2m > [22m[2mtopic message quote handling[2m > [22m[2mtreats messages with threadId as topic messages even when chat mode cache says group
+[22m[39m  ▶ run start scope=_topic run=23a2ae queue=0ms
+  ✓ run normal scope=_topic run=23a2ae duration=2ms
+  ✓ _topic done
+
+stderr | tests/integration/bot/topic-quote.test.ts > topic message quote handling > treats messages with threadId as topic messages even when chat mode cache says group
+⚠ [reaction.add-failed] t=i2f8yarw c=c_chat messageId=..._topic err=channel.addReaction is not a function
+
+[90mstdout[2m | tests/integration/bot/topic-quote.test.ts[2m > [22m[2mtopic message quote handling[2m > [22m[2mbackfills a missing threadId in topic groups so the reply threads into the topic
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Fake Agent (fake-agent)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ topic/c_chat scope=filled sender=...u_user msg=_start: @Bridge 开个新话题
+
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2mdoes not leave the IM queue blocked when the agent exits before stream producer starts
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Codex (codex)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ group/oc_dm scope=oc_dm sender=...u_user msg=_first: first
+
+stderr | tests/integration/bot/markdown-stream-startup-failure.test.ts > markdown stream startup failures > does not leave the IM queue blocked when the agent exits before stream producer starts
+⚠ [access.owner_refresh_failed] appId=...i_test error=source.getAppInfo is not a function
+⚠ [lark-info.chats-fetch-failed] err=channel.listChats is not a function
+
+[90mstdout[2m | tests/integration/comments/comment-run-flow.test.ts[2m > [22m[2mcomment run flow[2m > [22m[2mruns mentioned comments through RunExecutor with document token prompt
+[22m[39m  ▶ run start scope=37-b35 run=-run-1 queue=0ms
+  ✓ run normal scope=37-b35 run=-run-1 duration=3ms
+
+[90mstdout[2m | tests/integration/comments/comment-run-flow.test.ts[2m > [22m[2mcomment run flow[2m > [22m[2mincludes the prior thread replies as context when @-ed on a later reply
+[22m[39m  ▶ run start scope=b1-cd5 run=-run-1 queue=0ms
+  ✓ run normal scope=b1-cd5 run=-run-1 duration=1ms
+
+[90mstdout[2m | tests/integration/comments/comment-run-flow.test.ts[2m > [22m[2mcomment run flow[2m > [22m[2mshares Claude sessions across different comment threads in the same document
+[22m[39m  ▶ run start scope=4f-6b6 run=-run-1 queue=0ms
+  ✓ run normal scope=4f-6b6 run=-run-1 duration=0ms
+
+[90mstdout[2m | tests/integration/comments/comment-run-flow.test.ts[2m > [22m[2mcomment run flow[2m > [22m[2mshares Claude sessions across different comment threads in the same document
+[22m[39m  ▶ run start scope=15-b8a run=-run-2 queue=0ms
+  ✓ run normal scope=15-b8a run=-run-2 duration=1ms
+
+[90mstdout[2m | tests/integration/comments/comment-run-flow.test.ts[2m > [22m[2mcomment run flow[2m > [22m[2mshares Claude sessions across different comment threads in the same document
+[22m[39m  ▶ run start scope=ea-0c8 run=-run-3 queue=0ms
+  ✓ run normal scope=ea-0c8 run=-run-3 duration=1ms
+
+[90mstdout[2m | tests/integration/comments/comment-run-flow.test.ts[2m > [22m[2mcomment run flow[2m > [22m[2mshares Codex threads across different comment threads in the same document
+[22m[39m  ▶ run start scope=dd-303 run=-run-1 queue=0ms
+  ✓ run normal scope=dd-303 run=-run-1 duration=0ms
+
+[90mstdout[2m | tests/integration/comments/comment-run-flow.test.ts[2m > [22m[2mcomment run flow[2m > [22m[2mshares Codex threads across different comment threads in the same document
+[22m[39m  ▶ run start scope=9c-0b5 run=-run-2 queue=0ms
+  ✓ run normal scope=9c-0b5 run=-run-2 duration=0ms
+
+[90mstdout[2m | tests/integration/comments/comment-run-flow.test.ts[2m > [22m[2mcomment run flow[2m > [22m[2mshares Codex threads across different comment threads in the same document
+[22m[39m  ▶ run start scope=0f-a4d run=-run-3 queue=0ms
+  ✓ run normal scope=0f-a4d run=-run-3 duration=1ms
+
+[90mstdout[2m | tests/integration/comments/comment-run-flow.test.ts[2m > [22m[2mcomment run flow[2m > [22m[2mkeeps Codex pre-tool progress text out of every comment reply
+[22m[39m  ▶ run start scope=6a-683 run=-run-1 queue=0ms
+  ✓ run normal scope=6a-683 run=-run-1 duration=1ms
+
+[90mstdout[2m | tests/integration/comments/comment-run-flow.test.ts[2m > [22m[2mcomment run flow[2m > [22m[2mkeeps Codex pre-tool progress text out of every comment reply
+[22m[39m  ▶ run start scope=83-563 run=-run-2 queue=0ms
+  ✓ run normal scope=83-563 run=-run-2 duration=1ms
+
+stderr | tests/integration/bot/topic-quote.test.ts > topic message quote handling > backfills a missing threadId in topic groups so the reply threads into the topic
+⚠ [reaction.add-failed] t=syem29nc c=c_chat messageId=..._start err=channel.addReaction is not a function
+
+[90mstdout[2m | tests/integration/bot/topic-quote.test.ts[2m > [22m[2mtopic message quote handling[2m > [22m[2mbackfills a missing threadId in topic groups so the reply threads into the topic
+[22m[39m  ▶ run start scope=filled run=38ce63 queue=0ms
+  ✓ run normal scope=filled run=38ce63 duration=1ms
+  ✓ filled done
+
+[90mstdout[2m | tests/integration/comments/comment-run-flow.test.ts[2m > [22m[2mcomment run flow[2m > [22m[2mdoes not reuse an existing Codex thread while another document comment run is active
+[22m[39m  ▶ run start scope=bf-136 run=-run-1 queue=0ms
+
+[90mstdout[2m | tests/integration/comments/comment-run-flow.test.ts[2m > [22m[2mcomment run flow[2m > [22m[2mdoes not reuse an existing Codex thread while another document comment run is active
+[22m[39m  ▶ run start scope=e8-932 run=-run-2 queue=0ms
+
+[90mstdout[2m | tests/integration/bot/topic-quote.test.ts[2m > [22m[2mtopic message quote handling[2m > [22m[2mdoes not thread the reply when a topic-group event has no recoverable threadId
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Fake Agent (fake-agent)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ topic/c_chat scope=c_chat sender=...u_user msg=thread: @Bridge 无线程
+
+[90mstdout[2m | tests/integration/comments/comment-run-flow.test.ts[2m > [22m[2mcomment run flow[2m > [22m[2mdoes not reuse an existing Codex thread while another document comment run is active
+[22m[39m  ✓ run normal scope=bf-136 run=-run-1 duration=19ms
+  ✓ run normal scope=e8-932 run=-run-2 duration=9ms
+
+[90mstdout[2m | tests/integration/comments/comment-run-flow.test.ts[2m > [22m[2mcomment run flow[2m > [22m[2mkeeps replying when typing reaction add fails
+[22m[39m  ▶ run start scope=1c-7d2 run=-run-1 queue=0ms
+  ✓ run normal scope=1c-7d2 run=-run-1 duration=0ms
+
+[90mstdout[2m | tests/integration/comments/comment-run-flow.test.ts[2m > [22m[2mcomment run flow[2m > [22m[2mfalls back to the default cwd when the document cwd is stale
+[22m[39m  ▶ run start scope=c4-57e run=-run-1 queue=0ms
+  ✓ run normal scope=c4-57e run=-run-1 duration=0ms
+
+[90mstdout[2m | tests/integration/comments/comment-run-flow.test.ts[2m > [22m[2mcomment run flow[2m > [22m[2muses a managed fallback cwd when both document and default cwd are stale
+[22m[39m  ▶ run start scope=fc-609 run=-run-1 queue=0ms
+  ✓ run normal scope=fc-609 run=-run-1 duration=1ms
+
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2mdoes not leave the IM queue blocked when the agent exits before stream producer starts
+[22m[39m  ▶ run start scope=oc_dm run=5fe8ff queue=1ms
+  ✗ oc_dm error
+  ↗ sent markdown scope=oc_dm reply=_first msg=sent_1
+
+stderr | tests/integration/bot/markdown-stream-startup-failure.test.ts > markdown stream startup failures > does not leave the IM queue blocked when the agent exits before stream producer starts
+  ✗ run failed scope=oc_dm run=5fe8ff duration=4ms
+
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2mdoes not leave the IM queue blocked when the agent exits before stream producer starts
+[22m[39m▸ group/oc_dm scope=oc_dm sender=...u_user msg=second: second
+
+ [32m✓[39m tests/integration/comments/comment-run-flow.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 489[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/risk-intent.test.ts [2m([22m[2m21 tests[22m[2m)[22m[90m 41[2mms[22m[39m
+stderr | tests/integration/bot/topic-quote.test.ts > topic message quote handling > does not thread the reply when a topic-group event has no recoverable threadId
+⚠ [reaction.add-failed] t=tqjso4cf c=c_chat messageId=...thread err=channel.addReaction is not a function
+
+[90mstdout[2m | tests/integration/bot/topic-quote.test.ts[2m > [22m[2mtopic message quote handling[2m > [22m[2mdoes not thread the reply when a topic-group event has no recoverable threadId
+[22m[39m  ▶ run start scope=c_chat run=6438cf queue=1ms
+  ✓ run normal scope=c_chat run=6438cf duration=1ms
+  ✓ c_chat done
+
+[90mstdout[2m | tests/integration/bot/topic-quote.test.ts[2m > [22m[2mtopic message quote handling[2m > [22m[2mpulls in the topic upstream messages when first engaged in a topic
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Fake Agent (fake-agent)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ topic/c_chat scope=_topic sender=...u_user msg=_topic: @Bridge 看下这个
+
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2mdoes not leave the IM queue blocked when the agent exits before stream producer starts
+[22m[39m  ▶ run start scope=oc_dm run=6ea1ae queue=0ms
+  ✓ run normal scope=oc_dm run=6ea1ae duration=1ms
+  ✓ oc_dm done
+
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2mdoes not wait for the working reaction before draining a failed agent run
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Codex (codex)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ group/oc_dm scope=oc_dm sender=...u_user msg=_first: first
+
+stderr | tests/integration/bot/markdown-stream-startup-failure.test.ts > markdown stream startup failures > does not wait for the working reaction before draining a failed agent run
+⚠ [access.owner_refresh_failed] appId=...i_test error=source.getAppInfo is not a function
+⚠ [lark-info.chats-fetch-failed] err=channel.listChats is not a function
+
+stderr | tests/integration/bot/topic-quote.test.ts > topic message quote handling > pulls in the topic upstream messages when first engaged in a topic
+⚠ [reaction.add-failed] t=ucktromp c=c_chat messageId=..._topic err=channel.addReaction is not a function
+
+[90mstdout[2m | tests/integration/bot/topic-quote.test.ts[2m > [22m[2mtopic message quote handling[2m > [22m[2mpulls in the topic upstream messages when first engaged in a topic
+[22m[39m  ▶ run start scope=_topic run=9fb1bf queue=1ms
+  ✓ run normal scope=_topic run=9fb1bf duration=0ms
+  ✓ _topic done
+
+[90mstdout[2m | tests/integration/bot/topic-quote.test.ts[2m > [22m[2mtopic message quote handling[2m > [22m[2mdoes not fetch topic context when the topic session already exists
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Fake Agent (fake-agent)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ topic/c_chat scope=isting sender=...u_user msg=llowup: @Bridge 接着说
+
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2mdoes not wait for the working reaction before draining a failed agent run
+[22m[39m  ▶ run start scope=oc_dm run=07fffa queue=0ms
+  ✗ oc_dm error
+  ↗ sent markdown scope=oc_dm reply=_first msg=sent_1
+
+stderr | tests/integration/bot/markdown-stream-startup-failure.test.ts > markdown stream startup failures > does not wait for the working reaction before draining a failed agent run
+  ✗ run failed scope=oc_dm run=07fffa duration=1ms
+
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2mdoes not wait for the working reaction before draining a failed agent run
+[22m[39m▸ group/oc_dm scope=oc_dm sender=...u_user msg=second: second
+
+ [32m✓[39m tests/unit/cli/service-profile.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 528[2mms[22m[39m
+   [33m[2m✓[22m[39m profile-aware service commands[2m > [22mstops a foreground lock holder and continues service start after interactive confirmation [33m503[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/risk-transaction-matrix.test.ts [2m([22m[2m48 tests[22m[2m)[22m[90m 39[2mms[22m[39m
+stderr | tests/integration/bot/topic-quote.test.ts > topic message quote handling > does not fetch topic context when the topic session already exists
+⚠ [reaction.add-failed] t=q4skf6al c=c_chat messageId=...llowup err=channel.addReaction is not a function
+
+[90mstdout[2m | tests/integration/bot/topic-quote.test.ts[2m > [22m[2mtopic message quote handling[2m > [22m[2mdoes not fetch topic context when the topic session already exists
+[22m[39m  ▶ run start scope=isting run=8b82c7 queue=0ms
+  ✓ run normal scope=isting run=8b82c7 duration=1ms
+  ✓ isting done
+
+[90mstdout[2m | tests/integration/bot/topic-quote.test.ts[2m > [22m[2mtopic message quote handling[2m > [22m[2mdoes not open a progress stream when the agent produces no content
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Fake Agent (fake-agent)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ group/c_chat scope=c_chat sender=...u_user msg=_empty: @Bridge ping
+
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2mdoes not wait for the working reaction before draining a failed agent run
+[22m[39m  ▶ run start scope=oc_dm run=d51cdc queue=0ms
+  ✓ run normal scope=oc_dm run=d51cdc duration=1ms
+  ✓ oc_dm done
+
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2mlogs stream failures that arrive after terminal grace expires
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Codex (codex)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ group/oc_dm scope=oc_dm sender=...u_user msg=_first: first
+
+stderr | tests/integration/bot/markdown-stream-startup-failure.test.ts > markdown stream startup failures > logs stream failures that arrive after terminal grace expires
+⚠ [access.owner_refresh_failed] appId=...i_test error=source.getAppInfo is not a function
+⚠ [lark-info.chats-fetch-failed] err=channel.listChats is not a function
+
+ [32m✓[39m tests/unit/wecom/runtime.test.ts [2m([22m[2m25 tests[22m[2m)[22m[90m 31[2mms[22m[39m
+stderr | tests/integration/bot/topic-quote.test.ts > topic message quote handling > does not open a progress stream when the agent produces no content
+⚠ [reaction.add-failed] t=d6o7kq3t c=c_chat messageId=..._empty err=channel.addReaction is not a function
+
+[90mstdout[2m | tests/integration/bot/topic-quote.test.ts[2m > [22m[2mtopic message quote handling[2m > [22m[2mdoes not open a progress stream when the agent produces no content
+[22m[39m  ▶ run start scope=c_chat run=a1137a queue=0ms
+  ✓ run normal scope=c_chat run=a1137a duration=1ms
+  ✓ c_chat done
+
+[90mstdout[2m | tests/integration/bot/topic-quote.test.ts[2m > [22m[2mtopic message quote handling[2m > [22m[2mdoes not recall when the agent produced real content
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Fake Agent (fake-agent)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ group/c_chat scope=c_chat sender=...u_user msg=m_real: @Bridge 问题
+
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2mlogs stream failures that arrive after terminal grace expires
+[22m[39m  ▶ run start scope=oc_dm run=2551f3 queue=0ms
+  ✗ oc_dm error
+
+stderr | tests/integration/bot/markdown-stream-startup-failure.test.ts > markdown stream startup failures > logs stream failures that arrive after terminal grace expires
+  ✗ run failed scope=oc_dm run=2551f3 duration=2ms
+
+stderr | tests/integration/commands/resume-command.test.ts > agent-aware resume commands > falls back to an audit-safe reply when resume confirmation is rejected
+✗ [command.fail] step=reply err=The messages do NOT pass the audit.
+
+stderr | tests/integration/bot/topic-quote.test.ts > topic message quote handling > does not recall when the agent produced real content
+⚠ [reaction.add-failed] t=mxgh7ng1 c=c_chat messageId=...m_real err=channel.addReaction is not a function
+
+[90mstdout[2m | tests/integration/bot/topic-quote.test.ts[2m > [22m[2mtopic message quote handling[2m > [22m[2mdoes not recall when the agent produced real content
+[22m[39m  ▶ run start scope=c_chat run=43f052 queue=0ms
+  ✓ run normal scope=c_chat run=43f052 duration=1ms
+  ✓ c_chat done
+
+[90mstdout[2m | tests/integration/bot/topic-quote.test.ts[2m > [22m[2mtopic message quote handling[2m > [22m[2mskips a group message that does not mention the bot (requireMention default)
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Fake Agent (fake-agent)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ group/c_chat scope=c_chat sender=...u_user msg=_no_at: @同事 这里的帖子哪些是我们做的
+
+ [32m✓[39m tests/integration/commands/resume-command.test.ts [2m([22m[2m14 tests[22m[2m)[22m[33m 372[2mms[22m[39m
+[90mstdout[2m | tests/integration/bot/topic-quote.test.ts[2m > [22m[2mtopic message quote handling[2m > [22m[2mkeeps regular group reply quotes as quoted context
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Fake Agent (fake-agent)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ group/c_chat scope=c_chat sender=...u_user msg=_reply: @Bridge 看这条
+
+stderr | tests/integration/bot/topic-quote.test.ts > topic message quote handling > keeps regular group reply quotes as quoted context
+⚠ [reaction.add-failed] t=22lrizu4 c=c_chat messageId=..._reply err=channel.addReaction is not a function
+
+[90mstdout[2m | tests/integration/bot/topic-quote.test.ts[2m > [22m[2mtopic message quote handling[2m > [22m[2mkeeps regular group reply quotes as quoted context
+[22m[39m  ▶ run start scope=c_chat run=a302c6 queue=0ms
+  ✓ run normal scope=c_chat run=a302c6 duration=1ms
+  ✓ c_chat done
+
+[90mstdout[2m | tests/integration/bot/topic-quote.test.ts[2m > [22m[2mtopic message quote handling[2m > [22m[2mkeeps non-root reply quotes in topic chats
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Fake Agent (fake-agent)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ topic/c_chat scope=_topic sender=...u_user msg=_reply: @Bridge 看父消息
+
+stderr | tests/integration/bot/topic-quote.test.ts > topic message quote handling > keeps non-root reply quotes in topic chats
+⚠ [reaction.add-failed] t=6k4om3os c=c_chat messageId=..._reply err=channel.addReaction is not a function
+
+[90mstdout[2m | tests/integration/bot/topic-quote.test.ts[2m > [22m[2mtopic message quote handling[2m > [22m[2mkeeps non-root reply quotes in topic chats
+[22m[39m  ▶ run start scope=_topic run=d494e8 queue=0ms
+  ✓ run normal scope=_topic run=d494e8 duration=1ms
+  ✓ _topic done
+
+stderr | tests/integration/commands/commands-v1.test.ts > Bridge command contracts > does not expose access allowlists through the Lark /config form
+⚠ [lark-info.chats-fetch-failed] err=channel.listChats is not a function
+
+[90mstdout[2m | tests/integration/bot/topic-quote.test.ts[2m > [22m[2mmerge_forward fetch failure[2m > [22m[2mskips the run and hints the user when the SDK could not fetch a merge_forward
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Fake Agent (fake-agent)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ group/c_chat scope=c_chat sender=...u_user msg=failed: <forwarded_messages status="fetch_failed"/>
+
+stderr | tests/integration/bot/topic-quote.test.ts > merge_forward fetch failure > skips the run and hints the user when the SDK could not fetch a merge_forward
+⚠ [intake.forward-fetch-failed] t=w8uuparn c=c_chat scope=...c_chat _msgId=...failed chatType=group
+
+[90mstdout[2m | tests/integration/bot/topic-quote.test.ts[2m > [22m[2mmerge_forward fetch failure[2m > [22m[2mstill runs when a merge_forward was genuinely empty (not a fetch failure)
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Fake Agent (fake-agent)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ group/c_chat scope=c_chat sender=...u_user msg=_empty: <forwarded_messages/>
+
+ [32m✓[39m tests/integration/commands/commands-v1.test.ts [2m([22m[2m18 tests[22m[2m)[22m[33m 609[2mms[22m[39m
+ [32m✓[39m tests/unit/config/profile-schema.test.ts [2m([22m[2m32 tests[22m[2m)[22m[90m 18[2mms[22m[39m
+stderr | tests/integration/bot/topic-quote.test.ts > merge_forward fetch failure > still runs when a merge_forward was genuinely empty (not a fetch failure)
+⚠ [reaction.add-failed] t=xu92040c c=c_chat messageId=..._empty err=channel.addReaction is not a function
+
+[90mstdout[2m | tests/integration/bot/topic-quote.test.ts[2m > [22m[2mmerge_forward fetch failure[2m > [22m[2mstill runs when a merge_forward was genuinely empty (not a fetch failure)
+[22m[39m  ▶ run start scope=c_chat run=697f4d queue=0ms
+  ✓ run normal scope=c_chat run=697f4d duration=1ms
+  ✓ c_chat done
+
+ [32m✓[39m tests/integration/bot/topic-quote.test.ts [2m([22m[2m13 tests[22m[2m)[22m[33m 7333[2mms[22m[39m
+   [33m[2m✓[22m[39m topic message quote handling[2m > [22mdoes not quote the topic root when a user directly mentions the bot inside the topic [33m695[2mms[22m[39m
+   [33m[2m✓[22m[39m topic message quote handling[2m > [22mtreats messages with threadId as topic messages even when chat mode cache says group [33m659[2mms[22m[39m
+   [33m[2m✓[22m[39m topic message quote handling[2m > [22mbackfills a missing threadId in topic groups so the reply threads into the topic [33m645[2mms[22m[39m
+   [33m[2m✓[22m[39m topic message quote handling[2m > [22mdoes not thread the reply when a topic-group event has no recoverable threadId [33m633[2mms[22m[39m
+   [33m[2m✓[22m[39m topic message quote handling[2m > [22mpulls in the topic upstream messages when first engaged in a topic [33m619[2mms[22m[39m
+   [33m[2m✓[22m[39m topic message quote handling[2m > [22mdoes not fetch topic context when the topic session already exists [33m623[2mms[22m[39m
+   [33m[2m✓[22m[39m topic message quote handling[2m > [22mdoes not open a progress stream when the agent produces no content [33m732[2mms[22m[39m
+   [33m[2m✓[22m[39m topic message quote handling[2m > [22mdoes not recall when the agent produced real content [33m711[2mms[22m[39m
+   [33m[2m✓[22m[39m topic message quote handling[2m > [22mkeeps regular group reply quotes as quoted context [33m635[2mms[22m[39m
+   [33m[2m✓[22m[39m topic message quote handling[2m > [22mkeeps non-root reply quotes in topic chats [33m637[2mms[22m[39m
+   [33m[2m✓[22m[39m merge_forward fetch failure[2m > [22mstill runs when a merge_forward was genuinely empty (not a fetch failure) [33m641[2mms[22m[39m
+stderr | tests/integration/bot/markdown-stream-startup-failure.test.ts > markdown stream startup failures > logs stream failures that arrive after terminal grace expires
+⚠ [stream.terminal-grace-expired] t=35ustlsu c=oc_dm mode=markdown graceMs=3000
+
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2mlogs stream failures that arrive after terminal grace expires
+[22m[39m▸ group/oc_dm scope=oc_dm sender=...u_user msg=second: second
+
+[90mstdout[2m | tests/integration/config/profile-migration.test.ts[2m > [22m[2mprofile v2 migration[2m > [22m[2mstops active bridge processes and retries the migrate command after confirmation
+[22m[39m✓ config 结构已是新格式：C:\Users\RUNNER~1\AppData\Local\Temp\bridge-profile-migration-I48l80\config.json
+
+[90mstdout[2m | tests/integration/config/profile-migration.test.ts[2m > [22m[2mprofile v2 migration[2m > [22m[2mstops active bridge processes and retries the migrate command after confirmation
+[22m[39m✓ 已升级 profile 目录结构：claude
+
+[90mstdout[2m | tests/integration/config/profile-migration.test.ts[2m > [22m[2mprofile v2 migration[2m > [22m[2mupgrades a legacy config by stopping the active old-version process after confirmation
+[22m[39m✓ config 结构已是新格式：C:\Users\RUNNER~1\AppData\Local\Temp\bridge-profile-migration-svwNn6\config.json
+
+[90mstdout[2m | tests/integration/config/profile-migration.test.ts[2m > [22m[2mprofile v2 migration[2m > [22m[2mupgrades a legacy config by stopping the active old-version process after confirmation
+[22m[39m正在停止 app cli_test id=old-version pid=3348...
+✓ 已停止 pid 3348
+
+[90mstdout[2m | tests/integration/config/profile-migration.test.ts[2m > [22m[2mprofile v2 migration[2m > [22m[2mupgrades a legacy config by stopping the active old-version process after confirmation
+[22m[39m✓ 已升级 profile 目录结构：claude
+
+[90mstdout[2m | tests/integration/config/profile-migration.test.ts[2m > [22m[2mprofile v2 migration[2m > [22m[2mkeeps repeated migration on an existing v2 config as a no-op even with active registry entries
+[22m[39m✓ config 结构已是新格式：C:\Users\RUNNER~1\AppData\Local\Temp\bridge-profile-migration-7fmxaS\config.json
+
+[90mstdout[2m | tests/integration/config/profile-migration.test.ts[2m > [22m[2mprofile v2 migration[2m > [22m[2mkeeps repeated migration on an existing v2 config as a no-op even with active registry entries
+[22m[39m✓ 已升级 profile 目录结构：claude
+
+[90mstdout[2m | tests/integration/config/profile-migration.test.ts[2m > [22m[2mprofile v2 migration[2m > [22m[2mkeeps repeated migration on an existing v2 config as a no-op even with active registry entries
+[22m[39m✓ config 结构已是 profile v2 格式：C:\Users\RUNNER~1\AppData\Local\Temp\bridge-profile-migration-7fmxaS\config.json
+
+[90mstdout[2m | tests/integration/config/profile-migration.test.ts[2m > [22m[2mprofile v2 migration[2m > [22m[2mkeeps repeated migration on an existing v2 config as a no-op even with active registry entries
+[22m[39m✓ profile 目录结构已是最新：claude
+
+[90mstdout[2m | tests/integration/config/profile-migration.test.ts[2m > [22m[2mprofile v2 migration[2m > [22m[2mkeeps legacy config unchanged when the user declines stopping active bridges
+[22m[39m✓ config 结构已是新格式：C:\Users\RUNNER~1\AppData\Local\Temp\bridge-profile-migration-VOti2l\config.json
+
+[90mstdout[2m | tests/integration/config/profile-migration.test.ts[2m > [22m[2mprofile v2 migration[2m > [22m[2mkeeps legacy config unchanged when the user declines stopping active bridges
+[22m[39m已取消迁移。
+
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2mlogs stream failures that arrive after terminal grace expires
+[22m[39m  ▶ run start scope=oc_dm run=61f22a queue=0ms
+  ✓ run normal scope=oc_dm run=61f22a duration=1ms
+  ✓ oc_dm done
+
+[90mstdout[2m | tests/integration/config/profile-migration.test.ts[2m > [22m[2mprofile v2 migration[2m > [22m[2mmigrates a legacy config to Codex through the migrate command
+[22m[39m✓ config 结构已是新格式：C:\Users\RUNNER~1\AppData\Local\Temp\bridge-profile-migration-2rsogo\config.json
+
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2msends one dedicated non-streaming final reply after progress completes
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Codex (codex)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ group/oc_dm scope=oc_dm sender=...u_user msg=_final: run
+
+stderr | tests/integration/bot/markdown-stream-startup-failure.test.ts > markdown stream startup failures > sends one dedicated non-streaming final reply after progress completes
+⚠ [access.owner_refresh_failed] appId=...i_test error=source.getAppInfo is not a function
+⚠ [lark-info.chats-fetch-failed] err=channel.listChats is not a function
+
+[90mstdout[2m | tests/integration/config/profile-migration.test.ts[2m > [22m[2mprofile v2 migration[2m > [22m[2mmigrates a legacy config to Codex through the migrate command
+[22m[39m✓ 已升级 profile 目录结构：codex
+
+ [32m✓[39m tests/integration/config/profile-migration.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 442[2mms[22m[39m
+stderr | tests/process/codex-adapter.test.ts > CodexAdapter process contract > includes stderr when the process exits non-zero before a terminal event
+⚠ [agent.stderr] line=boom
+
+stderr | tests/process/codex-adapter.test.ts > CodexAdapter process contract > continues after retryable raw error events and waits for the terminal turn event
+⚠ [jsonl.error_event] message=Reconnecting... 2/5 (timeout waiting for child process to exit)
+
+stderr | tests/process/codex-adapter.test.ts > CodexAdapter process contract > surfaces spawn errors as stream error events
+⚠ [agent.stderr] line=missing command
+
+ [32m✓[39m tests/process/codex-adapter.test.ts [2m([22m[2m14 tests[22m[2m)[22m[33m 1099[2mms[22m[39m
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2msends one dedicated non-streaming final reply after progress completes
+[22m[39m  ▶ run start scope=oc_dm run=54d328 queue=0ms
+  ✓ run normal scope=oc_dm run=54d328 duration=1ms
+  ✓ oc_dm done
+  ↗ sent markdown scope=oc_dm reply=_final msg=sent_1
+
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2mopens no progress stream for a final-only round
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Codex (codex)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ group/oc_dm scope=oc_dm sender=...u_user msg=l_only: run
+
+stderr | tests/integration/bot/markdown-stream-startup-failure.test.ts > markdown stream startup failures > opens no progress stream for a final-only round
+⚠ [access.owner_refresh_failed] appId=...i_test error=source.getAppInfo is not a function
+⚠ [lark-info.chats-fetch-failed] err=channel.listChats is not a function
+
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2mopens no progress stream for a final-only round
+[22m[39m  ▶ run start scope=oc_dm run=b9ca6c queue=0ms
+  ✓ run normal scope=oc_dm run=b9ca6c duration=1ms
+  ✓ oc_dm done
+  ↗ sent markdown scope=oc_dm reply=l_only msg=sent_1
+
+[90mstdout[2m | tests/integration/cli/profile-retention.test.ts[2m > [22m[2mprofile retention and export[2m > [22m[2mignores stale registry entries that are not protected by a runtime lock
+[22m[39m已归档 profile: codex-dev -> C:\Users\RUNNER~1\AppData\Local\Temp\bridge-profile-retention-Ac6yY6\.trash\codex-dev-20260905T085851Z
+
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2mdoes not repeat streamed text as the final reply when Codex held nothing back
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Codex (codex)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ group/oc_dm scope=oc_dm sender=...u_user msg=_final: run
+
+stderr | tests/integration/bot/markdown-stream-startup-failure.test.ts > markdown stream startup failures > does not repeat streamed text as the final reply when Codex held nothing back
+⚠ [access.owner_refresh_failed] appId=...i_test error=source.getAppInfo is not a function
+⚠ [lark-info.chats-fetch-failed] err=channel.listChats is not a function
+
+ [32m✓[39m tests/integration/commands/claude-commands.test.ts [2m([22m[2m20 tests[22m[2m)[22m[33m 1049[2mms[22m[39m
+   [33m[2m✓[22m[39m Claude slash command visible behavior[2m > [22msaves the profile default workspace when the chat has no explicit cwd [33m664[2mms[22m[39m
+[90mstdout[2m | tests/integration/cli/profile-retention.test.ts[2m > [22m[2mprofile retention and export[2m > [22m[2marchives the active profile and switches to another configured profile
+[22m[39m已归档 profile: codex-dev -> C:\Users\RUNNER~1\AppData\Local\Temp\bridge-profile-retention-ARTmPM\.trash\codex-dev-20260525T123456Z
+
+[90mstdout[2m | tests/integration/cli/profile-retention.test.ts[2m > [22m[2mprofile retention and export[2m > [22m[2marchives the last active profile and clears root config so the name can be recreated
+[22m[39m已归档 profile: codex -> C:\Users\RUNNER~1\AppData\Local\Temp\bridge-profile-retention-VIdywx\.trash\codex-20260905T085851Z
+
+[90mstdout[2m | tests/integration/cli/profile-retention.test.ts[2m > [22m[2mprofile retention and export[2m > [22m[2marchives the last active profile and clears root config so the name can be recreated
+[22m[39m✓ 应用凭证校验通过: Recreated Bot
+
+[90mstdout[2m | tests/integration/cli/profile-retention.test.ts[2m > [22m[2mprofile retention and export[2m > [22m[2marchives the last active profile and clears root config so the name can be recreated
+[22m[39m配置已保存到 C:\Users\RUNNER~1\AppData\Local\Temp\bridge-profile-retention-VIdywx\config.json
+
+已创建 profile: codex
+
+[90mstdout[2m | tests/integration/cli/profile-retention.test.ts[2m > [22m[2mprofile retention and export[2m > [22m[2madds a suffix when archive names collide
+[22m[39m已归档 profile: codex-dev -> C:\Users\RUNNER~1\AppData\Local\Temp\bridge-profile-retention-vb0kkI\.trash\codex-dev-20260525T123456Z-1
+
+[90mstdout[2m | tests/integration/cli/profile-retention.test.ts[2m > [22m[2mprofile retention and export[2m > [22m[2mpurges only with --purge --yes
+[22m[39m已永久删除 profile: codex-dev
+
+[90mstdout[2m | tests/integration/cli/profile-retention.test.ts[2m > [22m[2mprofile retention and export[2m > [22m[2mwrites exports to a new output file and requires --force when it already exists
+[22m[39m已导出 profile: claude -> C:\Users\RUNNER~1\AppData\Local\Temp\bridge-profile-retention-7MpSGq\profile-export.json
+
+[90mstdout[2m | tests/integration/cli/profile-retention.test.ts[2m > [22m[2mprofile retention and export[2m > [22m[2mwrites exports to a new output file and requires --force when it already exists
+[22m[39m已导出 profile: claude -> C:\Users\RUNNER~1\AppData\Local\Temp\bridge-profile-retention-7MpSGq\profile-export.json
+
+ [32m✓[39m tests/integration/cli/profile-retention.test.ts [2m([22m[2m13 tests[22m[2m)[22m[33m 1081[2mms[22m[39m
+   [33m[2m✓[22m[39m profile retention and export[2m > [22mignores stale registry entries that are not protected by a runtime lock [33m548[2mms[22m[39m
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2mdoes not repeat streamed text as the final reply when Codex held nothing back
+[22m[39m  ▶ run start scope=oc_dm run=caf496 queue=0ms
+  ✓ run normal scope=oc_dm run=caf496 duration=2ms
+  ✓ oc_dm done
+
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2mwaits for a slow-opening progress stream instead of replying alongside it
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Codex (codex)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ group/oc_dm scope=oc_dm sender=...u_user msg=stream: run
+
+stderr | tests/integration/bot/markdown-stream-startup-failure.test.ts > markdown stream startup failures > waits for a slow-opening progress stream instead of replying alongside it
+⚠ [access.owner_refresh_failed] appId=...i_test error=source.getAppInfo is not a function
+⚠ [lark-info.chats-fetch-failed] err=channel.listChats is not a function
+
+ [32m✓[39m tests/unit/wecom/risk-router.test.ts [2m([22m[2m13 tests[22m[2m)[22m[90m 27[2mms[22m[39m
+[90mstdout[2m | tests/integration/comments/claude-comments.test.ts[2m > [22m[2mClaude cloud-doc comment regression[2m > [22m[2mresolves wiki nodes, reads comment.get, strips markdown, and truncates replies to 2000 chars
+[22m[39m  ▶ run start scope=42-e84 run=-run-1 queue=0ms
+  ✓ run normal scope=42-e84 run=-run-1 duration=3ms
+
+[90mstdout[2m | tests/integration/comments/claude-comments.test.ts[2m > [22m[2mClaude cloud-doc comment regression[2m > [22m[2mfalls back from comment.get to paginated comment.list
+[22m[39m  ▶ run start scope=b1-a1f run=-run-1 queue=0ms
+  ✓ run normal scope=b1-a1f run=-run-1 duration=1ms
+
+[90mstdout[2m | tests/integration/comments/claude-comments.test.ts[2m > [22m[2mClaude cloud-doc comment regression[2m > [22m[2mkeeps expected comment.get fallback off the terminal warning stream
+[22m[39m  ▶ run start scope=e7-11e run=-run-1 queue=0ms
+  ✓ run normal scope=e7-11e run=-run-1 duration=1ms
+
+[90mstdout[2m | tests/integration/comments/claude-comments.test.ts[2m > [22m[2mClaude cloud-doc comment regression[2m > [22m[2mposts whole-document comments as top-level replies without an in-thread probe
+[22m[39m  ▶ run start scope=43-854 run=-run-1 queue=0ms
+  ✓ run normal scope=43-854 run=-run-1 duration=1ms
+
+[90mstdout[2m | tests/integration/comments/claude-comments.test.ts[2m > [22m[2mClaude cloud-doc comment regression[2m > [22m[2mkeeps pre-tool progress text out of cloud-doc comment replies
+[22m[39m  ▶ run start scope=3b-b52 run=-run-1 queue=0ms
+  ✓ run normal scope=3b-b52 run=-run-1 duration=1ms
+
+ [32m✓[39m tests/integration/comments/claude-comments.test.ts [2m([22m[2m6 tests[22m[2m)[22m[90m 263[2mms[22m[39m
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2mwaits for a slow-opening progress stream instead of replying alongside it
+[22m[39m  ▶ run start scope=oc_dm run=1a9091 queue=1ms
+  ✓ run normal scope=oc_dm run=1a9091 duration=1ms
+  ✓ oc_dm done
+
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2mrenders nothing in a progress stream it already gave up on
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Codex (codex)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ group/oc_dm scope=oc_dm sender=...u_user msg=stream: run
+
+stderr | tests/integration/bot/markdown-stream-startup-failure.test.ts > markdown stream startup failures > renders nothing in a progress stream it already gave up on
+⚠ [access.owner_refresh_failed] appId=...i_test error=source.getAppInfo is not a function
+⚠ [lark-info.chats-fetch-failed] err=channel.listChats is not a function
+
+ [32m✓[39m tests/unit/wecom/presentation.test.ts [2m([22m[2m17 tests[22m[2m)[22m[90m 18[2mms[22m[39m
+stderr | tests/unit/meeting/session.test.ts > MeetingSession ingest pipeline > tallies each activity type, flagging ones it could not parse
+⚠ [meeting.activity-unparsed] meetingId=70001 type=transcript_received keys=event_id,activity_event_type
+⚠ [meeting.activity-unparsed] meetingId=70001 type=some_future_type keys=event_id,activity_event_type,some_future_items
+
+ [32m✓[39m tests/unit/meeting/session.test.ts [2m([22m[2m22 tests[22m[2m)[22m[90m 25[2mms[22m[39m
+stderr | tests/integration/commands/profile-config-command.test.ts > profile-aware account and config commands > does not save a lark-cli identity change when applying the runtime policy fails
+⚠ [config-ops.lark-cli-identity-policy-apply-failed] profile=claude identity=user-default
+✗ [command.fail] step=config.lark-cli-policy err=lark-cli identity policy apply failed
+⚠ [command.config-card-update-fallback] err=Error: no managed card registered for message om--config-submit
+
+stderr | tests/integration/commands/profile-config-command.test.ts > profile-aware account and config commands > rolls back lark-cli identity when saving config fails after applying the runtime policy
+✗ [command.fail] step=config.save err=Expected property name or '}' in JSON at position 1
+⚠ [command.config-card-update-fallback] err=Error: no managed card registered for message om--config-submit
+
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2mrenders nothing in a progress stream it already gave up on
+[22m[39m  ▶ run start scope=oc_dm run=6a8222 queue=1ms
+  ✓ run normal scope=oc_dm run=6a8222 duration=1ms
+  ✓ oc_dm done
+
+ [32m✓[39m tests/integration/commands/profile-config-command.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 510[2mms[22m[39m
+[90mstdout[2m | tests/integration/bot/bot-at-bot-context.test.ts[2m > [22m[2mbot identity injection into the agent adapter[2m > [22m[2mpasses channel.botIdentity to the adapter after connect
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Fake Agent (fake-agent)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+
+stderr | tests/integration/bot/bot-at-bot-context.test.ts > bot identity injection into the agent adapter > passes channel.botIdentity to the adapter after connect
+⚠ [access.owner_refresh_failed] appId=...i_test error=source.getAppInfo is not a function
+⚠ [lark-info.chats-fetch-failed] err=channel.listChats is not a function
+
+[90mstdout[2m | tests/integration/bot/bot-at-bot-context.test.ts[2m > [22m[2msender identity in bridge_context[2m > [22m[2mmarks a bot sender via raw sender_type and injects botOpenId and mentions
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Fake Agent (fake-agent)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ group/c_chat scope=c_chat sender=...hermes msg=om_bot: @Bridge 部署完成，请验证
+
+stderr | tests/integration/bot/bot-at-bot-context.test.ts > sender identity in bridge_context > marks a bot sender via raw sender_type and injects botOpenId and mentions
+⚠ [access.owner_refresh_failed] appId=...i_test error=source.getAppInfo is not a function
+⚠ [lark-info.chats-fetch-failed] err=channel.listChats is not a function
+
+[90mstdout[2m | tests/integration/comments/comment-lifecycle.test.ts[2m > [22m[2mcomment lifecycle[2m > [22m[2mdoes not write a stale comment reply after the comment run is interrupted
+[22m[39m  ▶ run start scope=a9-5b2 run=-run-1 queue=0ms
+
+[90mstdout[2m | tests/integration/comments/comment-lifecycle.test.ts[2m > [22m[2mcomment lifecycle[2m > [22m[2mallows a second mention to start another run for the same comment thread
+[22m[39m  ▶ run start scope=ea-daa run=-run-1 queue=1ms
+
+[90mstdout[2m | tests/integration/comments/comment-lifecycle.test.ts[2m > [22m[2mcomment lifecycle[2m > [22m[2mallows a second mention to start another run for the same comment thread
+[22m[39m  ▶ run start scope=5e-e67 run=-run-1 queue=0ms
+
+[90mstdout[2m | tests/integration/comments/comment-lifecycle.test.ts[2m > [22m[2mcomment lifecycle[2m > [22m[2mallows a second mention to start another run for the same comment thread
+[22m[39m  ✓ run normal scope=ea-daa run=-run-1 duration=119ms
+  ✓ run normal scope=5e-e67 run=-run-1 duration=61ms
+
+[90mstdout[2m | tests/integration/comments/comment-lifecycle.test.ts[2m > [22m[2mcomment lifecycle[2m > [22m[2mdoes not expire comment runs by default
+[22m[39m  ▶ run start scope=08-c75 run=-run-1 queue=0ms
+
+[90mstdout[2m | tests/integration/comments/comment-lifecycle.test.ts[2m > [22m[2mcomment lifecycle[2m > [22m[2mdoes not expire comment runs by default
+[22m[39m  ✓ run normal scope=08-c75 run=-run-1 duration=59m60s
+
+[90mstdout[2m | tests/integration/comments/comment-lifecycle.test.ts[2m > [22m[2mcomment lifecycle[2m > [22m[2mstops and replies when a per-comment timeout expires without another agent event
+[22m[39m  ▶ run start scope=d9-0f9 run=-run-1 queue=0ms
+
+[90mstdout[2m | tests/integration/comments/comment-lifecycle.test.ts[2m > [22m[2mcomment lifecycle[2m > [22m[2muses the per-comment timeout override for comment runs with subsequent events
+[22m[39m  ▶ run start scope=6e-d25 run=-run-1 queue=0ms
+
+[90mstdout[2m | tests/integration/bot/bot-at-bot-context.test.ts[2m > [22m[2msender identity in bridge_context[2m > [22m[2mmarks a bot sender via raw sender_type and injects botOpenId and mentions
+[22m[39m  ▶ run start scope=c_chat run=37f6b0 queue=0ms
+  ✓ run normal scope=c_chat run=37f6b0 duration=2ms
+  ✓ c_chat done
+
+stderr | tests/integration/bot/bot-at-bot-context.test.ts > sender identity in bridge_context > marks a bot sender via raw sender_type and injects botOpenId and mentions
+⚠ [reaction.add-failed] t=ivjdd53o c=c_chat messageId=...om_bot err=channel.addReaction is not a function
+
+[90mstdout[2m | tests/integration/comments/comment-lifecycle.test.ts[2m > [22m[2mcomment lifecycle[2m > [22m[2mdoes not expire comment runs when the per-comment timeout override is off
+[22m[39m  ▶ run start scope=92-cd8 run=-run-1 queue=0ms
+
+[90mstdout[2m | tests/integration/bot/bot-at-bot-context.test.ts[2m > [22m[2msender identity in bridge_context[2m > [22m[2mmarks a human sender via raw sender_type
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Fake Agent (fake-agent)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ group/c_chat scope=c_chat sender=...u_user msg=m_user: @Bridge 帮我看个问题
+
+stderr | tests/integration/bot/bot-at-bot-context.test.ts > sender identity in bridge_context > marks a human sender via raw sender_type
+⚠ [access.owner_refresh_failed] appId=...i_test error=source.getAppInfo is not a function
+⚠ [lark-info.chats-fetch-failed] err=channel.listChats is not a function
+
+[90mstdout[2m | tests/integration/comments/comment-lifecycle.test.ts[2m > [22m[2mcomment lifecycle[2m > [22m[2mdoes not expire comment runs when the per-comment timeout override is off
+[22m[39m  ✓ run normal scope=92-cd8 run=-run-1 duration=5m
+
+ [32m✓[39m tests/integration/comments/comment-lifecycle.test.ts [2m([22m[2m8 tests[22m[2m)[22m[33m 477[2mms[22m[39m
+[90mstdout[2m | tests/unit/observability/logger.test.ts[2m > [22m[2mprofile logger observability[2m > [22m[2mwrites profile-local bridge JSONL logs with a 30 day default retention
+[22m[39m  ▶ run start scope=- run=run-1 queue=0ms
+
+stderr | tests/unit/observability/logger.test.ts > profile logger observability > redacts raw payloads, tokens, paths, proxy, env, and resource ids before writing local logs
+⚠ [agent.stderr] prompt=[REDACTED] stdout=[REDACTED] stderr=[REDACTED] env=[REDACTED] proxy=[REDACTED] _chatId=...567890 userId=...567890 _msgId=...567890 sessionId=...567890 threadId=...567890 docToken=[REDACTED] fileKey=[REDACTED_RESOURCE] sourceFileKey=[REDACTED_RESOURCE] sourceMessageId=...secret commentId=...secret replyId=...secret reactionId=...secret scope=...secret appId=...et_app token=[REDACTED] attachmentPath=[REDACTED_PATH] cwd=[REDACTED_PATH] path=[REDACTED_PATH] apiData={"code":1069307,"msg":"permission denied","app_secret":"[REDACTED]","token":"[RE…
+
+[90mstdout[2m | tests/unit/observability/logger.test.ts[2m > [22m[2mprofile logger observability[2m > [22m[2mbounds large run trace fields before writing
+[22m[39m  ✓ run done scope=- run=run-1
+
+stderr | tests/unit/observability/logger.test.ts > profile logger observability > sends sanitized events and errors to the optional telemetry adapter
+✗ [agent.fail] prompt=[REDACTED] cwd=[REDACTED_PATH] _chatId=...567890 fileKey=[REDACTED_RESOURCE] sourceFileKey=[REDACTED_RESOURCE] err=failed token=[REDACTED] [REDACTED_PATH]
+
+ [32m✓[39m tests/unit/observability/logger.test.ts [2m([22m[2m7 tests[22m[2m)[22m[90m 74[2mms[22m[39m
+[90mstdout[2m | tests/integration/bot/bot-at-bot-context.test.ts[2m > [22m[2msender identity in bridge_context[2m > [22m[2mmarks a human sender via raw sender_type
+[22m[39m  ▶ run start scope=c_chat run=a18d7c queue=0ms
+  ✓ run normal scope=c_chat run=a18d7c duration=1ms
+  ✓ c_chat done
+
+stderr | tests/integration/bot/bot-at-bot-context.test.ts > sender identity in bridge_context > marks a human sender via raw sender_type
+⚠ [reaction.add-failed] t=pf0w1jnf c=c_chat messageId=...m_user err=channel.addReaction is not a function
+
+[90mstdout[2m | tests/integration/bot/bot-at-bot-context.test.ts[2m > [22m[2msender identity in bridge_context[2m > [22m[2momits senderType when the raw event is unavailable
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Fake Agent (fake-agent)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ group/c_chat scope=c_chat sender=...u_user msg=no_raw: @Bridge 在吗
+
+stderr | tests/integration/bot/bot-at-bot-context.test.ts > sender identity in bridge_context > omits senderType when the raw event is unavailable
+⚠ [access.owner_refresh_failed] appId=...i_test error=source.getAppInfo is not a function
+⚠ [lark-info.chats-fetch-failed] err=channel.listChats is not a function
+
+[90mstdout[2m | tests/integration/executor/run-executor.test.ts[2m > [22m[2mRunExecutor[2m > [22m[2mgenerates one runId and wires it through adapter, record, and active runs
+[22m[39m  ▶ run start scope=cope-1 run=run-1 queue=0ms
+  ✓ run normal scope=cope-1 run=run-1 duration=0ms
+
+[90mstdout[2m | tests/integration/executor/run-executor.test.ts[2m > [22m[2mRunExecutor[2m > [22m[2mfans out one agent event stream to multiple consumers without spawning twice
+[22m[39m  ▶ run start scope=cope-1 run=run-1 queue=0ms
+  ✓ run normal scope=cope-1 run=run-1 duration=0ms
+
+[90mstdout[2m | tests/integration/executor/run-executor.test.ts[2m > [22m[2mRunExecutor[2m > [22m[2mfast-fails nowait when the pool is full and queues normal submissions FIFO
+[22m[39m  ▶ run start scope=cope-1 run=run-1 queue=0ms
+  ✓ run normal scope=cope-1 run=run-1 duration=0ms
+  ▶ run start scope=cope-2 run=run-2 queue=0ms
+  ✓ run normal scope=cope-2 run=run-2 duration=0ms
+
+[90mstdout[2m | tests/integration/executor/run-executor.test.ts[2m > [22m[2mRunExecutor[2m > [22m[2mrejects duplicate submissions for a scope that already has a run
+[22m[39m  ▶ run start scope=cope-1 run=run-1 queue=0ms
+  ✓ run normal scope=cope-1 run=run-1 duration=0ms
+
+[90mstdout[2m | tests/integration/executor/run-executor.test.ts[2m > [22m[2mRunExecutor[2m > [22m[2maccepts new submissions after reconnect drain is released
+[22m[39m  ▶ run start scope=cope-1 run=run-1 queue=0ms
+  ✓ run normal scope=cope-1 run=run-1 duration=0ms
+
+[90mstdout[2m | tests/integration/executor/run-executor.test.ts[2m > [22m[2mRunExecutor[2m > [22m[2mrejects submissions that were queued before reconnect drain started
+[22m[39m  ▶ run start scope=cope-1 run=run-1 queue=0ms
+  ✓ run normal scope=cope-1 run=run-1 duration=0ms
+
+[90mstdout[2m | tests/integration/executor/run-executor.test.ts[2m > [22m[2mRunExecutor[2m > [22m[2mstops and waits for the underlying run when execution is interrupted
+[22m[39m  ▶ run start scope=cope-1 run=run-1 queue=0ms
+
+[90mstdout[2m | tests/integration/executor/run-executor.test.ts[2m > [22m[2mRunExecutor[2m > [22m[2mstops the underlying process when it does not exit after a terminal event
+[22m[39m  ▶ run start scope=cope-1 run=run-1 queue=0ms
+  ✓ run normal scope=cope-1 run=run-1 duration=0ms
+
+stderr | tests/integration/executor/run-executor.test.ts > RunExecutor > stops the underlying process when it does not exit after a terminal event
+⚠ [run.post-done-exit-timeout] runId=run-1 profile=unknown agent=fake-agent scope=...cope-1 source=unknown stage=submit graceMs=10
+
+ [32m✓[39m tests/integration/executor/run-executor.test.ts [2m([22m[2m12 tests[22m[2m)[22m[90m 71[2mms[22m[39m
+[90mstdout[2m | tests/integration/bot/bot-at-bot-context.test.ts[2m > [22m[2msender identity in bridge_context[2m > [22m[2momits senderType when the raw event is unavailable
+[22m[39m  ▶ run start scope=c_chat run=41022d queue=0ms
+  ✓ run normal scope=c_chat run=41022d duration=1ms
+  ✓ c_chat done
+
+stderr | tests/integration/bot/bot-at-bot-context.test.ts > sender identity in bridge_context > omits senderType when the raw event is unavailable
+⚠ [reaction.add-failed] t=x1dw9hz2 c=c_chat messageId=...no_raw err=channel.addReaction is not a function
+
+[90mstdout[2m | tests/integration/bot/bot-at-bot-context.test.ts[2m > [22m[2msender identity in bridge_context[2m > [22m[2mturns a mention-only message into an explicit wake-up ping
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Fake Agent (fake-agent)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ group/c_chat scope=c_chat sender=...u_user msg=pty_at: 
+
+stderr | tests/integration/bot/bot-at-bot-context.test.ts > sender identity in bridge_context > turns a mention-only message into an explicit wake-up ping
+⚠ [access.owner_refresh_failed] appId=...i_test error=source.getAppInfo is not a function
+⚠ [lark-info.chats-fetch-failed] err=channel.listChats is not a function
+
+stderr | tests/process/claude-adapter.test.ts > ClaudeAdapter process contract > includes stderr when the process exits non-zero
+⚠ [agent.stderr] line=boom
+
+stderr | tests/process/claude-adapter.test.ts > ClaudeAdapter process contract > surfaces spawn errors as stream error events
+⚠ [agent.stderr] line=missing command
+
+stderr | tests/integration/bot/markdown-stream-startup-failure.test.ts > markdown stream startup failures > renders nothing in a progress stream it already gave up on
+⚠ [stream.producer-not-started-before-agent-terminal] t=rbc3sou4 c=oc_dm mode=markdown
+
+ [32m✓[39m tests/process/claude-adapter.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 618[2mms[22m[39m
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2mstill sends the final reply when the progress stream fails at completion
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Codex (codex)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ group/oc_dm scope=oc_dm sender=...u_user msg=m_fail: run
+
+stderr | tests/integration/bot/markdown-stream-startup-failure.test.ts > markdown stream startup failures > still sends the final reply when the progress stream fails at completion
+⚠ [access.owner_refresh_failed] appId=...i_test error=source.getAppInfo is not a function
+⚠ [lark-info.chats-fetch-failed] err=channel.listChats is not a function
+
+[90mstdout[2m | tests/integration/bot/bot-at-bot-context.test.ts[2m > [22m[2msender identity in bridge_context[2m > [22m[2mturns a mention-only message into an explicit wake-up ping
+[22m[39m  ▶ run start scope=c_chat run=7ed48e queue=0ms
+  ✓ run normal scope=c_chat run=7ed48e duration=1ms
+  ✓ c_chat done
+
+stderr | tests/integration/bot/bot-at-bot-context.test.ts > sender identity in bridge_context > turns a mention-only message into an explicit wake-up ping
+⚠ [reaction.add-failed] t=4u5mki1v c=c_chat messageId=...pty_at err=channel.addReaction is not a function
+
+[90mstdout[2m | tests/integration/bot/bot-at-bot-context.test.ts[2m > [22m[2msender identity in bridge_context[2m > [22m[2mannotates each message with its sender when a batch merges multiple senders
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Fake Agent (fake-agent)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ group/c_chat scope=c_chat sender=..._human msg=h_user: @Bridge 这个报错怎么回事
+▸ group/c_chat scope=c_chat sender=...hermes msg=ch_bot: 我刚发布了 v1.2.3
+
+stderr | tests/integration/bot/bot-at-bot-context.test.ts > sender identity in bridge_context > annotates each message with its sender when a batch merges multiple senders
+⚠ [access.owner_refresh_failed] appId=...i_test error=source.getAppInfo is not a function
+⚠ [lark-info.chats-fetch-failed] err=channel.listChats is not a function
+
+stderr | tests/unit/agent/codex-jsonl.test.ts > Codex JSONL translator > keeps raw error events non-terminal so retrying runs can continue
+⚠ [jsonl.error_event] message=Reconnecting... 2/5 (timeout waiting for child process to exit)
+
+stderr | tests/unit/agent/codex-jsonl.test.ts > Codex JSONL translator > still treats turn.failed as terminal after a raw error event
+⚠ [jsonl.error_event] message=Reconnecting... 2/5
+
+stderr | tests/unit/agent/codex-jsonl.test.ts > Codex JSONL translator > preserves the latest raw error detail when the stream ends without a terminal event
+⚠ [jsonl.error_event] message=transport failed
+
+stderr | tests/unit/agent/codex-jsonl.test.ts > Codex JSONL translator > tracks protocol drift while ignoring unknown and anomalous events
+⚠ [jsonl.unknown_event] eventType=unknown.future
+
+ [32m✓[39m tests/unit/agent/codex-jsonl.test.ts [2m([22m[2m13 tests[22m[2m)[22m[90m 16[2mms[22m[39m
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2mstill sends the final reply when the progress stream fails at completion
+[22m[39m  ▶ run start scope=oc_dm run=bad04d queue=0ms
+  ✓ run normal scope=oc_dm run=bad04d duration=1ms
+  ✓ oc_dm done
+  ↗ sent markdown scope=oc_dm reply=m_fail msg=sent_1
+
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2mdoes not record delivery when the final send has no message receipt
+[22m[39m正在监听消息。按 Ctrl+C 退出。
+
+
+stderr | tests/integration/bot/markdown-stream-startup-failure.test.ts > markdown stream startup failures > does not record delivery when the final send has no message receipt
+⚠ [access.owner_refresh_failed] appId=...i_test error=source.getAppInfo is not a function
+⚠ [lark-info.chats-fetch-failed] err=channel.listChats is not a function
+
+ [32m✓[39m tests/unit/runtime/registry-locks.test.ts [2m([22m[2m8 tests[22m[2m)[22m[90m 174[2mms[22m[39m
+[90mstdout[2m | tests/integration/bot/bot-at-bot-context.test.ts[2m > [22m[2msender identity in bridge_context[2m > [22m[2mannotates each message with its sender when a batch merges multiple senders
+[22m[39m  ▶ run start scope=c_chat run=edd6a2 queue=0ms
+  ✓ run normal scope=c_chat run=edd6a2 duration=1ms
+  ✓ c_chat done
+
+stderr | tests/integration/bot/bot-at-bot-context.test.ts > sender identity in bridge_context > annotates each message with its sender when a batch merges multiple senders
+⚠ [reaction.add-failed] t=jookvhdw c=c_chat messageId=...ch_bot err=channel.addReaction is not a function
+
+[90mstdout[2m | tests/integration/bot/bot-at-bot-context.test.ts[2m > [22m[2msender identity in bridge_context[2m > [22m[2mkeeps single-message batches free of sender annotations
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Fake Agent (fake-agent)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ group/c_chat scope=c_chat sender=...u_user msg=single: @Bridge 看下这个
+
+stderr | tests/integration/bot/bot-at-bot-context.test.ts > sender identity in bridge_context > keeps single-message batches free of sender annotations
+⚠ [access.owner_refresh_failed] appId=...i_test error=source.getAppInfo is not a function
+⚠ [lark-info.chats-fetch-failed] err=channel.listChats is not a function
+
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2msends one dedicated final reply card after progress completes in card mode
+[22m[39m✓ 已连接  bot: Bridge (...i_test)  agent: Codex (codex)  进程: proc_test
+正在监听消息。按 Ctrl+C 退出。
+
+▸ group/oc_dm scope=oc_dm sender=...u_user msg=_final: run
+
+stderr | tests/integration/bot/markdown-stream-startup-failure.test.ts > markdown stream startup failures > sends one dedicated final reply card after progress completes in card mode
+⚠ [access.owner_refresh_failed] appId=...i_test error=source.getAppInfo is not a function
+⚠ [lark-info.chats-fetch-failed] err=channel.listChats is not a function
+
+[90mstdout[2m | tests/integration/bot/bot-at-bot-context.test.ts[2m > [22m[2msender identity in bridge_context[2m > [22m[2mkeeps single-message batches free of sender annotations
+[22m[39m  ▶ run start scope=c_chat run=d957d6 queue=0ms
+  ✓ run normal scope=c_chat run=d957d6 duration=1ms
+  ✓ c_chat done
+
+stderr | tests/integration/bot/bot-at-bot-context.test.ts > sender identity in bridge_context > keeps single-message batches free of sender annotations
+⚠ [reaction.add-failed] t=r6n7go7r c=c_chat messageId=...single err=channel.addReaction is not a function
+
+ [32m✓[39m tests/integration/bot/bot-at-bot-context.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 3828[2mms[22m[39m
+   [33m[2m✓[22m[39m sender identity in bridge_context[2m > [22mmarks a bot sender via raw sender_type and injects botOpenId and mentions [33m644[2mms[22m[39m
+   [33m[2m✓[22m[39m sender identity in bridge_context[2m > [22mmarks a human sender via raw sender_type [33m622[2mms[22m[39m
+   [33m[2m✓[22m[39m sender identity in bridge_context[2m > [22momits senderType when the raw event is unavailable [33m640[2mms[22m[39m
+   [33m[2m✓[22m[39m sender identity in bridge_context[2m > [22mturns a mention-only message into an explicit wake-up ping [33m622[2mms[22m[39m
+   [33m[2m✓[22m[39m sender identity in bridge_context[2m > [22mannotates each message with its sender when a batch merges multiple senders [33m631[2mms[22m[39m
+   [33m[2m✓[22m[39m sender identity in bridge_context[2m > [22mkeeps single-message batches free of sender annotations [33m648[2mms[22m[39m
+[90mstdout[2m | tests/integration/session/resume.test.ts[2m > [22m[2magent-aware run-flow resume[2m > [22m[2mresumes Claude only when scope, agent, cwd, and policy fingerprint match
+[22m[39m  ▶ run start scope=chat-1 run=run-1 queue=0ms
+  ✓ run normal scope=chat-1 run=run-1 duration=0ms
+
+[90mstdout[2m | tests/integration/session/resume.test.ts[2m > [22m[2magent-aware run-flow resume[2m > [22m[2mresumes Claude only when scope, agent, cwd, and policy fingerprint match
+[22m[39m  ▶ run start scope=chat-1 run=run-2 queue=0ms
+
+[90mstdout[2m | tests/integration/session/resume.test.ts[2m > [22m[2magent-aware run-flow resume[2m > [22m[2mfalls back to legacy Claude sessions when the agent-aware catalog has no match
+[22m[39m  ▶ run start scope=chat-1 run=run-1 queue=0ms
+
+[90mstdout[2m | tests/integration/session/resume.test.ts[2m > [22m[2magent-aware run-flow resume[2m > [22m[2mresumes Codex thread from catalog and ignores legacy Claude SessionStore entries
+[22m[39m  ▶ run start scope=chat-1 run=run-1 queue=0ms
+  ✓ run normal scope=chat-1 run=run-1 duration=0ms
+
+[90mstdout[2m | tests/integration/session/resume.test.ts[2m > [22m[2magent-aware run-flow resume[2m > [22m[2mresumes Codex thread from catalog and ignores legacy Claude SessionStore entries
+[22m[39m  ▶ run start scope=chat-1 run=run-2 queue=0ms
+
+[90mstdout[2m | tests/integration/bot/markdown-stream-startup-failure.test.ts[2m > [22m[2mmarkdown stream startup failures[2m > [22m[2msends one dedicated final reply card after progress completes in card mode
+[22m[39m  ▶ run start scope=oc_dm run=177998 queue=0ms
+  ✓ run normal scope=oc_dm run=177998 duration=1ms
+  ✓ oc_dm done
+  ↗ sent card scope=oc_dm reply=_final msg=sent_1
+
+[90mstdout[2m | tests/integration/session/resume.test.ts[2m > [22m[2magent-aware run-flow resume[2m > [22m[2mdoes not resume when the policy fingerprint changes
+[22m[39m  ▶ run start scope=chat-1 run=run-1 queue=0ms
+  ✓ run normal scope=chat-1 run=run-1 duration=0ms
+
+ [32m✓[39m tests/integration/bot/markdown-stream-startup-failure.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 16132[2mms[22m[39m
+   [33m[2m✓[22m[39m markdown stream startup failures[2m > [22mdoes not leave the IM queue blocked when the agent exits before stream producer starts [33m1305[2mms[22m[39m
+   [33m[2m✓[22m[39m markdown stream startup failures[2m > [22mdoes not wait for the working reaction before draining a failed agent run [33m1284[2mms[22m[39m
+   [33m[2m✓[22m[39m markdown stream startup failures[2m > [22mlogs stream failures that arrive after terminal grace expires [33m4324[2mms[22m[39m
+   [33m[2m✓[22m[39m markdown stream startup failures[2m > [22msends one dedicated non-streaming final reply after progress completes [33m651[2mms[22m[39m
+   [33m[2m✓[22m[39m markdown stream startup failures[2m > [22mopens no progress stream for a final-only round [33m1296[2mms[22m[39m
+   [33m[2m✓[22m[39m markdown stream startup failures[2m > [22mdoes not repeat streamed text as the final reply when Codex held nothing back [33m706[2mms[22m[39m
+   [33m[2m✓[22m[39m markdown stream startup failures[2m > [22mwaits for a slow-opening progress stream instead of replying alongside it [33m911[2mms[22m[39m
+   [33m[2m✓[22m[39m markdown stream startup failures[2m > [22mrenders nothing in a progress stream it already gave up on [33m3736[2mms[22m[39m
+   [33m[2m✓[22m[39m markdown stream startup failures[2m > [22mstill sends the final reply when the progress stream fails at completion [33m623[2mms[22m[39m
+   [33m[2m✓[22m[39m markdown stream startup failures[2m > [22mdoes not record delivery when the final send has no message receipt [33m645[2mms[22m[39m
+   [33m[2m✓[22m[39m markdown stream startup failures[2m > [22msends one dedicated final reply card after progress completes in card mode [33m650[2mms[22m[39m
+[90mstdout[2m | tests/integration/session/resume.test.ts[2m > [22m[2magent-aware run-flow resume[2m > [22m[2mdoes not resume when the policy fingerprint changes
+[22m[39m  ▶ run start scope=chat-1 run=run-2 queue=0ms
+
+[90mstdout[2m | tests/integration/session/resume.test.ts[2m > [22m[2magent-aware run-flow resume[2m > [22m[2mrecords system session identifiers into the agent-aware catalog
+[22m[39m  ▶ run start scope=chat-1 run=run-1 queue=0ms
+  ✓ run normal scope=chat-1 run=run-1 duration=0ms
+
+[90mstdout[2m | tests/integration/session/resume.test.ts[2m > [22m[2magent-aware run-flow resume[2m > [22m[2mrecords system session identifiers into the agent-aware catalog
+[22m[39m  ▶ run start scope=chat-1 run=run-1 queue=0ms
+  ✓ run normal scope=chat-1 run=run-1 duration=0ms
+
+ [32m✓[39m tests/integration/session/resume.test.ts [2m([22m[2m5 tests[22m[2m)[22m[90m 227[2mms[22m[39m
+ [31m❯[39m tests/unit/wecom/media.test.ts [2m([22m[2m10 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 1011[2mms[22m[39m
+[31m   [31m×[31m WeCom media ingress[2m > [22mdownloads and stores a decrypted image with a content hash and 0600 mode[90m 30[2mms[22m[31m[39m
+[31m     → expected 438 to be 384 // Object.is equality[39m
+   [33m[2m✓[22m[39m WeCom media ingress[2m > [22mretries transient network download failures [33m764[2mms[22m[39m
+ [32m✓[39m tests/unit/agent/codex-history.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 603[2mms[22m[39m
+[90mstdout[2m | tests/integration/commands/doctor-status.test.ts[2m > [22m[2m/status and /doctor diagnostics[2m > [22m[2muses RunExecutor for a sessionless read-only agent echo check
+[22m[39m  ▶ run start scope=doctor run=-run-1 queue=0ms
+  ✓ run normal scope=doctor run=-run-1 duration=0ms
+
+[90mstdout[2m | tests/integration/commands/doctor-status.test.ts[2m > [22m[2m/status and /doctor diagnostics[2m > [22m[2muses the profile default workspace when the chat has no bound cwd
+[22m[39m  ▶ run start scope=doctor run=-run-1 queue=0ms
+  ✓ run normal scope=doctor run=-run-1 duration=0ms
+
+ [32m✓[39m tests/integration/commands/doctor-status.test.ts [2m([22m[2m5 tests[22m[2m)[22m[90m 89[2mms[22m[39m
+[90mstdout[2m | tests/unit/bot/cot.test.ts[2m > [22m[2mCOT event mapping[2m > [22m[2mpublishes assistant progress text and brief tool summaries
+[22m[39m  ◇ cot created message=t_fake cot=t_fake
+  ◇ cot completed cot=t_fake reason=done
+
+[90mstdout[2m | tests/unit/bot/cot.test.ts[2m > [22m[2mCOT event mapping[2m > [22m[2mincludes tool args and output only in detailed mode
+[22m[39m  ◇ cot created message=t_fake cot=t_fake
+  ◇ cot completed cot=t_fake reason=done
+
+[90mstdout[2m | tests/unit/bot/cot.test.ts[2m > [22m[2mCOT event mapping[2m > [22m[2mcreates the CoT bubble once, addressed to the origin message in a topic
+[22m[39m  ◇ cot created message=t_fake cot=t_fake
+
+stderr | tests/unit/bot/cot.test.ts > COT event mapping > disables the publisher when the create is rejected and never retries
+⚠ [cot.create-failed] err=COT API failed: code=10002 msg=Bot/User can NOT be out of the chat.
+
+stderr | tests/unit/bot/cot.test.ts > COT event mapping > disables the publisher when the create returns unusable ids and never retries
+⚠ [cot.create-failed] err=CreateCOT missing ids: {"unexpected":"shape"}
+
+[90mstdout[2m | tests/unit/bot/cot.test.ts[2m > [22m[2mCOT event mapping[2m > [22m[2mmarks the publisher degraded when COT updates fail
+[22m[39m  ◇ cot created message=t_fake cot=t_fake
+
+stderr | tests/unit/bot/cot.test.ts > COT event mapping > marks the publisher degraded when COT updates fail
+⚠ [cot.update-failed] err=field validation failed
+
+ [32m✓[39m tests/unit/bot/cot.test.ts [2m([22m[2m9 tests[22m[2m)[22m[90m 26[2mms[22m[39m
+ [32m✓[39m tests/unit/config/profile-store.test.ts [2m([22m[2m6 tests[22m[2m)[22m[90m 74[2mms[22m[39m
+ [32m✓[39m tests/integration/ui/server.test.ts [2m([22m[2m12 tests[22m[2m)[22m[33m 738[2mms[22m[39m
+[90mstdout[2m | tests/integration/comments/comment-guard.test.ts[2m > [22m[2mcomment guard[2m > [22m[2mruns mentioned comments without comment gates, allowlist, bindings, or IM access
+[22m[39m  ▶ run start scope=ac-6e0 run=-run-1 queue=1ms
+  ✓ run normal scope=ac-6e0 run=-run-1 duration=2ms
+
+[90mstdout[2m | tests/integration/comments/comment-guard.test.ts[2m > [22m[2mcomment guard[2m > [22m[2mresolves wiki nodes and falls back to the event token when wiki lookup misses
+[22m[39m  ▶ run start scope=84-703 run=-run-1 queue=0ms
+  ✓ run normal scope=84-703 run=-run-1 duration=0ms
+
+[90mstdout[2m | tests/integration/comments/comment-guard.test.ts[2m > [22m[2mcomment guard[2m > [22m[2mresolves wiki nodes and falls back to the event token when wiki lookup misses
+[22m[39m  ▶ run start scope=95-d58 run=-run-1 queue=0ms
+  ✓ run normal scope=95-d58 run=-run-1 duration=1ms
+
+ [32m✓[39m tests/integration/comments/comment-guard.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 57[2mms[22m[39m
+stderr | tests/integration/card/callback-dispatch.test.ts > signed card callback dispatch > runs built-in command callbacks only when the bridge token verifies
+⚠ [callback.denied] scope=..._group action=stop reason=context-mismatch
+
+stderr | tests/unit/lark-cli/user-im.test.ts > user-im lark-cli helpers > surfaces lark-cli validation errors cleanly (from stderr JSON), not the raw blob
+⚠ [user-im.lark-cli-error] detail=unknown flag "--yes"
+
+ [32m✓[39m tests/unit/lark-cli/user-im.test.ts [2m([22m[2m12 tests[22m[2m)[22m[90m 29[2mms[22m[39m
+stderr | tests/integration/card/callback-dispatch.test.ts > signed card callback dispatch > rejects bridge callbacks when callback auth is unavailable
+⚠ [callback.denied] scope=..._group action=agent_callback reason=missing-token-or-run
+
+ [32m✓[39m tests/integration/card/callback-dispatch.test.ts [2m([22m[2m5 tests[22m[2m)[22m[90m 79[2mms[22m[39m
+[90mstdout[2m | tests/integration/cli/profile-create.test.ts[2m > [22m[2mprofile create command[2m > [22m[2mcreates a named profile from existing app credentials in an initialized root
+[22m[39m✓ 应用凭证校验通过: Claude Regression
+
+[90mstdout[2m | tests/integration/cli/profile-create.test.ts[2m > [22m[2mprofile create command[2m > [22m[2mcreates a named profile from existing app credentials in an initialized root
+[22m[39m配置已保存到 C:\Users\RUNNER~1\AppData\Local\Temp\bridge-profile-create-5M3hKe\config.json
+
+
+[90mstdout[2m | tests/integration/cli/profile-create.test.ts[2m > [22m[2mprofile create command[2m > [22m[2mcreates a named profile from existing app credentials in an initialized root
+[22m[39m已创建 profile: claude-regression
+
+[90mstdout[2m | tests/integration/cli/profile-create.test.ts[2m > [22m[2mprofile create command[2m > [22m[2mcreates a named Codex profile that can write inside the default workspace by default
+[22m[39m✓ 应用凭证校验通过: Claude Regression
+
+[90mstdout[2m | tests/integration/cli/profile-create.test.ts[2m > [22m[2mprofile create command[2m > [22m[2mcreates a named Codex profile that can write inside the default workspace by default
+[22m[39m配置已保存到 C:\Users\RUNNER~1\AppData\Local\Temp\bridge-profile-create-ZlKdfu\config.json
+
+已创建 profile: codex-dev
+
+ [32m✓[39m tests/unit/policy/access.test.ts [2m([22m[2m12 tests[22m[2m)[22m[90m 17[2mms[22m[39m
+[90mstdout[2m | tests/integration/cli/profile-create.test.ts[2m > [22m[2mprofile create command[2m > [22m[2mcreates a named profile without requiring a user workspace
+[22m[39m✓ 应用凭证校验通过: Claude Regression
+
+stderr | tests/unit/meeting/summary.test.ts > summarizeEndedMeeting > skips when there is nowhere to send it
+⚠ [meeting.summary-no-target] meetingId=70001
+
+ [32m✓[39m tests/unit/meeting/summary.test.ts [2m([22m[2m11 tests[22m[2m)[22m[90m 24[2mms[22m[39m
+[90mstdout[2m | tests/integration/cli/profile-create.test.ts[2m > [22m[2mprofile create command[2m > [22m[2mcreates a named profile without requiring a user workspace
+[22m[39m配置已保存到 C:\Users\RUNNER~1\AppData\Local\Temp\bridge-profile-create-dczXRi\config.json
+
+已创建 profile: claude-managed
+
+ [32m✓[39m tests/integration/cli/profile-create.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 443[2mms[22m[39m
+ [32m✓[39m tests/integration/cli/first-run-profile.test.ts [2m([22m[2m8 tests[22m[2m)[22m[90m 49[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/card-ui.test.ts [2m([22m[2m9 tests[22m[2m)[22m[90m 14[2mms[22m[39m
+ [32m✓[39m tests/unit/policy/run-policy.test.ts [2m([22m[2m10 tests[22m[2m)[22m[90m 18[2mms[22m[39m
+stderr | tests/unit/meeting/manager.test.ts > MeetingManager push hook > degrades with a reason (not a throw) when the private dispatcher is gone
+⚠ [meeting.push-hook-unavailable] reason=channel 未暴露事件 dispatcher（SDK 版本变动？），已降级为轮询
+
+ [32m✓[39m tests/unit/meeting/manager.test.ts [2m([22m[2m11 tests[22m[2m)[22m[90m 80[2mms[22m[39m
+ [32m✓[39m tests/integration/bot/access-gate.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 35[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/risk-parser.test.ts [2m([22m[2m12 tests[22m[2m)[22m[90m 20[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/risk-client.test.ts [2m([22m[2m6 tests[22m[2m)[22m[90m 44[2mms[22m[39m
+ [32m✓[39m tests/unit/agent/prompt-builder.test.ts [2m([22m[2m5 tests[22m[2m)[22m[90m 12[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/risk-card.test.ts [2m([22m[2m10 tests[22m[2m)[22m[90m 17[2mms[22m[39m
+ [32m✓[39m tests/unit/meeting/multi-meeting.test.ts [2m([22m[2m6 tests[22m[2m)[22m[90m 19[2mms[22m[39m
+ [32m✓[39m tests/integration/bot/claude-security.test.ts [2m([22m[2m2 tests[22m[2m)[22m[90m 46[2mms[22m[39m
+stderr | tests/unit/session/catalog.test.ts > agent-aware session catalog > rejects mismatched Claude/Codex identity fields and does not auto-resume damaged entries
+⚠ [session-catalog.damaged-entry] key=chat-1codex/repofp-1 agentId=codex
+
+ [32m✓[39m tests/unit/session/catalog.test.ts [2m([22m[2m5 tests[22m[2m)[22m[90m 193[2mms[22m[39m
+ [32m✓[39m tests/integration/commands/access-config-race.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 966[2mms[22m[39m
+   [33m[2m✓[22m[39m access config concurrent writes[2m > [22mmerges concurrent access mutations against the latest root config [33m964[2mms[22m[39m
+ [32m✓[39m tests/integration/cli/secrets-profile.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 785[2mms[22m[39m
+   [33m[2m✓[22m[39m profile-aware secrets commands[2m > [22mresolves secrets active-first, then by profile name, and warns on duplicates [33m315[2mms[22m[39m
+ [32m✓[39m tests/unit/card/run-renderer.snapshot.test.ts [2m([22m[2m8 tests[22m[2m)[22m[90m 21[2mms[22m[39m
+ [31m❯[39m tests/unit/core/logger-redaction.test.ts [2m([22m[2m7 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[90m 64[2mms[22m[39m
+[31m   [31m×[31m logger redaction[2m > [22mredacts sensitive substrings inside arbitrary string fields before writing logs[90m 35[2mms[22m[31m[39m
+[31m     → expected 438 to be 384 // Object.is equality[39m
+ [32m✓[39m tests/unit/card/callback-auth.test.ts [2m([22m[2m11 tests[22m[2m)[22m[90m 88[2mms[22m[39m
+ [32m✓[39m tests/unit/agent/claude-stream-json.test.ts [2m([22m[2m6 tests[22m[2m)[22m[90m 130[2mms[22m[39m
+ [32m✓[39m tests/unit/agent/preflight.test.ts [2m([22m[2m4 tests[22m[2m)[22m[90m 207[2mms[22m[39m
+ [32m✓[39m tests/integration/commands/reconnect-profile.test.ts [2m([22m[2m4 tests[22m[2m)[22m[90m 29[2mms[22m[39m
+[90mstdout[2m | tests/integration/bot/im-run-flow.test.ts[2m > [22m[2mIM run flow[2m > [22m[2msubmits cwd through RunExecutor and resumes matching sessions
+[22m[39m  ▶ run start scope=chat-1 run=run-1 queue=0ms
+
+[90mstdout[2m | tests/integration/bot/im-run-flow.test.ts[2m > [22m[2mIM run flow[2m > [22m[2muses the profile default workspace when a scope has no explicit binding
+[22m[39m  ▶ run start scope=chat-1 run=run-1 queue=0ms
+
+ [32m✓[39m tests/integration/bot/im-run-flow.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 59[2mms[22m[39m
+ [32m✓[39m tests/unit/cli/kill-os-managed.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 12[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/session-store.test.ts [2m([22m[2m7 tests[22m[2m)[22m[90m 122[2mms[22m[39m
+ [32m✓[39m tests/unit/runtime/profile-discovery.test.ts [2m([22m[2m5 tests[22m[2m)[22m[90m 75[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/navigation-lifecycle.test.ts [2m([22m[2m6 tests[22m[2m)[22m[90m 10[2mms[22m[39m
+ [32m✓[39m tests/integration/media/attachment-resolver.test.ts [2m([22m[2m5 tests[22m[2m)[22m[90m 53[2mms[22m[39m
+[90mstdout[2m | tests/integration/bot/run-observability.test.ts[2m > [22m[2mbot run observability[2m > [22m[2mkeeps IM run submit logs populated with profile, source, and stage
+[22m[39m  ▶ run start scope=chat-1 run=run-1 queue=0ms
+  ✓ run normal scope=chat-1 run=run-1 duration=0ms
+
+ [32m✓[39m tests/integration/bot/run-observability.test.ts [2m([22m[2m1 test[22m[2m)[22m[90m 45[2mms[22m[39m
+[90mstdout[2m | tests/integration/commands/doctor-observability.test.ts[2m > [22m[2m/doctor run observability[2m > [22m[2msubmits the agent echo check with doctor source and agent-probe stage
+[22m[39m  ▶ run start scope=doctor run=-run-1 queue=0ms
+  ✓ run normal scope=doctor run=-run-1 duration=0ms
+
+ [32m✓[39m tests/integration/commands/doctor-observability.test.ts [2m([22m[2m1 test[22m[2m)[22m[90m 84[2mms[22m[39m
+ [32m✓[39m tests/unit/cli/start-agent-factory.test.ts [2m([22m[2m7 tests[22m[2m)[22m[90m 15[2mms[22m[39m
+ [32m✓[39m tests/unit/config/app-paths.test.ts [2m([22m[2m5 tests[22m[2m)[22m[90m 28[2mms[22m[39m
+ [32m✓[39m tests/integration/cli/profile-management.test.ts [2m([22m[2m2 tests[22m[2m)[22m[90m 101[2mms[22m[39m
+ [32m✓[39m tests/unit/comments/comment-parser.test.ts [2m([22m[2m7 tests[22m[2m)[22m[90m 9[2mms[22m[39m
+ [32m✓[39m tests/unit/meeting/preflight.test.ts [2m([22m[2m8 tests[22m[2m)[22m[90m 17[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/egress.test.ts [2m([22m[2m4 tests[22m[2m)[22m[90m 51[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/task-store.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 342[2mms[22m[39m
+ [32m✓[39m tests/unit/agent/adapter-system-prompt-wiring.test.ts [2m([22m[2m4 tests[22m[2m)[22m[90m 33[2mms[22m[39m
+ [32m✓[39m tests/integration/cli/start-codex-legacy-config.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 526[2mms[22m[39m
+   [33m[2m✓[22m[39m Codex startup compatibility with legacy binary metadata[2m > [22mloads a legacy Codex profile that only has binaryPath, past agent availability [33m369[2mms[22m[39m
+ [32m✓[39m tests/unit/policy/fingerprint.test.ts [2m([22m[2m5 tests[22m[2m)[22m[90m 11[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/risk-formatter.test.ts [2m([22m[2m7 tests[22m[2m)[22m[90m 15[2mms[22m[39m
+ [32m✓[39m tests/unit/meeting/api.test.ts [2m([22m[2m7 tests[22m[2m)[22m[90m 19[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/card-registry.test.ts [2m([22m[2m6 tests[22m[2m)[22m[90m 9[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/health.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 42[2mms[22m[39m
+ [32m✓[39m tests/unit/agent/codex-argv.test.ts [2m([22m[2m9 tests[22m[2m)[22m[90m 11[2mms[22m[39m
+ [32m✓[39m tests/integration/commands/doctor-redaction.test.ts [2m([22m[2m2 tests[22m[2m)[22m[90m 53[2mms[22m[39m
+[90mstdout[2m | tests/integration/bot/attachment-run-flow.test.ts[2m > [22m[2mattachment run flow[2m > [22m[2mpasses accepted image attachment paths to Codex adapter image args only
+[22m[39m  ▶ run start scope=chat-1 run=run-1 queue=0ms
+
+ [32m✓[39m tests/integration/bot/attachment-run-flow.test.ts [2m([22m[2m1 test[22m[2m)[22m[90m 36[2mms[22m[39m
+ [32m✓[39m tests/unit/media/attachment.test.ts [2m([22m[2m4 tests[22m[2m)[22m[90m 6[2mms[22m[39m
+ [32m✓[39m tests/unit/runtime/locks.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 69[2mms[22m[39m
+[90mstdout[2m | tests/integration/runtime/run-executor-preflight.test.ts[2m > [22m[2mRunExecutor prepareRun preflight[2m > [22m[2mruns prepareRun after acquiring a pool slot and before spawning
+[22m[39m  ▶ run start scope=cope-1 run=run-1 queue=0ms
+  ✓ run normal scope=cope-1 run=run-1 duration=0ms
+
+ [32m✓[39m tests/integration/runtime/run-executor-preflight.test.ts [2m([22m[2m2 tests[22m[2m)[22m[90m 33[2mms[22m[39m
+ [32m✓[39m tests/unit/docs/readme-contract.test.ts [2m([22m[2m6 tests[22m[2m)[22m[90m 15[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/navigation-card.test.ts [2m([22m[2m4 tests[22m[2m)[22m[90m 9[2mms[22m[39m
+ [32m✓[39m tests/unit/daemon/profile-args.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 13[2mms[22m[39m
+[90mstdout[2m | tests/integration/observability/run-events.test.ts[2m > [22m[2mrun observability events[2m > [22m[2mrecords run started and completed events with low-sensitivity dimensions
+[22m[39m  ▶ run start scope=chat-1 run=run-1 queue=0ms
+  ✓ run normal scope=chat-1 run=run-1 duration=0ms
+
+ [32m✓[39m tests/integration/observability/run-events.test.ts [2m([22m[2m1 test[22m[2m)[22m[90m 34[2mms[22m[39m
+ [31m❯[39m tests/unit/daemon/launchd-autostart.test.ts [2m([22m[2m5 tests[22m[2m | [22m[31m3 failed[39m[2m)[22m[90m 26[2mms[22m[39m
+[31m   [31m×[31m launchd autostart lifecycle[2m > [22mstop disables the job so RunAtLoad cannot revive it at the next login[90m 17[2mms[22m[31m[39m
+[31m     → expected [ …(2) ] to deeply equal [ Array(2) ][39m
+[31m   [31m×[31m launchd autostart lifecycle[2m > [22mstart re-enables before bootstrap so a stopped service can come back[90m 3[2mms[22m[31m[39m
+[31m     → expected [ …(2) ] to deeply equal [ Array(2) ][39m
+[31m   [31m×[31m launchd autostart lifecycle[2m > [22mdisableAutostart touches only the override DB, never the running job[90m 2[2mms[22m[31m[39m
+[31m     → expected [ Array(1) ] to deeply equal [ Array(1) ][39m
+ [32m✓[39m tests/unit/session/history.test.ts [2m([22m[2m2 tests[22m[2m)[22m[90m 52[2mms[22m[39m
+ [32m✓[39m tests/integration/runtime/supervisor.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 577[2mms[22m[39m
+ [32m✓[39m tests/unit/card/mask-email.test.ts [2m([22m[2m9 tests[22m[2m)[22m[90m 10[2mms[22m[39m
+ [32m✓[39m tests/integration/runtime/registry.test.ts [2m([22m[2m2 tests[22m[2m)[22m[90m 50[2mms[22m[39m
+ [32m✓[39m tests/unit/agent/bridge-system-prompt.test.ts [2m([22m[2m12 tests[22m[2m)[22m[90m 9[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/risk-progress.test.ts [2m([22m[2m4 tests[22m[2m)[22m[90m 9[2mms[22m[39m
+ [32m✓[39m tests/unit/lark-cli/profile-projection.test.ts [2m([22m[2m1 test[22m[2m)[22m[90m 38[2mms[22m[39m
+ [32m✓[39m tests/integration/bot/claude-regression.test.ts [2m([22m[2m4 tests[22m[2m)[22m[90m 17[2mms[22m[39m
+stderr | tests/integration/policy/owner-refresh.test.ts > owner refresh > keeps cached owner available when a refresh fails
+⚠ [access.owner_refresh_failed] appId=...i_test error=permission denied
+
+stderr | tests/integration/policy/owner-refresh.test.ts > owner refresh > fails closed when owner refresh fails without a cached owner
+⚠ [access.owner_refresh_failed] appId=...i_test error=permission denied
+
+ [32m✓[39m tests/integration/policy/owner-refresh.test.ts [2m([22m[2m4 tests[22m[2m)[22m[90m 20[2mms[22m[39m
+ [32m✓[39m tests/unit/lark-cli/legacy-source-overlay.test.ts [2m([22m[2m2 tests[22m[2m)[22m[90m 101[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/reliability.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 14[2mms[22m[39m
+ [32m✓[39m tests/integration/ui/onboard.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 386[2mms[22m[39m
+stderr | tests/unit/card/managed.test.ts > managed card sending > falls back to sending the raw card when the card_id message is rejected
+⚠ [card.managed-send-raw-fallback] err=cardid is invalid replyTo=om_parent replyInThread=true
+
+stderr | tests/unit/card/managed.test.ts > managed card sending > updates raw-card fallback messages by message id
+⚠ [card.managed-send-raw-fallback] err=cardid is invalid replyInThread=false
+
+ [32m✓[39m tests/unit/card/managed.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 18[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/enter-chat-observability.test.ts [2m([22m[2m4 tests[22m[2m)[22m[90m 11[2mms[22m[39m
+ [32m✓[39m tests/unit/agent/capability.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 8[2mms[22m[39m
+ [32m✓[39m tests/unit/platform/secrets-getter.test.ts [2m([22m[2m2 tests[22m[2m)[22m[90m 47[2mms[22m[39m
+ [32m✓[39m tests/unit/agent/models.test.ts [2m([22m[2m5 tests[22m[2m)[22m[90m 6[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/agent-preferences.test.ts [2m([22m[2m2 tests[22m[2m)[22m[90m 6[2mms[22m[39m
+ [32m✓[39m tests/static/contracts.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 18[2mms[22m[39m
+ [32m✓[39m tests/unit/platform/atomic-write.test.ts [2m([22m[2m2 tests[22m[2m)[22m[90m 116[2mms[22m[39m
+ [32m✓[39m tests/unit/policy/workspace.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 20[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/model-options.test.ts [2m([22m[2m4 tests[22m[2m)[22m[90m 5[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/doctor-card.test.ts [2m([22m[2m2 tests[22m[2m)[22m[90m 7[2mms[22m[39m
+ [32m✓[39m tests/unit/bot/chat-mode-cache.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 13[2mms[22m[39m
+[90mstdout[2m | tests/unit/runtime/run-executor.test.ts[2m > [22m[2mRunExecutor policy runtime options[2m > [22m[2mpasses policy sandbox and permission mode into each agent run
+[22m[39m  ▶ run start scope=policy run=policy queue=0ms
+  ✓ run normal scope=policy run=policy duration=0ms
+
+ [32m✓[39m tests/unit/runtime/run-executor.test.ts [2m([22m[2m1 test[22m[2m)[22m[90m 13[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/commands.test.ts [2m([22m[2m4 tests[22m[2m)[22m[90m 8[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/card-routing.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 6[2mms[22m[39m
+ [32m✓[39m tests/unit/agent/codex-prepare-run.test.ts [2m([22m[2m2 tests[22m[2m)[22m[90m 83[2mms[22m[39m
+ [32m✓[39m tests/unit/observability/logger-stream-error.test.ts [2m([22m[2m1 test[22m[2m)[22m[90m 24[2mms[22m[39m
+ [32m✓[39m tests/unit/platform/spawn-env.test.ts [2m([22m[2m2 tests[22m[2m)[22m[90m 7[2mms[22m[39m
+ [32m✓[39m tests/unit/bot/channel-logger.test.ts [2m([22m[2m2 tests[22m[2m)[22m[90m 5[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/risk-lifecycle-adapter.test.ts [2m([22m[2m2 tests[22m[2m)[22m[90m 5[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/user-error.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 7[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/model-config.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 6[2mms[22m[39m
+ [32m✓[39m tests/unit/card/run-state-schema.test.ts [2m([22m[2m2 tests[22m[2m)[22m[90m 5[2mms[22m[39m
+ [32m✓[39m tests/unit/agent/types-contract.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 7[2mms[22m[39m
+ [32m✓[39m tests/unit/wecom/card-surfaces.test.ts [2m([22m[2m1 test[22m[2m)[22m[90m 7[2mms[22m[39m
+ [32m✓[39m tests/unit/core/logger-startup.test.ts [2m([22m[2m1 test[22m[2m)[22m[90m 25[2mms[22m[39m
+ [32m✓[39m tests/unit/card/config-card.test.ts [2m([22m[2m2 tests[22m[2m)[22m[90m 6[2mms[22m[39m
+ [32m✓[39m tests/unit/cli/index-registration.test.ts [2m([22m[2m2 tests[22m[2m)[22m[90m 6[2mms[22m[39m
+ [32m✓[39m tests/unit/bot/group.test.ts [2m([22m[2m1 test[22m[2m)[22m[90m 6[2mms[22m[39m
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/core/logger-redaction.test.ts > logger redaction > redacts sensitive substrings inside arbitrary string fields before writing logs
+AssertionError: expected 438 to be 384 // Object.is equality
+
+- Expected
++ Received
+
+- 384
++ 438
+
+ ❯ tests/unit/core/logger-redaction.test.ts:50:79
+     48|     expect(text).toContain('[REDACTED]');
+     49|     expect(text).toContain('[REDACTED_PATH]');
+     50|     expect((await stat(join(logsDir, 'bridge-20260525.jsonl'))).mode &…
+       |                                                                               ^
+     51|     expect((await stat(logsDir)).mode & 0o777).toBe(0o700);
+     52|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  tests/unit/daemon/launchd-autostart.test.ts > launchd autostart lifecycle > stop disables the job so RunAtLoad cannot revive it at the next login
+AssertionError: expected [ …(2) ] to deeply equal [ Array(2) ]
+
+- Expected
++ Received
+
+  Array [
+-   StringMatching /^bootout gui\/\d+\/ai.lark-channel-bridge.bot.supervisor$/,
+-   StringMatching /^disable gui\/\d+\/ai.lark-channel-bridge.bot.supervisor$/,
++   "bootout gui/-1/ai.lark-channel-bridge.bot.supervisor",
++   "disable gui/-1/ai.lark-channel-bridge.bot.supervisor",
+  ]
+
+ ❯ tests/unit/daemon/launchd-autostart.test.ts:47:30
+     45|     // bootout alone is session-scoped — without the disable, launchd
+     46|     // re-bootstraps the plist at login and the daemon "reconnects" it…
+     47|     expect(launchctlCalls()).toEqual([
+       |                              ^
+     48|       expect.stringMatching(new RegExp(`^bootout gui/\\d+/${label}$`)),
+     49|       expect.stringMatching(new RegExp(`^disable gui/\\d+/${label}$`)),
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  tests/unit/daemon/launchd-autostart.test.ts > launchd autostart lifecycle > start re-enables before bootstrap so a stopped service can come back
+AssertionError: expected [ …(2) ] to deeply equal [ Array(2) ]
+
+- Expected
++ Received
+
+  Array [
+-   StringMatching /^enable gui\/\d+\/ai.lark-channel-bridge.bot.supervisor$/,
+-   StringMatching /^bootstrap gui\/\d+ .*ai.lark-channel-bridge.bot.supervisor\.plist$/,
++   "enable gui/-1/ai.lark-channel-bridge.bot.supervisor",
++   "bootstrap gui/-1 C:\\Users\\runneradmin\\Library\\LaunchAgents\\ai.lark-channel-bridge.bot.supervisor.plist",
+  ]
+
+ ❯ tests/unit/daemon/launchd-autostart.test.ts:70:30
+     68| 
+     69|     // Order matters: bootstrapping a disabled job leaves it loaded bu…
+     70|     expect(launchctlCalls()).toEqual([
+       |                              ^
+     71|       expect.stringMatching(new RegExp(`^enable gui/\\d+/${label}$`)),
+     72|       expect.stringMatching(new RegExp(`^bootstrap gui/\\d+ .*${label}…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  tests/unit/daemon/launchd-autostart.test.ts > launchd autostart lifecycle > disableAutostart touches only the override DB, never the running job
+AssertionError: expected [ Array(1) ] to deeply equal [ Array(1) ]
+
+- Expected
++ Received
+
+  Array [
+-   StringMatching /^disable gui\/\d+\//,
++   "disable gui/-1/ai.lark-channel-bridge.bot.supervisor",
+  ]
+
+ ❯ tests/unit/daemon/launchd-autostart.test.ts:81:30
+     79|     adapter?.disableAutostart();
+     80| 
+     81|     expect(launchctlCalls()).toEqual([expect.stringMatching(/^disable …
+       |                              ^
+     82|   });
+     83| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+ FAIL  tests/unit/wecom/media.test.ts > WeCom media ingress > downloads and stores a decrypted image with a content hash and 0600 mode
+AssertionError: expected 438 to be 384 // Object.is equality
+
+- Expected
++ Received
+
+- 384
++ 438
+
+ ❯ tests/unit/wecom/media.test.ts:46:64
+     44|     });
+     45|     expect(await readFile(attachments[0]!.absPath)).toEqual(png);
+     46|     expect((await stat(attachments[0]!.absPath)).mode & 0o777).toBe(0o…
+       |                                                                ^
+     47|   });
+     48| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+[2m Test Files [22m [1m[31m3 failed[39m[22m[2m | [22m[1m[32m132 passed[39m[22m[90m (135)[39m
+[2m      Tests [22m [1m[31m5 failed[39m[22m[2m | [22m[1m[32m933 passed[39m[22m[90m (938)[39m
+[2m   Start at [22m 08:58:38
+[2m   Duration [22m 41.17s[2m (transform 3.64s, setup 0ms, collect 29.51s, tests 49.45s, environment 44ms, prepare 18.60s)[22m
+
+
+::error file=D%3A/a/lark-coding-agent-bridge/lark-coding-agent-bridge/tests/unit/core/logger-redaction.test.ts,title=tests/unit/core/logger-redaction.test.ts > logger redaction > redacts sensitive substrings inside arbitrary string fields before writing logs,line=50,column=79::AssertionError: expected 438 to be 384 // Object.is equality%0A%0A- Expected%0A+ Received%0A%0A- 384%0A+ 438%0A%0A ❯ tests/unit/core/logger-redaction.test.ts:50:79%0A%0A
+
+::error file=D%3A/a/lark-coding-agent-bridge/lark-coding-agent-bridge/tests/unit/daemon/launchd-autostart.test.ts,title=tests/unit/daemon/launchd-autostart.test.ts > launchd autostart lifecycle > stop disables the job so RunAtLoad cannot revive it at the next login,line=47,column=30::AssertionError: expected [ …(2) ] to deeply equal [ Array(2) ]%0A%0A- Expected%0A+ Received%0A%0A  Array [%0A-   StringMatching /^bootout gui\/\d+\/ai.lark-channel-bridge.bot.supervisor$/,%0A-   StringMatching /^disable gui\/\d+\/ai.lark-channel-bridge.bot.supervisor$/,%0A+   "bootout gui/-1/ai.lark-channel-bridge.bot.supervisor",%0A+   "disable gui/-1/ai.lark-channel-bridge.bot.supervisor",%0A  ]%0A%0A ❯ tests/unit/daemon/launchd-autostart.test.ts:47:30%0A%0A
+
+::error file=D%3A/a/lark-coding-agent-bridge/lark-coding-agent-bridge/tests/unit/daemon/launchd-autostart.test.ts,title=tests/unit/daemon/launchd-autostart.test.ts > launchd autostart lifecycle > start re-enables before bootstrap so a stopped service can come back,line=70,column=30::AssertionError: expected [ …(2) ] to deeply equal [ Array(2) ]%0A%0A- Expected%0A+ Received%0A%0A  Array [%0A-   StringMatching /^enable gui\/\d+\/ai.lark-channel-bridge.bot.supervisor$/,%0A-   StringMatching /^bootstrap gui\/\d+ .*ai.lark-channel-bridge.bot.supervisor\.plist$/,%0A+   "enable gui/-1/ai.lark-channel-bridge.bot.supervisor",%0A+   "bootstrap gui/-1 C:\\Users\\runneradmin\\Library\\LaunchAgents\\ai.lark-channel-bridge.bot.supervisor.plist",%0A  ]%0A%0A ❯ tests/unit/daemon/launchd-autostart.test.ts:70:30%0A%0A
+
+::error file=D%3A/a/lark-coding-agent-bridge/lark-coding-agent-bridge/tests/unit/daemon/launchd-autostart.test.ts,title=tests/unit/daemon/launchd-autostart.test.ts > launchd autostart lifecycle > disableAutostart touches only the override DB%2C never the running job,line=81,column=30::AssertionError: expected [ Array(1) ] to deeply equal [ Array(1) ]%0A%0A- Expected%0A+ Received%0A%0A  Array [%0A-   StringMatching /^disable gui\/\d+\//,%0A+   "disable gui/-1/ai.lark-channel-bridge.bot.supervisor",%0A  ]%0A%0A ❯ tests/unit/daemon/launchd-autostart.test.ts:81:30%0A%0A
+
+::error file=D%3A/a/lark-coding-agent-bridge/lark-coding-agent-bridge/tests/unit/wecom/media.test.ts,title=tests/unit/wecom/media.test.ts > WeCom media ingress > downloads and stores a decrypted image with a content hash and 0600 mode,line=46,column=64::AssertionError: expected 438 to be 384 // Object.is equality%0A%0A- Expected%0A+ Received%0A%0A- 384%0A+ 438%0A%0A ❯ tests/unit/wecom/media.test.ts:46:64%0A%0A
+ ELIFECYCLE  Test failed. See above for more details.
+exit_code=1
