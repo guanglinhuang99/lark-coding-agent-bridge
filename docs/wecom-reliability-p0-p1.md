@@ -18,7 +18,7 @@ The task ledger stores only operational metadata:
 
 It does **not** persist the raw WeCom message id, prompt text, attachment contents, or model output.
 
-On process restart, tasks that were `queued` or `running` are converted to `interrupted`. If WeCom redelivers the same message after that restart, the durable operation key permits at most one recovery replay. Already completed or failed duplicates are suppressed.
+On process restart, tasks that were `queued` or `running` are converted to `interrupted` and retain whether the interruption came from the queue or from actual execution. If WeCom redelivers the same message, replay is allowed only when it cannot silently duplicate a side effect: work that had not yet started (`queued`) may be replayed once, and a running deterministic risk calculation may be replayed once. A Codex or attachment task that had already reached `running` is **not** replayed automatically; the duplicate remains suppressed and the interrupted task is visible through `/runs` so the user can explicitly resend it if appropriate. Already completed or failed duplicates are suppressed.
 
 If the durable task ledger becomes temporarily unwritable while the bridge is already running, a valid user message is not dropped solely because observability storage failed. The bridge reports the degraded task-store state and continues that message using the existing in-memory dedupe for the current process. Startup still fails closed on a damaged task JSON file so corruption is not silently overwritten.
 
