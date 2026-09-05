@@ -21,6 +21,12 @@ interface CircuitState {
   openedUntil: number;
 }
 
+interface ErrorLike {
+  name?: unknown;
+  code?: unknown;
+  response?: { status?: unknown };
+}
+
 export class WeComOperationTimeoutError extends Error {
   readonly code = 'ETIMEDOUT';
 
@@ -122,10 +128,7 @@ export class WeComOperationRunner {
 
 export function failureKind(err: unknown): WeComFailureKind {
   if (err instanceof WeComCircuitOpenError) return 'circuit-open';
-  const item =
-    err && typeof err === 'object'
-      ? (err as { name?: unknown; code?: unknown; response?: { status?: unknown } })
-      : {};
+  const item: ErrorLike = err && typeof err === 'object' ? (err as ErrorLike) : {};
   if (item.name === 'WeComMediaTimeoutError' || item.name === 'WeComOperationTimeoutError') {
     return 'timeout';
   }
