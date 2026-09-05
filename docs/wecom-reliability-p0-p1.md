@@ -20,6 +20,8 @@ It does **not** persist the raw WeCom message id, prompt text, attachment conten
 
 On process restart, tasks that were `queued` or `running` are converted to `interrupted`. If WeCom redelivers the same message after that restart, the durable operation key permits at most one recovery replay. Already completed or failed duplicates are suppressed.
 
+If the durable task ledger becomes temporarily unwritable while the bridge is already running, a valid user message is not dropped solely because observability storage failed. The bridge reports the degraded task-store state and continues that message using the existing in-memory dedupe for the current process. Startup still fails closed on a damaged task JSON file so corruption is not silently overwritten.
+
 Configuration:
 
 | Variable | Default | Purpose |
@@ -41,7 +43,8 @@ Automatic retry is deliberately limited to operations declared `idempotent: true
 
 The first integrations are:
 
-- Codex history lookup: bounded timeout + transient retry + circuit breaker
+- Codex availability/history lookup: bounded timeout and health probing
+- Codex history lookup: transient retry + circuit breaker
 - attachment download/resolve: bounded timeout + transient retry + circuit breaker
 
 Retryable classes are timeout, network, rate-limit, and HTTP 5xx. HTTP 4xx and unknown errors fail directly.
@@ -51,7 +54,7 @@ Retryable classes are timeout, network, rate-limit, and HTTP 5xx. HTTP 4xx and u
 `/doctor` returns a WeCom dependency matrix for:
 
 - WeCom connection
-- Codex availability/model
+- live Codex CLI availability/version
 - workspace path
 - deterministic risk service
 - durable task store
@@ -59,11 +62,11 @@ Retryable classes are timeout, network, rate-limit, and HTTP 5xx. HTTP 4xx and u
 
 It also reports durable task counts and whether unfinished work was recovered during startup.
 
-A disabled optional risk service is a warning, not a bridge-wide failure. A configured-but-unavailable risk service is an error for that dependency while the rest of the bridge remains usable.
+The Codex row is a real availability probe rather than a configuration echo. A disabled optional risk service is a warning, not a bridge-wide failure. A configured-but-unavailable risk service is an error for that dependency while the rest of the bridge remains usable.
 
 ## P1: home and recent tasks
 
-The Home Card keeps the proven small button layout. It now exposes `/doctor` and `/runs` in the shortcut hint and shows the latest completed/failed/interrupted task as compact context.
+The Home Card keeps the proven small button layout. It exposes a deliberately short `/doctor`, `/runs`, `/resume`, `/model`, `/reasoning`, `/settings`, and `/测算` shortcut line that stays visible within the WeCom TUI text limit. The latest substantive completed/failed/interrupted task is shown as compact context; control commands themselves are not preferred as the "recent task".
 
 `/runs` shows recent per-conversation tasks without retaining raw prompts.
 
