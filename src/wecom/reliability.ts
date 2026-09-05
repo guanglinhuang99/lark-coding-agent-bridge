@@ -27,6 +27,8 @@ interface ErrorLike {
   response?: { status?: unknown };
 }
 
+type WeComQueueReason = 'queue-full' | 'queue-timeout' | 'shutting-down';
+
 export class WeComOperationTimeoutError extends Error {
   readonly code = 'ETIMEDOUT';
 
@@ -147,15 +149,13 @@ export function failureKind(err: unknown): WeComFailureKind {
   return 'other';
 }
 
-export function capacityNotice(reason: 'queue-full' | 'queue-timeout' | 'closed'): string {
+export function capacityNotice(reason: WeComQueueReason): string {
   if (reason === 'queue-full') return '任务队列已满';
   if (reason === 'queue-timeout') return '排队等待超时';
   return '服务正在停止';
 }
 
-export function conversationQueueNotice(
-  reason: 'queue-full' | 'queue-timeout' | 'closed',
-): string {
+export function conversationQueueNotice(reason: WeComQueueReason): string {
   if (reason === 'queue-full') return '当前会话队列已满';
   if (reason === 'queue-timeout') return '等待时间过长，消息已从队列移除，请重新发送';
   return '服务正在停止';
