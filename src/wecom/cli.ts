@@ -489,16 +489,23 @@ async function processMessageEvent<T extends BaseMessage>(frame: WsFrame<T>): Pr
 
   let durableTaskId: string | undefined;
   if (messageId && frame.body) {
-    const claim = await taskStore.claimInbound(messageId, conversationKey(frame.body));
-    if (!claim.accepted) {
-      log.info('wecom-message', 'duplicate-durable', { status: claim.task.status });
-      reportMetric('wecom_duplicate_message', 1, { layer: 'durable' });
-      return;
-    }
-    durableTaskId = claim.task.id;
-    if (claim.replayed) {
-      log.info('wecom-task', 'replayed-after-restart', { taskId: durableTaskId });
-      reportMetric('wecom_task_replayed_after_restart', 1);
+    try {
+      const claim = await taskStore.claimInbound(messageId, conversationKey(frame.body));
+      if (!claim.accepted) {
+        log.info('wecom-message', 'duplicate-durable', { status: claim.task.status });
+        reportMetric('wecom_duplicate_message', 1, { layer: 'durable' });
+        return;
+      }
+      durableTaskId = claim.task.id;
+      if (claim.replayed) {
+        log.info('wecom-task', 'replayed-after-restart', { taskId: durableTaskId });
+        reportMetric('wecom_task_replayed_after_restart', 1);
+      }
+    } catch (err) {
+      // Do not drop a valid user message because the optional durable ledger is temporarily unwritable.
+      // The existing in-memory dedupe remains active for this process; report the degraded state.
+      log.fail('wecom-task', err, { step: 'claim' });
+      reportMetric('wecom_task_store_failures', 1, { step: 'claim' });
     }
   }
 
@@ -1759,7 +1766,17 @@ async function replyHomeCard(frame: WsFrame, key: string): Promise<void> {
 async function replyDoctor(frame: WsFrame, key: string): Promise<void> {
   const taskSnapshot = taskStore.snapshot();
   const riskConfigured = Boolean(riskPython || configuredRiskServiceDir);
-  const circuitOpen = ['codex-history', 'media-download'].some(
+  const codexAvailability = await operationRunner
+    .run('codex-health', () => codex.checkAvailability(), {
+      idempotent: true,
+      maxAttempts: 1,
+      timeoutMs: 6_000,
+    })
+    .catch((err: unknown) => {
+      log.fail('wecom-doctor', err, { dependency: 'codex' });
+      return undefined;
+    });
+  const circuitOpen = ['codex-health', 'codex-history', 'media-download'].some(
     (name) => operationRunner.snapshot(name).state === 'open',
   );
   const dependencies = [
@@ -1768,7 +1785,15 @@ async function replyDoctor(frame: WsFrame, key: string): Promise<void> {
       status: connected ? 'ok' : 'error',
       detail: connected ? 'connected' : healthPhase,
     },
-    { name: 'Codex', status: 'ok', detail: effectiveModel(key) || 'default model' },
+    {
+      name: 'Codex',
+      status: codexAvailability?.ok ? 'ok' : 'error',
+      detail: codexAvailability?.ok
+        ? codexAvailability.version || effectiveModel(key) || 'available'
+        : codexAvailability
+          ? codexAvailability.diagnostic.code
+          : 'health check failed',
+    },
     {
       name: 'Workspace',
       status: existsSync(workspace) ? 'ok' : 'error',
@@ -1836,7 +1861,12 @@ function homeCardOptions(key: string, taskId = createNavigationTaskId('menu')) {
     reasoning: effectiveReasoningEffort(key),
     threadId: currentThreadId(key),
     recentTask: recentTaskHint(
-      taskStore.recent(key, 5).find((task) => task.status !== 'queued' && task.status !== 'running'),
+      taskStore
+        .recent(key, 10)
+        .find(
+          (task) =>
+            task.kind !== 'command' && task.status !== 'queued' && task.status !== 'running',
+        ),
     ),
   };
 }
