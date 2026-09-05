@@ -1,0 +1,42 @@
+name: WeCom Windows Test Diagnostic
+
+on:
+  push:
+    branches:
+      - feat/wecom-reliability-p0-p1
+
+permissions:
+  contents: write
+
+jobs:
+  capture:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/wecom-reliability-p0-p1
+          fetch-depth: 0
+      - name: Enable pnpm
+        run: corepack enable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Capture Windows tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force ci-debug | Out-Null
+          pnpm test *> ci-debug/windows-test.txt
+          $code = $LASTEXITCODE
+          "exit_code=$code" | Out-File -Append -Encoding utf8 ci-debug/windows-test.txt
+          exit 0
+      - name: Commit diagnostic
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ci-debug/windows-test.txt
+          git commit -m "chore(wecom): capture Windows test output"
+          git push origin HEAD:feat/wecom-reliability-p0-p1
