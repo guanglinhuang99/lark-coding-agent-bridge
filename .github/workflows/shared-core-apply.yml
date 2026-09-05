@@ -28,7 +28,8 @@ jobs:
           python -c "from pathlib import Path; p=Path('src/wecom/reliability.ts'); p.write_text(p.read_text().rstrip()+'\n')"
           rm scripts/apply-shared-core.py .github/workflows/shared-core-apply.yml
           git diff --check
-          git add src tests docs scripts/apply-shared-core.py .github/workflows/shared-core-apply.yml
+          git add -u
+          git add src tests docs
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'refactor: connect Lark and WeCom to shared bridge core'
           git push origin HEAD:refs/heads/refactor/shared-bridge-core
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
