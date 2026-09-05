@@ -1,0 +1,49 @@
+name: Publish v0.8.0
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Remove one-shot workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/release-v0.8.0.yml
+          git commit -m "chore(release): remove one-shot v0.8.0 workflow"
+          git push origin HEAD:main
+          echo "RELEASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Create GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > release-notes.md <<'EOF'
+          ## WeCom P0/P1 reliability and daily-use improvements
+
+          - Durable task ledger and restart recovery
+          - Persistent inbound idempotency with safe replay boundaries
+          - Shared timeout, retry, failure classification, and circuit-breaker policy
+          - New `/doctor` dependency health surface
+          - New `/runs` recent task/status surface
+          - Home Card recent-task context and improved shortcut discoverability
+          - Task-store/reliability/Doctor UI responsibilities extracted from the main WeCom CLI entrypoint
+          - Improved queued/running/interrupted/failed state semantics and stop behavior
+          - Privacy-preserving task metadata: no raw prompts, attachment contents, model output, or raw WeCom message IDs in the durable ledger
+
+          Validation: Ubuntu and macOS CI passed Test, Typecheck, and Build. Windows-only CI failures were explicitly waived for this release.
+          EOF
+          gh release create v0.8.0 --target "$RELEASE_SHA" --title "v0.8.0" --notes-file release-notes.md
