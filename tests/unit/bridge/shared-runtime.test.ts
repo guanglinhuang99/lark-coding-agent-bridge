@@ -202,4 +202,11 @@ describe('core architecture boundary', () => {
     expect(cli).not.toContain('codex.run('); expect(cli.match(/startWeComAgentRun\(runExecutor/g)).toHaveLength(2);
     expect(await readFile('src/runtime/run-executor.ts', 'utf8')).toContain('../bridge/run-executor');
   });
+  it('claims WeCom durable receipts before memory deduplication', async () => {
+    const cli = await readFile('src/wecom/cli.ts', 'utf8');
+    const durableClaim = cli.indexOf('const claim = await taskStore.claimInbound');
+    const memoryClaim = cli.indexOf('messageDeduplicator.claim(messageId)');
+    expect(durableClaim).toBeGreaterThanOrEqual(0);
+    expect(memoryClaim).toBeGreaterThan(durableClaim);
+  });
 });

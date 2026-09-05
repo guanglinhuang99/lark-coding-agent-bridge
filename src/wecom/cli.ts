@@ -496,12 +496,6 @@ function handleMessageEvent<T extends BaseMessage>(frame: WsFrame<T>): void {
 
 async function processMessageEvent<T extends BaseMessage>(frame: WsFrame<T>): Promise<void> {
   const messageId = frame.body?.msgid;
-  if (messageId && !messageDeduplicator.claim(messageId)) {
-    log.info('wecom-message', 'duplicate-memory');
-    reportMetric('wecom_duplicate_message', 1, { layer: 'memory' });
-    return;
-  }
-
   let durableTaskId: string | undefined;
   if (messageId && frame.body) {
     try {
@@ -525,6 +519,12 @@ async function processMessageEvent<T extends BaseMessage>(frame: WsFrame<T>): Pr
         return;
       }
     }
+  }
+
+  if (messageId && !messageDeduplicator.claim(messageId)) {
+    log.info('wecom-message', 'duplicate-memory');
+    reportMetric('wecom_duplicate_message', 1, { layer: 'memory' });
+    return;
   }
 
   try {
