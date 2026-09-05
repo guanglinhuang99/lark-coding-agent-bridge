@@ -25,6 +25,7 @@ jobs:
           set -euo pipefail
           git diff --exit-code cc96c5b44d7418cd3e19d065be20b52aaa9bd6ba HEAD -- src/bot/channel.ts src/wecom/cli.ts src/wecom/runtime.ts src/runtime/supervisor.ts src/wecom/task-store.ts
           python scripts/apply-shared-core.py
+          python -c "from pathlib import Path; p=Path('src/wecom/reliability.ts'); p.write_text(p.read_text().rstrip()+'\n')"
           rm scripts/apply-shared-core.py .github/workflows/shared-core-apply.yml
           git diff --check
           git add src tests docs scripts/apply-shared-core.py .github/workflows/shared-core-apply.yml
