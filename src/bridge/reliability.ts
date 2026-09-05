@@ -58,12 +58,13 @@ export class CircuitOpenError extends Error {
  */
 export class OperationRunner {
   private readonly circuits = new Map<string, CircuitState>();
+  private readonly lingering = new Map<string, Set<object>>();
 
   constructor(private readonly now: () => number = () => Date.now()) {}
 
   async run<T>(
     operation: string,
-    fn: () => Promise<T>,
+    fn: (signal: AbortSignal) => Promise<T>,
     policy: OperationPolicy = {},
   ): Promise<T> {
     const idempotent = policy.idempotent ?? false;
@@ -76,14 +77,32 @@ export class OperationRunner {
     this.assertCircuit(operation);
     let lastError: unknown;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      this.assertCircuit(operation);
+      const controller = new AbortController();
+      const token = {};
+      let settled = false;
+      const work = Promise.resolve().then(() => fn(controller.signal));
+      const markSettled = () => {
+        settled = true;
+        const pending = this.lingering.get(operation);
+        pending?.delete(token);
+        if (pending?.size === 0) this.lingering.delete(operation);
+      };
+      void work.then(markSettled, markSettled);
       try {
-        const value = await withTimeout(operation, timeoutMs, fn());
-        this.circuits.delete(operation);
+        const value = await withTimeout(operation, timeoutMs, work, () => controller.abort());
+        if (!this.lingering.has(operation)) this.circuits.delete(operation);
         return value;
       } catch (err) {
         lastError = err;
         const kind = failureKind(err);
-        const retryable = idempotent && isRetryableFailure(kind) && attempt < maxAttempts;
+        if (err instanceof OperationTimeoutError && !settled) {
+          const pending = this.lingering.get(operation) ?? new Set<object>();
+          pending.add(token);
+          this.lingering.set(operation, pending);
+        }
+        const retryable = !(err instanceof OperationTimeoutError) && idempotent &&
+          isRetryableFailure(kind) && attempt < maxAttempts;
         if (!retryable) {
           this.recordFailure(operation, circuitThreshold, circuitResetMs);
           throw err;
@@ -95,6 +114,7 @@ export class OperationRunner {
   }
 
   snapshot(operation: string): { state: 'closed' | 'open'; retryAfterMs: number } {
+    if (this.lingering.has(operation)) return { state: 'open', retryAfterMs: 0 };
     const state = this.circuits.get(operation);
     if (!state || state.openedUntil === 0) return { state: 'closed', retryAfterMs: 0 };
     const now = this.now();
@@ -106,6 +126,7 @@ export class OperationRunner {
   }
 
   private assertCircuit(operation: string): void {
+    if (this.lingering.has(operation)) throw new CircuitOpenError(operation, 0);
     const state = this.circuits.get(operation);
     if (!state || state.openedUntil === 0) return;
     const now = this.now();
@@ -151,10 +172,13 @@ function isRetryableFailure(kind: FailureKind): boolean {
   return kind === 'timeout' || kind === 'network' || kind === 'rate-limit' || kind === 'http-5xx';
 }
 
-async function withTimeout<T>(operation: string, timeoutMs: number, promise: Promise<T>): Promise<T> {
+async function withTimeout<T>(operation: string, timeoutMs: number, promise: Promise<T>, abort: () => void): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new OperationTimeoutError(operation, timeoutMs)), timeoutMs);
+    timer = setTimeout(() => {
+      reject(new OperationTimeoutError(operation, timeoutMs));
+      abort();
+    }, timeoutMs);
     timer.unref?.();
   });
   try {

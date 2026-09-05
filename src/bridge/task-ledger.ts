@@ -40,6 +40,7 @@ interface TaskDiskState {
 }
 
 export interface TaskLedgerOptions {
+  write?: typeof writeFileAtomic;
   namespace?: string;
   canReplayRunning?: (task: Readonly<TaskRecord>) => boolean;
   maxAgeMs?: number;
@@ -70,7 +71,70 @@ export class TaskLedger {
   private tasks: Record<string, TaskRecord> = {};
   private operations: Record<string, string> = {};
   private saving: Promise<void> = Promise.resolve();
+  private mutations: Promise<void> = Promise.resolve();
+  private writeError: unknown;
+
+  private transaction<T>(mutate: () => Promise<T>): Promise<T> {
+    const next = this.mutations.then(async () => {
+      const before = structuredClone({ tasks: this.tasks, operations: this.operations });
+      try { return await mutate(); }
+      catch (err) {
+        this.tasks = before.tasks;
+        this.operations = before.operations;
+        throw err;
+      }
+    });
+    this.mutations = next.then(() => {}, () => {});
+    return next;
+  }
+
+  async claimInbound(messageId: string, conversationKey: string): Promise<TaskClaim> {
+    if (!messageId.trim() || !conversationKey.trim()) throw new Error('Missing task identity');
+    return this.transaction(() => this.claimInboundUncommitted(messageId, conversationKey));
+  }
+
+  async annotate(taskId: string, patch: Partial<Pick<TaskRecord, 'kind' | 'label'>>): Promise<void> {
+    return this.transaction(() => this.annotateUncommitted(taskId, patch));
+  }
+
+  async prune(): Promise<number> { return this.transaction(() => this.pruneUncommitted()); }
+
+  private updateStatus(taskId: string, status: TaskStatus, errorKind?: string): Promise<void> {
+    return this.transaction(() => this.updateStatusUncommitted(taskId, status, errorKind));
+  }
+
+  /** Dispatcher-only transition: it has confirmed that no command was executed. */
+  async markQueued(taskId: string): Promise<void> {
+    return this.transaction(async () => {
+      const task = this.tasks[taskId];
+      if (!task || task.status !== 'running' || task.kind !== 'message') {
+        throw new Error('Only an unexecuted inbound message can return to the queue');
+      }
+      task.status = 'queued';
+      task.updatedAt = this.now().toISOString();
+      await this.persist();
+    });
+  }
+
+  /** Atomic transition of every source receipt before a batch can cause effects. */
+  async markBatchRunning(taskIds: readonly string[]): Promise<void> {
+    return this.transaction(async () => {
+      if (!taskIds.length || new Set(taskIds).size !== taskIds.length) throw new Error('Invalid task batch');
+      for (const id of taskIds) {
+        if (this.tasks[id]?.status !== 'queued') throw new Error('Task batch is not wholly queued');
+      }
+      for (const id of taskIds) {
+        const task = this.tasks[id]!;
+        task.status = 'running';
+        task.updatedAt = this.now().toISOString();
+        task.recoveryFrom = undefined;
+        task.recoveryReason = undefined;
+      }
+      await this.persist();
+    });
+  }
   private recoveredAtStartup = 0;
+  private readonly write: typeof writeFileAtomic;
   private readonly maxAgeMs: number;
   private readonly maxEntries: number;
   private readonly now: () => Date;
@@ -81,6 +145,7 @@ export class TaskLedger {
     private readonly file: string,
     options: TaskLedgerOptions = {},
   ) {
+    this.write = options.write ?? writeFileAtomic;
     this.maxAgeMs = positiveInt(options.maxAgeMs, DEFAULT_MAX_AGE_MS);
     this.maxEntries = positiveInt(options.maxEntries, DEFAULT_MAX_ENTRIES);
     this.now = options.now ?? (() => new Date());
@@ -127,7 +192,7 @@ export class TaskLedger {
     if (changed) await this.persist();
   }
 
-  async claimInbound(messageId: string, conversationKey: string): Promise<TaskClaim> {
+  private async claimInboundUncommitted(messageId: string, conversationKey: string): Promise<TaskClaim> {
     const operationKey = hashOperationKey(this.namespace
       ? JSON.stringify([this.namespace, conversationKey, messageId]) : messageId);
     const existingId = this.operations[operationKey];
@@ -172,7 +237,7 @@ export class TaskLedger {
     return { accepted: true, replayed: false, task: cloneTask(task) };
   }
 
-  async annotate(
+  private async annotateUncommitted(
     taskId: string,
     patch: Partial<Pick<TaskRecord, 'kind' | 'label'>>,
   ): Promise<void> {
@@ -228,24 +293,30 @@ export class TaskLedger {
     };
   }
 
-  async prune(): Promise<number> {
+  private async pruneUncommitted(): Promise<number> {
     const removed = this.pruneInMemory();
     if (removed > 0) await this.persist();
     return removed;
   }
 
   async flush(): Promise<void> {
+    await this.mutations;
     await this.saving;
+    if (this.writeError !== undefined) throw this.writeError;
   }
 
-  private async updateStatus(
+  private async updateStatusUncommitted(
     taskId: string,
     status: TaskStatus,
     errorKind?: string,
   ): Promise<void> {
     const task = this.tasks[taskId];
     if (!task) return;
-    if (status === 'done' && (task.status === 'failed' || task.status === 'interrupted')) return;
+    const terminal = task.status === 'done' || task.status === 'failed' || task.status === 'interrupted';
+    if (terminal) {
+      if (status === 'running') throw new Error('Cannot start a terminal task');
+      return;
+    }
     task.status = status;
     task.updatedAt = this.now().toISOString();
     task.errorKind = errorKind;
@@ -263,8 +334,11 @@ export class TaskLedger {
       operations: this.operations,
     };
     const payload = `${JSON.stringify(state, null, 2)}\n`;
-    const next = this.saving.then(() => writeFileAtomic(this.file, payload, { mode: 0o600 }));
-    this.saving = next.catch(() => {});
+    const next = this.saving.then(() => this.write(this.file, payload, { mode: 0o600 }));
+    this.saving = next.then(
+      () => { this.writeError = undefined; },
+      (err: unknown) => { this.writeError = err; },
+    );
     return next;
   }
 
@@ -366,7 +440,11 @@ function validateState(value: unknown, file: string): TaskDiskState {
   const operations: Record<string, string> = {};
   for (const [operationKey, taskId] of Object.entries(root.operations as Record<string, unknown>)) {
     if (typeof taskId !== 'string') throw damaged(file, operationKey);
+    if (!tasks[taskId] || tasks[taskId]!.operationKey !== operationKey) throw damaged(file);
     operations[operationKey] = taskId;
+  }
+  for (const task of Object.values(tasks)) {
+    if (operations[task.operationKey] !== task.id) throw damaged(file);
   }
   return { schemaVersion: 1, tasks, operations };
 }

@@ -98,11 +98,12 @@ class ManagedProfile {
     // this.locks and gets released by the catch — otherwise it would leak and
     // a retry in the same process would fail to re-lock.
     this.locks = [];
+    try {
     this.locks.push(await acquireProfileRuntimeLock(this.appPaths, this.profileConfig.agentKind));
     this.locks.push(
       await acquireAppRuntimeLock(this.appPaths, this.appId, this.profileConfig.agentKind),
     );
-    try {
+      await this.tasks.load();
       this.entry = await register({
         appId: this.appId,
         tenant: this.cfg.accounts.app.tenant,
@@ -144,6 +145,7 @@ class ManagedProfile {
     } catch (err) {
       log.warn('supervisor', 'disconnect-failed', { profile: this.profile, err: String(err) });
     }
+    await this.tasks.flush().catch((err) => log.fail('task-ledger', err, { step: 'profile-stop' }));
     if (this.entry) {
       await unregister(this.entry.id, this.appPaths.userRegistryFile).catch(() => undefined);
     }
@@ -348,7 +350,6 @@ export class Supervisor {
     const workspaces = new WorkspaceStore(appPaths.workspacesFile);
     await workspaces.load();
     const tasks = new TaskLedger(`${appPaths.sessionsFile}.tasks.json`, { namespace: 'lark' });
-    await tasks.load();
 
     const managed = new ManagedProfile(
       appPaths.profile,

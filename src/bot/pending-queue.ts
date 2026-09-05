@@ -26,7 +26,11 @@ export class PendingQueue {
   private readonly delayMs: number;
   private readonly onFlush: FlushHandler;
 
-  constructor(delayMs: number, onFlush: FlushHandler) {
+  constructor(
+    delayMs: number,
+    onFlush: FlushHandler,
+    private readonly onCancel?: (messages: NormalizedMessage[]) => void,
+  ) {
     this.delayMs = delayMs;
     this.onFlush = onFlush;
   }
@@ -51,15 +55,18 @@ export class PendingQueue {
     if (!entry) return [];
     if (entry.timer) clearTimeout(entry.timer);
     this.map.delete(scope);
+    this.onCancel?.(entry.messages);
     return entry.messages;
   }
 
   cancelAll(): void {
+    const messages = [...this.map.values()].flatMap((entry) => entry.messages);
     for (const entry of this.map.values()) {
       if (entry.timer) clearTimeout(entry.timer);
     }
     this.map.clear();
     this.blocked.clear();
+    if (messages.length) this.onCancel?.(messages);
   }
 
   /** Pause the debounce timer; pushed messages keep accumulating. */

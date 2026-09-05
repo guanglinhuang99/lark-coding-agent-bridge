@@ -62,7 +62,9 @@ import {
   type ConversationBody,
   type WeComConversationSubmission,
 } from './runtime';
-import { WeComSessionStore } from './session-store';
+import { WeComConversationBindings } from './conversation-bindings';
+import { bindingPolicyFingerprint, type SessionBindingIdentity } from '../bridge/identity';
+import { acquireStateDirectoryLock } from '../bridge/state-lock';
 import {
   closeLogger,
   configureLogger,
@@ -309,10 +311,17 @@ const riskAllowedUserIds = new Set(
 );
 
 await mkdir(stateDir, { recursive: true });
+const releaseStateLock = await acquireStateDirectoryLock(stateDir);
 configureLogger({ logsDir: path.join(stateDir, 'logs'), retentionDays: logRetentionDays });
 await gcOldLogs();
 await gcWeComMediaCache(mediaDir, mediaCacheMaxAgeMs);
-const sessionStore = new WeComSessionStore(sessionFile, {
+const sessionStore = new WeComConversationBindings(sessionFile, {
+  identity: { channel: 'wecom', accountId: botId, instanceId: stateDir },
+  workspace,
+  policyFingerprint: bindingPolicyFingerprint([
+    sandbox, process.env.CODEX_BINARY?.trim() || 'codex', process.env.CODEX_HOME || path.join(os.homedir(), '.codex'),
+    'inherit-home', 'user-config', 'user-rules',
+  ]),
   maxAgeMs: sessionMaxAgeMs,
   maxEntries: sessionMaxEntries,
 });
@@ -508,10 +517,13 @@ async function processMessageEvent<T extends BaseMessage>(frame: WsFrame<T>): Pr
         reportMetric('wecom_task_replayed_after_restart', 1);
       }
     } catch (err) {
-      // Do not drop a valid user message because the optional durable ledger is temporarily unwritable.
-      // The existing in-memory dedupe remains active for this process; report the degraded state.
       log.fail('wecom-task', err, { step: 'claim' });
       reportMetric('wecom_task_store_failures', 1, { step: 'claim' });
+      const diagnostic = normalizeIncomingText(textFromWeComMessage(frame.body), frame.body.chattype).toLowerCase();
+      if (!['/doctor', '/status', '/menu', '/help'].includes(diagnostic) || collectWeComMediaInputs(frame.body).length) {
+        await replyOnce(frame, '任务未执行', ['任务记录暂不可写；没有启动 Agent。请发送 /doctor 检查后重新发送。']).catch(() => {});
+        return;
+      }
     }
   }
 
@@ -563,6 +575,11 @@ async function handleMessage<T extends BaseMessage>(
     text = parsedCommand.payload;
   }
   const command = text.toLowerCase();
+  if (durableTaskId && command.startsWith('/')) {
+    // Built-in commands can reset sessions or interrupt a process. They must not
+    // remain replay-safe queued records once command dispatch begins.
+    await taskStore.markRunning(durableTaskId);
+  }
 
   if (command === '/menu') {
     await replyHomeCard(frame, key);
@@ -1403,8 +1420,11 @@ async function runCodexPrompt(
   controlCardAttached: boolean,
   durableTaskId?: string,
 ): Promise<void> {
+  const workspace = sessionStore.workspaceFor(key);
   const requestStartedAt = Date.now();
   const streamUpdates = new WeComStreamUpdatePump(stream);
+  await sessionStore.flush();
+  const sessionBinding = sessionStore.bindingFor(key);
   let threadId = sessionStore.threadId(key);
   let state = freshRunState();
   let lastSent = renderStream(state, threadId);
@@ -1432,7 +1452,7 @@ async function runCodexPrompt(
     run = await startWeComAgentRun(runExecutor, {
       runId: randomUUID(),
       prompt,
-      cwd: workspace,
+      cwd: sessionBinding.cwdRealpath,
       threadId,
       model: effectiveModel(key),
       reasoningEffort: effectiveReasoningEffort(key),
@@ -1542,12 +1562,14 @@ async function runCodexPrompt(
           });
         });
       }
-      await persistThread(key, threadId);
+      await persistThread(key, threadId, sessionBinding).catch((err: unknown) => {
+        log.fail('wecom-session', err, { step: 'persist-after-run' });
+      });
 
       const finalText = renderStream(state, threadId);
       await streamUpdates.finish(finalText);
       if (state.terminal === 'done') {
-        await sendGeneratedArtifacts(frame, state, attachments);
+        await sendGeneratedArtifacts(frame, state, attachments, sessionBinding.cwdRealpath);
       }
       if (state.terminal === 'error') {
         await deliverErrorCard(frame, 'execution');
@@ -1563,7 +1585,7 @@ async function runCodexPrompt(
       active.state = state;
       active.threadId = threadId;
       await run.stop().catch(() => {});
-      await persistThread(key, threadId).catch((persistErr: unknown) => {
+      await persistThread(key, threadId, sessionBinding).catch((persistErr: unknown) => {
         console.error(
           `Failed to persist WeCom thread: ${persistErr instanceof Error ? persistErr.message : String(persistErr)}`,
         );
@@ -1701,6 +1723,7 @@ async function handleLegacyControlCardEvent(
   taskId: string,
   rawAction: string | undefined,
 ): Promise<void> {
+  const workspace = sessionStore.workspaceFor(key);
   const action = normalizeCardAction(rawAction);
   const active = activeRuns.get(key);
   const starting = startingRuns.has(key) || conversationQueue.has(key);
@@ -1785,6 +1808,7 @@ async function replyHomeCard(frame: WsFrame, key: string): Promise<void> {
 }
 
 async function replyDoctor(frame: WsFrame, key: string): Promise<void> {
+  const workspace = sessionStore.workspaceFor(key);
   const taskSnapshot = taskStore.snapshot();
   const riskConfigured = Boolean(riskPython || configuredRiskServiceDir);
   const codexAvailability = await operationRunner
@@ -1858,6 +1882,7 @@ async function replyRuns(frame: WsFrame, key: string): Promise<void> {
 }
 
 async function replySettingsSummary(frame: WsFrame, key: string): Promise<void> {
+  const workspace = sessionStore.workspaceFor(key);
   await client.replyTemplateCard(
     frame,
     renderWeComCard(
@@ -1873,6 +1898,7 @@ async function replySettingsSummary(frame: WsFrame, key: string): Promise<void> 
 }
 
 function homeCardOptions(key: string, taskId = createNavigationTaskId('menu')) {
+  const workspace = sessionStore.workspaceFor(key);
   registerHomeCard(taskId, key);
   return {
     taskId,
@@ -1893,6 +1919,7 @@ function homeCardOptions(key: string, taskId = createNavigationTaskId('menu')) {
 }
 
 async function replyWorkspaceSelection(frame: WsFrame, key: string): Promise<void> {
+  const workspace = sessionStore.workspaceFor(key);
   const taskId = createNavigationTaskId('workspace');
   const options: WeComWorkspaceOption[] = [
     { id: 'current', label: `${path.basename(workspace)}（当前，需重启生效）` },
@@ -1925,6 +1952,7 @@ async function replyReasoningSelection(frame: WsFrame, key: string): Promise<voi
 }
 
 async function replySessionSelection(frame: WsFrame, key: string): Promise<void> {
+  const workspace = sessionStore.workspaceFor(key);
   const taskId = createNavigationTaskId('session');
   try {
     const history = await operationRunner.run(
@@ -2418,6 +2446,7 @@ function scheduleRiskSelectionCard(
 }
 
 async function replyStatus(frame: WsFrame, key: string): Promise<void> {
+  const workspace = sessionStore.workspaceFor(key);
   const active = activeRuns.get(key);
   const busy = isConversationBusy(key);
   const threadId = currentThreadId(key);
@@ -2448,6 +2477,7 @@ async function replyControl(
   notice: string,
   prompt?: string,
 ): Promise<void> {
+  const workspace = sessionStore.workspaceFor(key);
   const streamId = generateReqId('stream');
   const content = truncateUtf8(renderWeComNotice(title, lines), streamMaxBytes);
   const stream = new WeComStreamReply(client, frame, streamId);
@@ -2556,6 +2586,7 @@ async function sendGeneratedArtifacts(
   frame: WsFrame,
   state: RunState,
   attachments: readonly NormalizedAttachment[],
+  workspace: string,
 ): Promise<number> {
   const body = frame.body;
   if (!body) return 0;
@@ -2637,9 +2668,9 @@ function effectiveReasoningEffort(key: string): string {
   );
 }
 
-async function persistThread(key: string, threadId: string | undefined): Promise<void> {
+async function persistThread(key: string, threadId: string | undefined, binding?: SessionBindingIdentity): Promise<void> {
   if (!threadId) return;
-  await sessionStore.setThread(key, threadId);
+  await sessionStore.setThread(key, threadId, binding);
 }
 
 function createTaskId(): string {
@@ -2772,6 +2803,7 @@ async function shutdown(signal: 'SIGINT' | 'SIGTERM'): Promise<void> {
     });
     await healthStore.flush().catch(() => {});
     await closeLogger();
+    await releaseStateLock();
   })();
   const completed = await waitForCompletion(cleanup, shutdownTimeoutMs);
   if (!completed) {

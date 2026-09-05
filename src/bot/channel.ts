@@ -53,6 +53,9 @@ import type { ScopeContext } from '../policy/run-policy';
 import { createOwnerRefreshController } from '../policy/owner';
 import { RunExecutor } from '../runtime/run-executor';
 import type { TaskLedger } from '../bridge/task-ledger';
+import { InboundCoordinator, openLarkTaskLedger, type InboundTerminal } from '../bridge/inbound-coordinator';
+import { openLarkConversationViews } from '../bridge/conversation-views';
+import type { BridgeIdentity } from '../bridge/identity';
 import type { SessionCatalog } from '../session/catalog';
 import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
@@ -180,11 +183,23 @@ export interface StartChannelDeps {
   sessionCatalog?: SessionCatalog;
   workspaces: WorkspaceStore;
   controls: Controls;
-  appPaths?: Pick<AppPaths, 'secretsFile' | 'keystoreSaltFile' | 'mediaDir'>;
+  appPaths?: Pick<AppPaths, 'secretsFile' | 'keystoreSaltFile' | 'mediaDir'> & Partial<Pick<AppPaths, 'sessionsFile' | 'workspacesFile'>>;
 }
 
 export async function startChannel(deps: StartChannelDeps): Promise<BridgeChannel> {
-  const { cfg, agent, sessions, sessionCatalog, workspaces, controls } = deps;
+  const { cfg, agent, controls } = deps;
+  const identity: BridgeIdentity = {
+    channel: 'lark', accountId: cfg.accounts.app.id, instanceId: controls.profile || 'default',
+  };
+  const scoped = deps.appPaths?.sessionsFile && deps.appPaths.workspacesFile
+    ? await openLarkConversationViews(deps.sessions, {
+        sessionsFile: deps.appPaths.sessionsFile, workspacesFile: deps.appPaths.workspacesFile,
+      }, identity)
+    : undefined;
+  const { sessions, sessionCatalog, workspaces } = scoped ?? deps;
+  const taskLedger = deps.taskLedger ?? (deps.appPaths?.sessionsFile
+    ? await openLarkTaskLedger(deps.sessions, deps.appPaths.sessionsFile) : undefined);
+  const inbound = taskLedger ? new InboundCoordinator(taskLedger, identity) : undefined;
   const activeRuns = new ActiveRuns();
   // ChatModeCache stays per-bridge-instance — invalidated on restart along
   // with everything else. Topic-mode chats only need one chat.get() call ever.
@@ -192,7 +207,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   // Concurrency cap — reads `preferences.maxConcurrentRuns` on each acquire,
   // so /config bumps take effect for the next run.
   const pool = new ProcessPool(() => getMaxConcurrentRuns(controls.cfg));
-  const executor = new RunExecutor({ agent, pool, activeRuns, taskLedger: deps.taskLedger });
+  const executor = new RunExecutor({ agent, pool, activeRuns, taskLedger });
 
   // Resolve the App Secret to plaintext. The config field can be a literal
   // string, a "${VAR}" template, or a {source, id} SecretRef referencing
@@ -291,7 +306,9 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         threadId: firstMsg.threadId,
         msgId: firstMsg.messageId,
       });
+      let inboundStatus: InboundTerminal = 'failed';
       try {
+        const operationId = await inbound?.startBatch(batch);
         const resolvedMode = await chatModeCache.resolve(channel, firstMsg.chatId);
         // Feishu/Lark converted topic groups may still resolve as `group` from
         // the chat info API/cache, while message events already carry threadId.
@@ -307,6 +324,8 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           });
         }
         await runAgentBatch({
+          operationId,
+          onTerminal: (status) => { inboundStatus = status; },
           channel,
           executor,
           sessions,
@@ -325,10 +344,13 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       } catch (err) {
         log.fail('flush', err);
       } finally {
+        await inbound?.finish(batch, inboundStatus).catch((err) => log.fail('inbound-ledger', err, { step: 'terminal' }));
         pending.unblock(scope);
         log.info('flush', 'end');
       }
     });
+  }, (messages) => {
+    void inbound?.finish(messages, 'interrupted').catch((err) => log.fail('inbound-ledger', err, { step: 'cancel' }));
   });
 
   // Counter for stdout reconnect escalation; reset on `reconnected`.
@@ -338,6 +360,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     message: async (msg) => {
       await withTrace({ chatId: msg.chatId, msgId: msg.messageId }, () =>
         intakeMessage({
+          inbound,
           channel,
           agent,
           sessions,
@@ -521,6 +544,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       meetingManager?.dispose();
       controls.meeting = undefined;
       pending.cancelAll();
+      await inbound?.close().catch((err) => log.fail('inbound-ledger', err, { step: 'disconnect' }));
       const [disconnectResult, stopAllResult, ...flushResults] = await Promise.allSettled([
         channel.disconnect(),
         activeRuns.stopAll(),
@@ -614,6 +638,7 @@ async function sendForwardFetchFailedHint(
 }
 
 interface IntakeDeps {
+  inbound?: InboundCoordinator;
   channel: LarkChannel;
   agent: AgentAdapter;
   sessions: SessionStore;
@@ -757,6 +782,19 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     return;
   }
 
+  try {
+    const claim = await deps.inbound?.accept(emsg);
+    if (claim && !claim.accepted) {
+      log.info('intake', 'duplicate-durable', { status: claim.task.status });
+      return;
+    }
+    await deps.inbound?.beforeDispatch(emsg);
+  } catch (err) {
+    log.fail('inbound-ledger', err, { step: 'accept' });
+    await channel.send(msg.chatId, { text: '任务记录暂不可写，本条消息未执行。请检查存储后重新发送。' }, { replyTo: msg.messageId }).catch(() => {});
+    return;
+  }
+  try {
   const handled = await tryHandleCommand({
     channel,
     msg: emsg,
@@ -781,15 +819,24 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
   });
   if (handled) {
     const dropped = pending.cancel(scope);
+    await Promise.all([sessions.flush(), sessionCatalog?.flush(), workspaces.flush()]);
+    await deps.inbound?.finish([emsg], 'done');
     log.info('intake', 'command', { scope, droppedPending: dropped.length });
     return;
   }
 
+  await deps.inbound?.queued(emsg);
   const size = pending.push(scope, emsg);
   log.info('intake', 'queued', { scope, queueSize: size, debounceMs: DEBOUNCE_MS });
+  } catch (err) {
+    await deps.inbound?.finish([emsg], 'failed').catch((failure) => log.fail('inbound-ledger', failure));
+    throw err;
+  }
 }
 
 interface RunBatchDeps {
+  operationId?: string;
+  onTerminal?: (status: InboundTerminal) => void;
   channel: LarkChannel;
   executor: RunExecutor;
   sessions: SessionStore;
@@ -962,6 +1009,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       ? codexCapability(controls.profileConfig)
       : claudeCapability(controls.profileConfig);
   const flow = await startRunFlow({
+    operationId: deps.operationId,
     scopeId: scope,
     scope: scopeContext,
     prompt,
@@ -996,7 +1044,23 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const { execution, cwdRealpath: cwd } = flow;
   activePolicyFingerprints.set(scope, flow.policy.policyFingerprint);
   const handle = execution.handle;
-  const eventStream = execution.subscribe();
+  const eventStream: AsyncIterable<AgentEvent> = {
+    async *[Symbol.asyncIterator]() {
+      let terminal = false;
+      try {
+        for await (const event of execution.subscribe()) {
+          if (event.type === 'done' || event.type === 'error') {
+            terminal = true;
+            deps.onTerminal?.(handle.interrupted || event.terminationReason === 'interrupted'
+              ? 'interrupted' : event.type === 'done' && event.terminationReason === 'normal' ? 'done' : 'failed');
+          }
+          yield event;
+        }
+      } finally {
+        if (!terminal) deps.onTerminal?.(handle.interrupted ? 'interrupted' : 'failed');
+      }
+    },
+  };
   if (flow.resumeFrom) {
     log.info('session', 'resume', { sessionId: flow.resumeFrom, cwd });
   } else {
