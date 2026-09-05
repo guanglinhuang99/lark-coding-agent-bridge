@@ -39,6 +39,32 @@ describe('WeCom Card UI', () => {
     ]);
   });
 
+  it('renders the terminal-style hierarchy used by the WeCom TUI', () => {
+    const card = renderWeComCard({
+      kind: 'interactive',
+      taskId: 'tui_1',
+      source: 'Codex Bridge',
+      sourceColor: statusColor('running'),
+      title: 'Codex 正在执行工具',
+      tui: {
+        status: 'running',
+        eyebrow: 'CODEX · WECOM',
+        body: '检查当前仓库状态',
+        steps: [
+          { label: 'Runtime connected', status: 'done' },
+          { label: 'git status', status: 'running' },
+        ],
+      },
+    });
+
+    expect(card.source?.desc).toBe('▌ CODEX · WECOM');
+    expect(card.main_title?.title).toContain('● Codex 正在执行工具');
+    expect(card.sub_title_text).toContain('▌ ● RUNNING');
+    expect(card.sub_title_text).toContain('┃ 检查当前仓库状态');
+    expect(card.sub_title_text).toContain('├─ ✓ Runtime connected');
+    expect(card.sub_title_text).toContain('└─ ⟳ git status');
+  });
+
   it('redacts secrets in run-card prompt and compacts the home path', () => {
     const secret = 'do-not-show-this-value';
     const card = renderWeComCard(
@@ -111,7 +137,7 @@ describe('WeCom Card UI', () => {
     const card = renderWeComCard(queued);
 
     expect(queued.kind).toBe('notice');
-    expect(card.main_title?.title).toBe('⏳ 已加入队列');
+    expect(card.main_title?.title).toBe('● 已加入队列');
     expect(card.main_title?.desc).toBe('前面还有 2 个任务');
     expect(card.button_list).toBeUndefined();
     expect(card.horizontal_content_list).toEqual([
@@ -122,15 +148,15 @@ describe('WeCom Card UI', () => {
 
   it('maps queue rejection states to user-readable error views', () => {
     expect(buildQueueCardView({ taskId: 'full', status: 'queue-full' }).title).toBe(
-      '❌ 任务队列已满',
+      '任务队列已满',
     );
     expect(buildQueueCardView({ taskId: 'timeout', status: 'queue-timeout' }).title).toBe(
-      '❌ 排队等待超时',
+      '排队等待超时',
     );
     expect(buildErrorCardView({ taskId: 'expired', kind: 'callback-expired' })).toMatchObject({
       kind: 'notice',
       taskId: 'expired',
-      title: '❌ 卡片已失效',
+      title: '卡片已失效',
     });
   });
 

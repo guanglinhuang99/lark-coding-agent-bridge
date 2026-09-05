@@ -10,6 +10,8 @@ import {
   buildWeComControlCard,
   renderWeComAcknowledgement,
   renderWeComMarkdown,
+  renderWeComNotice,
+  renderWeComRiskOutput,
   truncateUtf8,
 } from '../../../src/wecom/presentation';
 
@@ -21,12 +23,38 @@ const meta = {
 
 describe('WeCom rich presentation', () => {
   it('immediately echoes typed text or a selected candidate', () => {
-    expect(renderWeComAcknowledgement('input', '  安联 ESG\n纯债 1 号  ')).toBe(
-      '收到，您输入了「安联 ESG 纯债 1 号」。',
+    const input = renderWeComAcknowledgement('input', '  安联 ESG\n纯债 1 号  ');
+    expect(input).toContain('### ◇ **WECOM · INPUT**');
+    expect(input).toContain('**▌ ○ READY** · **输入已接收**');
+    expect(input).toContain('已输入「安联 ESG 纯债 1 号」。');
+
+    const selection = renderWeComAcknowledgement(
+      'selection',
+      '安联ESG纯债1号资产管理产品',
     );
-    expect(renderWeComAcknowledgement('selection', '安联ESG纯债1号资产管理产品')).toBe(
-      '收到，您选择了「安联ESG纯债1号资产管理产品」。',
+    expect(selection).toContain('**▌ ○ READY** · **选择已接收**');
+    expect(selection).toContain('已选择「安联ESG纯债1号资产管理产品」。');
+  });
+
+  it('renders notices and long risk output through the shared TUI surface', () => {
+    const progress = renderWeComNotice('⏳ 风险限额查询中', ['正在读取规则和持仓。']);
+    expect(progress).toContain('### ⏳ **RISK · WECOM**');
+    expect(progress).toContain('**▌ ● RUNNING** · **风险限额查询中**');
+    expect(progress).toContain('> └─ 正在读取规则和持仓。');
+
+    const result = renderWeComRiskOutput(
+      '🔴 **未通过**：本笔投资引发 1 项新增超限/问题\n\n- 现金不足',
     );
+    expect(result).toContain('### ❌ **RISK · WECOM**');
+    expect(result).toContain('**▌ × FAILED** · **风险检查未通过**');
+    expect(result).toContain('🔴 **未通过**：本笔投资引发 1 项新增超限/问题');
+    expect(result).toContain('- 现金不足');
+
+    const selectionResult = renderWeComRiskOutput('请选择匹配的证券。', true);
+    expect(selectionResult).toContain('**▌ ! ACTION REQUIRED** · **等待用户操作**');
+
+    const passed = renderWeComRiskOutput('🟢 本笔投资未引发新增超限。');
+    expect(passed).toContain('**▌ ✓ COMPLETED** · **风险检查完成**');
   });
 
   it('preserves headings, lists, quotes, links, bold, inline code, and code fences', () => {
@@ -57,7 +85,7 @@ describe('WeCom rich presentation', () => {
     expect(markdown).toContain('中文🙂');
   });
 
-  it('renders agent Markdown, tool status, and a card-like status header', () => {
+  it('renders agent Markdown with user-facing progress and no runtime details', () => {
     let state: RunState = {
       ...initialState,
       blocks: [],
@@ -82,15 +110,18 @@ describe('WeCom rich presentation', () => {
 
     const markdown = renderWeComMarkdown(state, meta);
 
-    expect(markdown).toContain('### 🤖 Codex');
-    expect(markdown).toContain('正在输出');
-    expect(markdown).toContain('web-cli');
-    expect(markdown).toContain('**Bash**');
+    expect(markdown).toContain('### 🤖 **CODEX**');
+    expect(markdown).toContain('**▌ ● STREAM**');
+    expect(markdown).toContain('└─ ⟳ 正在整理回答…');
+    expect(markdown).not.toContain('workspace');
+    expect(markdown).not.toContain('session');
+    expect(markdown).not.toContain('Bash');
+    expect(markdown).not.toContain('git status');
     expect(markdown).toContain('**检查完成**');
     expect(markdown).toContain('```text');
   });
 
-  it('builds an interactive control card with stop/new/status actions', () => {
+  it('builds a TUI-style interactive control card with stop/new/status actions', () => {
     const card = buildWeComControlCard({
       ...meta,
       taskId: 'codex_123_abc',
@@ -100,7 +131,12 @@ describe('WeCom rich presentation', () => {
 
     expect(card.card_type).toBe('button_interaction');
     expect(card.task_id).toBe('codex_123_abc');
-    expect(card.main_title?.title).toBe('Codex 会话控制');
+    expect(card.source?.desc).toBe('▌ CODEX · WECOM');
+    expect(card.main_title?.title).toContain('正在处理');
+    expect(card.sub_title_text).toContain('RUNNING');
+    expect(card.sub_title_text).toContain('✓ 请求已接收');
+    expect(card.sub_title_text).toContain('⟳ 正在处理请求');
+    expect(card.horizontal_content_list).toBeUndefined();
     expect(card.button_list?.map((button) => button.key)).toEqual(['stop', 'new', 'status']);
     expect(JSON.stringify(card)).toContain('检查当前仓库状态');
   });
@@ -118,25 +154,67 @@ describe('WeCom rich presentation', () => {
     });
 
     expect(first.button_list?.map((button) => button.key)).toEqual(['new', 'status']);
+    expect(first.sub_title_text).toContain('READY');
     expect(first.task_id).toBe('codex_stable_task');
     expect(second.task_id).toBe(first.task_id);
   });
 
-  it('renders thinking, tool, streaming, and done transitions from the shared RunState', () => {
-    let state = reduce(freshState(), { type: 'thinking', delta: '分析中' });
-    expect(renderWeComMarkdown(state, meta)).toContain('正在思考');
+  it('refreshes the control card from live RunState', () => {
+    let state = reduce(freshState(), {
+      type: 'tool_use',
+      id: 'tool-live',
+      name: 'npm run ci',
+      input: {},
+    });
+    let card = buildWeComControlCard({
+      ...meta,
+      taskId: 'codex_live_task',
+      status: 'running',
+      prompt: '测试项目',
+      runState: state,
+    });
 
-    state = reduce(state, { type: 'tool_use', id: 'tool-1', name: 'Read', input: {} });
-    expect(renderWeComMarkdown(state, meta)).toContain('正在调用工具');
+    expect(card.main_title?.title).toContain('正在处理');
+    expect(card.sub_title_text).toContain('RUNNING');
+    expect(card.sub_title_text).toContain('⟳ 正在处理请求');
+    expect(JSON.stringify(card)).not.toContain('npm run ci');
 
-    state = reduce(state, { type: 'text', delta: '流式回答' });
-    expect(renderWeComMarkdown(state, meta)).toContain('正在输出');
-
+    state = reduce(state, {
+      type: 'tool_result',
+      id: 'tool-live',
+      output: 'pass',
+      isError: false,
+    });
     state = reduce(state, { type: 'done', terminationReason: 'normal' });
-    expect(renderWeComMarkdown(state, meta)).toContain('已完成');
+    card = buildWeComControlCard({
+      ...meta,
+      taskId: 'codex_live_task',
+      status: 'running',
+      prompt: '测试项目',
+      runState: state,
+    });
+
+    expect(card.main_title?.title).toContain('处理完成');
+    expect(card.sub_title_text).toContain('COMPLETED');
+    expect(card.button_list?.map((button) => button.key)).toEqual(['new', 'status']);
   });
 
-  it('shows tool errors, interrupted runs, and terminal errors distinctly', () => {
+  it('renders thinking, tool, streaming, and done transitions from the shared RunState', () => {
+    let state = reduce(freshState(), { type: 'thinking', delta: '分析中' });
+    expect(renderWeComMarkdown(state, meta)).toContain('THINK');
+
+    state = reduce(state, { type: 'tool_use', id: 'tool-1', name: 'Read', input: {} });
+    expect(renderWeComMarkdown(state, meta)).toContain('RUNNING');
+    expect(renderWeComMarkdown(state, meta)).not.toContain('Read');
+
+    state = reduce(state, { type: 'text', delta: '流式回答' });
+    expect(renderWeComMarkdown(state, meta)).toContain('STREAM');
+
+    state = reduce(state, { type: 'done', terminationReason: 'normal' });
+    expect(renderWeComMarkdown(state, meta)).toBe('流式回答');
+  });
+
+  it('hides tool errors while keeping interrupted and terminal errors user-readable', () => {
     let toolState = reduce(freshState(), {
       type: 'tool_use',
       id: 'tool-error',
@@ -149,7 +227,8 @@ describe('WeCom rich presentation', () => {
       output: 'failed',
       isError: true,
     });
-    expect(renderWeComMarkdown(toolState, meta)).toContain('❌ **Bash**');
+    expect(renderWeComMarkdown(toolState, meta)).not.toContain('Bash');
+    expect(renderWeComMarkdown(toolState, meta)).not.toContain('false');
 
     expect(renderWeComMarkdown(markInterrupted(freshState()), meta)).toContain('已中断');
 
@@ -221,7 +300,7 @@ describe('WeCom rich presentation', () => {
     expect(markdown).toContain('最终结论');
   });
 
-  it('redacts common secrets and compacts the home path in tool summaries', () => {
+  it('does not expose tool inputs or secrets in the user-facing stream', () => {
     const secret = 'do-not-show-this-value';
     const state = reduce(freshState(), {
       type: 'tool_use',
@@ -235,8 +314,9 @@ describe('WeCom rich presentation', () => {
     const markdown = renderWeComMarkdown(state, meta);
     expect(markdown).not.toContain(secret);
     expect(markdown).not.toContain(homedir());
-    expect(markdown).toContain('WECOM_SECRET=[REDACTED]');
-    expect(markdown).toContain('~/private/secret.txt');
+    expect(markdown).not.toContain('WECOM_SECRET');
+    expect(markdown).not.toContain('private/secret.txt');
+    expect(markdown).not.toContain('Bash');
   });
 
   it('does not include tool output in the compact WeCom Markdown view', () => {

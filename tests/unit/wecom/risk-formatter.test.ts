@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   formatCalculation,
   formatCounterpartyCheck,
+  formatSecurityCheck,
 } from '../../../src/wecom/risk/formatter';
 
 describe('WeCom risk result formatting', () => {
@@ -74,5 +75,55 @@ describe('WeCom risk result formatting', () => {
 
     expect(markdown).toContain('引发 1 项新增超限/问题');
     expect(markdown).not.toContain('引发 2 项新增超限/问题');
+  });
+
+  it('redacts backend Pin, path, and exception details from failures', () => {
+    const markdown = formatCalculation({
+      status: 'error',
+      error: '读取 Pins PTF_SCOPE 失败: /Users/example/private/ledger RuntimeError traceback',
+    });
+
+    expect(markdown).toContain('暂时无法完成测算');
+    expect(markdown).not.toMatch(/Pins|PTF_SCOPE|RuntimeError|traceback|\/Users\/example/);
+  });
+
+  it('does not expose raw blacklist evidence JSON', () => {
+    const markdown = formatSecurityCheck({
+      hit: true,
+      blacklist_matches: [
+        {
+          pin: 'PTF_SCOPE_INTERNAL',
+          path: '/Users/example/private/blacklist.json',
+          error: 'RuntimeError: backend detail',
+        },
+      ],
+    });
+
+    expect(markdown).toContain('已匹配 1 项证据');
+    expect(markdown).not.toContain('PTF_SCOPE_INTERNAL');
+    expect(markdown).not.toContain('/Users/example');
+    expect(markdown).not.toContain('RuntimeError');
+  });
+
+  it('does not expose an unknown internal issue code', () => {
+    const markdown = formatCalculation({
+      status: 'success',
+      result: {
+        before: { status_counts: { PASS: 1 } },
+        after: { status_counts: { FAIL: 1 } },
+        comparison: [],
+        issues: [
+          {
+            code: 'SQLITE_ERROR_INTERNAL',
+            status: 'FAIL',
+            introduced_by_scenario: true,
+            message: '该笔交易未通过业务规则。',
+          },
+        ],
+      },
+    });
+
+    expect(markdown).toContain('该笔交易未通过业务规则');
+    expect(markdown).not.toContain('SQLITE_ERROR_INTERNAL');
   });
 });
