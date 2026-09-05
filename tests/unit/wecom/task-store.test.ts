@@ -34,10 +34,26 @@ describe('WeComTaskStore', () => {
     expect(raw).toContain(hashOperationKey('sensitive-message-id'));
   });
 
-  it('marks in-flight work interrupted on restart and permits one replay', async () => {
+  it('replays work that was still queued before restart', async () => {
     const file = await taskFile();
     const firstStore = new WeComTaskStore(file);
-    const first = await firstStore.claimInbound('msg-1', 'group:g1');
+    const first = await firstStore.claimInbound('queued-msg', 'group:g1');
+    await firstStore.annotate(first.task.id, { kind: 'codex', label: 'Codex 对话' });
+    await firstStore.flush();
+
+    const restarted = new WeComTaskStore(file);
+    await restarted.load();
+    const replay = await restarted.claimInbound('queued-msg', 'group:g1');
+    expect(replay.accepted).toBe(true);
+    expect(replay.replayed).toBe(true);
+    expect(replay.task.attempts).toBe(2);
+  });
+
+  it('allows one restart replay for deterministic running risk work', async () => {
+    const file = await taskFile();
+    const firstStore = new WeComTaskStore(file);
+    const first = await firstStore.claimInbound('risk-msg', 'group:g1');
+    await firstStore.annotate(first.task.id, { kind: 'risk', label: '风险测算 / 查询' });
     await firstStore.markRunning(first.task.id);
     await firstStore.flush();
 
@@ -46,13 +62,30 @@ describe('WeComTaskStore', () => {
     expect(restarted.snapshot().interrupted).toBe(1);
     expect(restarted.snapshot().recoveredAtStartup).toBe(1);
 
-    const replay = await restarted.claimInbound('msg-1', 'group:g1');
+    const replay = await restarted.claimInbound('risk-msg', 'group:g1');
     expect(replay.accepted).toBe(true);
     expect(replay.replayed).toBe(true);
     expect(replay.task.attempts).toBe(2);
 
-    const duplicate = await restarted.claimInbound('msg-1', 'group:g1');
+    const duplicate = await restarted.claimInbound('risk-msg', 'group:g1');
     expect(duplicate.accepted).toBe(false);
+  });
+
+  it('never silently replays a running Codex task after restart', async () => {
+    const file = await taskFile();
+    const firstStore = new WeComTaskStore(file);
+    const first = await firstStore.claimInbound('codex-msg', 'single:u1');
+    await firstStore.annotate(first.task.id, { kind: 'codex', label: 'Codex 对话' });
+    await firstStore.markRunning(first.task.id);
+    await firstStore.flush();
+
+    const restarted = new WeComTaskStore(file);
+    await restarted.load();
+    const duplicate = await restarted.claimInbound('codex-msg', 'single:u1');
+    expect(duplicate.accepted).toBe(false);
+    expect(duplicate.replayed).toBe(false);
+    expect(duplicate.task.status).toBe('interrupted');
+    expect(duplicate.task.recoveryFrom).toBe('running');
   });
 
   it('keeps only bounded recent records', async () => {
