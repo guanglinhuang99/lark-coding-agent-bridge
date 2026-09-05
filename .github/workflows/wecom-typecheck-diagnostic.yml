@@ -1,0 +1,44 @@
+name: WeCom Typecheck Diagnostic
+
+on:
+  push:
+    branches:
+      - feat/wecom-reliability-p0-p1
+
+permissions:
+  contents: write
+
+jobs:
+  capture:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/wecom-reliability-p0-p1
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Capture typecheck
+        shell: bash
+        run: |
+          mkdir -p ci-debug
+          set +e
+          pnpm typecheck > ci-debug/typecheck-ubuntu.txt 2>&1
+          code=$?
+          echo "exit_code=$code" >> ci-debug/typecheck-ubuntu.txt
+          exit 0
+      - name: Commit diagnostic
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ci-debug/typecheck-ubuntu.txt
+          git commit -m "chore(wecom): capture typecheck output"
+          git push origin HEAD:feat/wecom-reliability-p0-p1
