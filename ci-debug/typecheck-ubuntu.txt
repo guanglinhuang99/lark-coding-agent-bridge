@@ -1,5 +1,0 @@
-
-> lark-channel-bridge@0.7.2 typecheck /home/runner/work/lark-coding-agent-bridge/lark-coding-agent-bridge
-> tsc --noEmit
-
-exit_code=0
