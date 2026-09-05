@@ -1,0 +1,54 @@
+name: Apply and validate shared bridge core
+on:
+  push:
+    branches: [refactor/shared-bridge-core]
+    paths: [.github/workflows/shared-core-apply.yml]
+permissions:
+  contents: read
+jobs:
+  apply:
+    if: github.repository == 'guanglinhuang99/lark-coding-agent-bridge' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      commit: ${{ steps.apply.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - id: apply
+        name: Apply guarded extraction on feature branch only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code cc96c5b44d7418cd3e19d065be20b52aaa9bd6ba HEAD -- src/bot/channel.ts src/wecom/cli.ts src/wecom/runtime.ts src/runtime/supervisor.ts src/wecom/task-store.ts
+          python scripts/apply-shared-core.py
+          rm scripts/apply-shared-core.py .github/workflows/shared-core-apply.yml
+          git diff --check
+          git add src tests docs scripts/apply-shared-core.py .github/workflows/shared-core-apply.yml
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'refactor: connect Lark and WeCom to shared bridge core'
+          git push origin HEAD:refs/heads/refactor/shared-bridge-core
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+  validate:
+    needs: apply
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.apply.outputs.commit }}
+      - run: corepack enable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm typecheck
+      - run: pnpm build
