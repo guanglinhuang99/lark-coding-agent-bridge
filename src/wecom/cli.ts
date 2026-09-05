@@ -156,6 +156,21 @@ import {
   type RiskAiDraft,
   type RiskIntentState,
 } from './risk/intent';
+import { WeComTaskStore } from './task-store';
+import {
+  WeComOperationRunner,
+  capacityNotice,
+  classifyTask,
+  conversationQueueNotice,
+  failureKind,
+  readPositiveInt,
+} from './reliability';
+import {
+  buildWeComDoctorCardView,
+  buildWeComRecentTasksCardView,
+  recentTaskHint,
+  type WeComDependencyCheck,
+} from './ui/doctor';
 
 type TextFrame = WsFrame<TextMessage>;
 type ImageFrame = WsFrame<ImageMessage>;
@@ -170,6 +185,7 @@ interface ActiveRunRecord {
   prompt: string;
   taskId: string;
   threadId?: string;
+  durableTaskId?: string;
 }
 
 const envFile = path.resolve(process.env.WECOM_ENV_FILE?.trim() || '.env');
@@ -180,6 +196,7 @@ const stateDir = path.resolve(
   process.env.WECOM_STATE_DIR || path.join(os.homedir(), '.lark-channel', 'wecom'),
 );
 const sessionFile = path.join(stateDir, 'sessions.json');
+const taskFile = path.join(stateDir, 'tasks.json');
 const healthFile = path.join(stateDir, 'health.json');
 const healthStaleMs = readPositiveInt(process.env.WECOM_HEALTH_STALE_MS, 90_000);
 
@@ -239,6 +256,11 @@ const sessionMaxAgeMs = readPositiveInt(
   90 * 24 * 60 * 60 * 1000,
 );
 const sessionMaxEntries = readPositiveInt(process.env.WECOM_SESSION_MAX_ENTRIES, 2_000);
+const taskMaxAgeMs = readPositiveInt(
+  process.env.WECOM_TASK_TTL_MS,
+  7 * 24 * 60 * 60 * 1000,
+);
+const taskMaxEntries = readPositiveInt(process.env.WECOM_TASK_MAX_ENTRIES, 2_000);
 const mediaDir = path.join(stateDir, 'media');
 const mediaCacheMaxAgeMs = readPositiveInt(
   process.env.WECOM_MEDIA_CACHE_TTL_MS,
@@ -292,6 +314,12 @@ const sessionStore = new WeComSessionStore(sessionFile, {
   maxEntries: sessionMaxEntries,
 });
 await sessionStore.load();
+const taskStore = new WeComTaskStore(taskFile, {
+  maxAgeMs: taskMaxAgeMs,
+  maxEntries: taskMaxEntries,
+});
+await taskStore.load();
+const operationRunner = new WeComOperationRunner();
 const activeRuns = new Map<string, ActiveRunRecord>();
 const startingRuns = new Set<string>();
 const navigationCardTtlMs = 5 * 60_000;
@@ -443,13 +471,7 @@ process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
 function handleMessageEvent<T extends BaseMessage>(frame: WsFrame<T>): void {
-  const messageId = frame.body?.msgid;
-  if (messageId && !messageDeduplicator.claim(messageId)) {
-    log.info('wecom-message', 'duplicate', { messageId });
-    reportMetric('wecom_duplicate_message', 1);
-    return;
-  }
-  void handleMessage(frame).catch(async (err: unknown) => {
+  void processMessageEvent(frame).catch(async (err: unknown) => {
     const message = redactDiagnosticText(err instanceof Error ? err.message : String(err));
     log.fail('wecom-message', err);
     reportMetric('wecom_message_failures', 1, { kind: failureKind(err) });
@@ -458,7 +480,54 @@ function handleMessageEvent<T extends BaseMessage>(frame: WsFrame<T>): void {
   });
 }
 
-async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<void> {
+async function processMessageEvent<T extends BaseMessage>(frame: WsFrame<T>): Promise<void> {
+  const messageId = frame.body?.msgid;
+  if (messageId && !messageDeduplicator.claim(messageId)) {
+    log.info('wecom-message', 'duplicate-memory');
+    reportMetric('wecom_duplicate_message', 1, { layer: 'memory' });
+    return;
+  }
+
+  let durableTaskId: string | undefined;
+  if (messageId && frame.body) {
+    try {
+      const claim = await taskStore.claimInbound(messageId, conversationKey(frame.body));
+      if (!claim.accepted) {
+        log.info('wecom-message', 'duplicate-durable', { status: claim.task.status });
+        reportMetric('wecom_duplicate_message', 1, { layer: 'durable' });
+        return;
+      }
+      durableTaskId = claim.task.id;
+      if (claim.replayed) {
+        log.info('wecom-task', 'replayed-after-restart', { taskId: durableTaskId });
+        reportMetric('wecom_task_replayed_after_restart', 1);
+      }
+    } catch (err) {
+      // Do not drop a valid user message because the optional durable ledger is temporarily unwritable.
+      // The existing in-memory dedupe remains active for this process; report the degraded state.
+      log.fail('wecom-task', err, { step: 'claim' });
+      reportMetric('wecom_task_store_failures', 1, { step: 'claim' });
+    }
+  }
+
+  try {
+    await handleMessage(frame, durableTaskId);
+    if (durableTaskId) {
+      await taskStore.markDone(durableTaskId).catch((err: unknown) => {
+        log.fail('wecom-task', err, { step: 'mark-done' });
+        reportMetric('wecom_task_store_failures', 1, { step: 'mark-done' });
+      });
+    }
+  } catch (err) {
+    if (durableTaskId) await taskStore.markFailed(durableTaskId, failureKind(err)).catch(() => {});
+    throw err;
+  }
+}
+
+async function handleMessage<T extends BaseMessage>(
+  frame: WsFrame<T>,
+  durableTaskId?: string,
+): Promise<void> {
   const body = frame.body;
   if (!body) return;
 
@@ -468,6 +537,15 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
 
   const key = conversationKey(body);
   const parsedCommand = parseWeComCommand(text);
+  if (durableTaskId) {
+    const task = classifyTask(text, {
+      hasAttachments: mediaInputs.length > 0,
+      risk: parsedCommand.kind === 'risk-measurement',
+    });
+    await taskStore.annotate(durableTaskId, task).catch((err: unknown) => {
+      log.fail('wecom-task', err, { step: 'annotate' });
+    });
+  }
   if (parsedCommand.kind === 'help') {
     await replyOnce(frame, '使用帮助', WECOM_HELP_LINES);
     return;
@@ -483,6 +561,16 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
 
   if (command === '/menu') {
     await replyHomeCard(frame, key);
+    return;
+  }
+
+  if (command === '/doctor') {
+    await replyDoctor(frame, key);
+    return;
+  }
+
+  if (command === '/runs') {
+    await replyRuns(frame, key);
     return;
   }
 
@@ -560,6 +648,9 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
     }
 
     active.state = markInterrupted(active.state);
+    if (active.durableTaskId) {
+      await taskStore.markInterrupted(active.durableTaskId).catch(() => {});
+    }
     await active.run.stop();
     await replyControl(
       frame,
@@ -583,6 +674,9 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
   );
   const riskAccessDenied = riskCandidate && !isRiskUserAllowed(body.from?.userid);
   const useRiskFastPath = riskCandidate && !riskAccessDenied;
+  if (durableTaskId && useRiskFastPath) {
+    await taskStore.annotate(durableTaskId, { kind: 'risk', label: '风险测算 / 查询' }).catch(() => {});
+  }
   const acknowledgement = text
     ? renderWeComAcknowledgement('input', text)
     : `收到，您发送的 ${mediaInputs.length} 个附件已收到。`;
@@ -614,10 +708,12 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
         riskAccessDenied,
         controlTaskId,
         controlCardAttached,
+        durableTaskId,
       );
     });
   } catch (err) {
     if (!(err instanceof WeComConversationQueueError)) throw err;
+    if (durableTaskId) await taskStore.markFailed(durableTaskId, err.reason).catch(() => {});
     reportMetric('wecom_conversation_queue_rejected', 1, { reason: err.reason });
     await replyOnce(frame, '⚠️ 当前会话排队较多', [
       '本条消息没有入队，请稍后重新发送。',
@@ -706,8 +802,10 @@ async function handleMessage<T extends BaseMessage>(frame: WsFrame<T>): Promise<
         ),
       ).catch(() => {});
       await deliverErrorCard(frame, 'execution');
+      if (durableTaskId) await taskStore.markFailed(durableTaskId, failureKind(err)).catch(() => {});
       return;
     }
+    if (durableTaskId) await taskStore.markFailed(durableTaskId, err.reason).catch(() => {});
     reportMetric('wecom_conversation_queue_rejected', 1, { reason: err.reason });
     await stream.finish(
       truncateUtf8(
@@ -729,11 +827,13 @@ async function executeConversationMessage(
   riskAccessDenied: boolean,
   controlTaskId: string,
   controlCardAttached: boolean,
+  durableTaskId?: string,
 ): Promise<void> {
   const submittedAt = Date.now();
   try {
     await withReservation(startingRuns, key, async () =>
       runGate.run(async () => {
+        if (durableTaskId) await taskStore.markRunning(durableTaskId);
         const queueWaitMs = Date.now() - submittedAt;
         reportMetric('wecom_queue_wait_ms', queueWaitMs);
         log.info('wecom-run', 'admitted', { queueWaitMs });
@@ -936,6 +1036,7 @@ async function executeConversationMessage(
           stream,
           controlTaskId,
           controlCardAttached,
+          durableTaskId,
         );
       }),
     );
@@ -948,6 +1049,7 @@ async function executeConversationMessage(
       queued: capacity.queued,
     });
     reportMetric('wecom_run_rejected', 1, { reason: err.reason });
+    if (durableTaskId) await taskStore.markFailed(durableTaskId, err.reason).catch(() => {});
     await stream.finish(
       truncateUtf8(
         renderWeComNotice('⚠️ 当前任务较多', [
@@ -1294,6 +1396,7 @@ async function runCodexPrompt(
   stream: WeComStreamReply,
   taskId: string,
   controlCardAttached: boolean,
+  durableTaskId?: string,
 ): Promise<void> {
   const requestStartedAt = Date.now();
   const streamUpdates = new WeComStreamUpdatePump(stream);
@@ -1345,6 +1448,7 @@ async function runCodexPrompt(
     log.fail('wecom-run', err, { step: 'start', kind: failureKind(err) });
     reportMetric('wecom_run_failures', 1, { kind: failureKind(err), step: 'start' });
     reportMetric('wecom_run_e2e_ms', Date.now() - requestStartedAt, { terminal: 'failed-start' });
+    if (durableTaskId) await taskStore.markFailed(durableTaskId, 'agent-startup').catch(() => {});
     console.error(`Failed to start Codex run: ${redactDiagnosticText(message)}`);
     return;
   }
@@ -1355,6 +1459,7 @@ async function runCodexPrompt(
     prompt: displayPrompt,
     taskId,
     threadId,
+    durableTaskId,
   };
   await withActiveRun(activeRuns, key, active, async () => {
     await refreshHealth();
@@ -1417,6 +1522,21 @@ async function runCodexPrompt(
       state = finalizeIfRunning(state);
       active.state = state;
       active.threadId = threadId;
+      if (durableTaskId) {
+        const persistTerminal =
+          state.terminal === 'done'
+            ? taskStore.markDone(durableTaskId)
+            : state.terminal === 'interrupted'
+              ? taskStore.markInterrupted(durableTaskId)
+              : taskStore.markFailed(durableTaskId, state.terminal);
+        await persistTerminal.catch((err: unknown) => {
+          log.fail('wecom-task', err, { step: 'mark-terminal', terminal: state.terminal });
+          reportMetric('wecom_task_store_failures', 1, {
+            step: 'mark-terminal',
+            terminal: state.terminal,
+          });
+        });
+      }
       await persistThread(key, threadId);
 
       const finalText = renderStream(state, threadId);
@@ -1447,6 +1567,7 @@ async function runCodexPrompt(
       await deliverErrorCard(frame, 'execution');
       log.fail('wecom-run', err, { step: 'run', kind: failureKind(err) });
       reportMetric('wecom_run_failures', 1, { kind: failureKind(err), step: 'run' });
+      if (durableTaskId) await taskStore.markFailed(durableTaskId, failureKind(err)).catch(() => {});
       console.error(`Codex run failed: ${redactDiagnosticText(message)}`);
     }
   });
@@ -1544,6 +1665,9 @@ async function handleHomeCardEvent(
     await updateHomeCard(frame, key, taskId);
     if (active) {
       active.state = markInterrupted(active.state);
+      if (active.durableTaskId) {
+        void taskStore.markInterrupted(active.durableTaskId).catch(() => {});
+      }
       void active.run.stop().catch((err: unknown) => {
         console.error(`Failed to stop Codex run: ${err instanceof Error ? err.message : String(err)}`);
       });
@@ -1590,6 +1714,9 @@ async function handleLegacyControlCardEvent(
     );
     if (active) {
       active.state = markInterrupted(active.state);
+      if (active.durableTaskId) {
+        void taskStore.markInterrupted(active.durableTaskId).catch(() => {});
+      }
       void active.run.stop().catch((err: unknown) => {
         console.error(`Failed to stop Codex run: ${err instanceof Error ? err.message : String(err)}`);
       });
@@ -1652,6 +1779,79 @@ async function replyHomeCard(frame: WsFrame, key: string): Promise<void> {
   await client.replyTemplateCard(frame, renderWeComCard(buildHomeCardView(homeCardOptions(key))));
 }
 
+async function replyDoctor(frame: WsFrame, key: string): Promise<void> {
+  const taskSnapshot = taskStore.snapshot();
+  const riskConfigured = Boolean(riskPython || configuredRiskServiceDir);
+  const codexAvailability = await operationRunner
+    .run('codex-health', () => codex.checkAvailability(), {
+      idempotent: true,
+      maxAttempts: 1,
+      timeoutMs: 6_000,
+    })
+    .catch((err: unknown) => {
+      log.fail('wecom-doctor', err, { dependency: 'codex' });
+      return undefined;
+    });
+  const circuitOpen = ['codex-health', 'codex-history', 'media-download'].some(
+    (name) => operationRunner.snapshot(name).state === 'open',
+  );
+  const dependencies: WeComDependencyCheck[] = [
+    {
+      name: 'WeCom',
+      status: connected ? 'ok' : 'error',
+      detail: connected ? 'connected' : healthPhase,
+    },
+    {
+      name: 'Codex',
+      status: codexAvailability?.ok ? 'ok' : 'error',
+      detail: codexAvailability?.ok
+        ? codexAvailability.version || effectiveModel(key) || 'available'
+        : codexAvailability
+          ? codexAvailability.diagnostic.code
+          : 'health check failed',
+    },
+    {
+      name: 'Workspace',
+      status: existsSync(workspace) ? 'ok' : 'error',
+      detail: existsSync(workspace) ? path.basename(workspace) : 'path unavailable',
+    },
+    {
+      name: 'Risk Service',
+      status: riskDirectEnabled ? 'ok' : riskConfigured ? 'error' : 'warning',
+      detail: riskDirectEnabled ? 'ready' : riskConfigured ? 'configuration unavailable' : 'not enabled',
+    },
+    { name: 'Task Store', status: 'ok', detail: `${taskSnapshot.total} records` },
+    {
+      name: 'Retry / Circuit',
+      status: circuitOpen ? 'warning' : 'ok',
+      detail: circuitOpen ? 'downstream circuit open' : 'closed',
+    },
+  ];
+  await client.replyTemplateCard(
+    frame,
+    renderWeComCard(
+      buildWeComDoctorCardView({
+        taskId: createTaskId(),
+        dependencies,
+        tasks: taskSnapshot,
+        queueActive: activeRuns.size,
+        queueStarting: startingRuns.size,
+      }),
+    ),
+  );
+}
+
+async function replyRuns(frame: WsFrame, key: string): Promise<void> {
+  const recent = taskStore
+    .recent(key, 8)
+    .filter((task) => task.label !== '最近任务')
+    .slice(0, 6);
+  await client.replyTemplateCard(
+    frame,
+    renderWeComCard(buildWeComRecentTasksCardView({ taskId: createTaskId(), tasks: recent })),
+  );
+}
+
 async function replySettingsSummary(frame: WsFrame, key: string): Promise<void> {
   await client.replyTemplateCard(
     frame,
@@ -1676,6 +1876,14 @@ function homeCardOptions(key: string, taskId = createNavigationTaskId('menu')) {
     model: effectiveModel(key),
     reasoning: effectiveReasoningEffort(key),
     threadId: currentThreadId(key),
+    recentTask: recentTaskHint(
+      taskStore
+        .recent(key, 10)
+        .find(
+          (task) =>
+            task.kind !== 'command' && task.status !== 'queued' && task.status !== 'running',
+        ),
+    ),
   };
 }
 
@@ -1714,14 +1922,19 @@ async function replyReasoningSelection(frame: WsFrame, key: string): Promise<voi
 async function replySessionSelection(frame: WsFrame, key: string): Promise<void> {
   const taskId = createNavigationTaskId('session');
   try {
-    const history = await listCodexThreadHistory({
-      binary: process.env.CODEX_BINARY?.trim() || 'codex',
-      cwd: workspace,
-      limit: 10,
-      profileStateDir: stateDir,
-      inheritCodexHome: true,
-      timeoutMs: 5_000,
-    });
+    const history = await operationRunner.run(
+      'codex-history',
+      () =>
+        listCodexThreadHistory({
+          binary: process.env.CODEX_BINARY?.trim() || 'codex',
+          cwd: workspace,
+          limit: 10,
+          profileStateDir: stateDir,
+          inheritCodexHome: true,
+          timeoutMs: 5_000,
+        }),
+      { idempotent: true, maxAttempts: 2, timeoutMs: 6_000 },
+    );
     const sessions: WeComSessionOption[] = history.map((entry) => ({
       id: entry.threadId,
       label: entry.name || entry.preview || '(空会话)',
@@ -2284,7 +2497,15 @@ async function resolveAttachments(
   const startedAt = Date.now();
   let attachments: NormalizedAttachment[];
   try {
-    attachments = await mediaStore.resolve(inputs, attachmentOptions);
+    attachments = await operationRunner.run(
+      'media-download',
+      () => mediaStore.resolve(inputs, attachmentOptions),
+      {
+        idempotent: true,
+        maxAttempts: 2,
+        timeoutMs: attachmentOptions.downloadTimeoutMs + 5_000,
+      },
+    );
   } catch (err) {
     log.fail('wecom-media-resolve', err, {
       durationMs: Date.now() - startedAt,
@@ -2446,46 +2667,8 @@ function freshRunState(): RunState {
   };
 }
 
-function readPositiveInt(value: string | undefined, fallback: number): number {
-  const parsed = value ? Number(value) : fallback;
-  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
-  return Math.floor(parsed);
-}
-
 function isRiskUserAllowed(userid: string | undefined): boolean {
   return riskAllowedUserIds.size === 0 || (Boolean(userid) && riskAllowedUserIds.has(userid ?? ''));
-}
-
-function capacityNotice(reason: WeComRunCapacityError['reason']): string {
-  if (reason === 'queue-full') return '任务队列已满';
-  if (reason === 'queue-timeout') return '排队等待超时';
-  return '服务正在停止';
-}
-
-function conversationQueueNotice(reason: WeComConversationQueueError['reason']): string {
-  if (reason === 'queue-full') return '当前会话队列已满';
-  if (reason === 'queue-timeout') return '等待时间过长，消息已从队列移除，请重新发送';
-  return '服务正在停止';
-}
-
-function failureKind(err: unknown): string {
-  const item =
-    err && typeof err === 'object'
-      ? (err as { name?: unknown; code?: unknown; response?: { status?: unknown } })
-      : {};
-  if (item.name === 'WeComMediaTimeoutError') return 'timeout';
-  const status = item.response?.status;
-  if (typeof status === 'number') {
-    if (status === 429) return 'rate-limit';
-    if (status >= 500) return 'http-5xx';
-    if (status >= 400) return 'http-4xx';
-  }
-  const code = typeof item.code === 'string' ? item.code.toUpperCase() : '';
-  if (code === 'ETIMEDOUT' || code === 'ECONNABORTED') return 'timeout';
-  if (code.startsWith('ECONN') || code.startsWith('ENET') || code === 'EHOSTUNREACH') {
-    return 'network';
-  }
-  return 'other';
 }
 
 function isConversationBusy(key: string): boolean {
@@ -2522,15 +2705,18 @@ async function runMaintenance(): Promise<void> {
     const logsRemoved = await gcOldLogs();
     const mediaRemoved = await gcWeComMediaCache(mediaDir, mediaCacheMaxAgeMs);
     const sessionsRemoved = await sessionStore.prune();
+    const tasksRemoved = await taskStore.prune();
     const cardsRemoved = navigationCards.prune();
     reportMetric('wecom_maintenance_removed', logsRemoved, { kind: 'logs' });
     reportMetric('wecom_maintenance_removed', mediaRemoved, { kind: 'media' });
     reportMetric('wecom_maintenance_removed', sessionsRemoved, { kind: 'sessions' });
+    reportMetric('wecom_maintenance_removed', tasksRemoved, { kind: 'tasks' });
     reportMetric('wecom_maintenance_removed', cardsRemoved, { kind: 'cards' });
     log.info('wecom-maintenance', 'completed', {
       logsRemoved,
       mediaRemoved,
       sessionsRemoved,
+      tasksRemoved,
       cardsRemoved,
     });
   } catch (err) {
@@ -2571,6 +2757,11 @@ async function shutdown(signal: 'SIGINT' | 'SIGTERM'): Promise<void> {
     await sessionStore.flush().catch((err: unknown) => {
       console.error(
         `Failed to flush WeCom sessions during ${signal}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+    await taskStore.flush().catch((err: unknown) => {
+      console.error(
+        `Failed to flush WeCom tasks during ${signal}: ${err instanceof Error ? err.message : String(err)}`,
       );
     });
     await healthStore.flush().catch(() => {});

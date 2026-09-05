@@ -17,6 +17,7 @@ describe('WeCom navigation cards', () => {
         workspace: 'wecom-bot',
         model: 'gpt-5.6',
         reasoning: 'high',
+        recentTask: '✅ 风险测算 / 查询 · 完成 · 3分钟前',
       }),
     );
     expect(idle.button_list?.map((button) => button.key)).toEqual(['new', 'status']);
@@ -24,8 +25,10 @@ describe('WeCom navigation cards', () => {
     expect(idle.sub_title_text).toContain('/reasoning');
     expect(idle.sub_title_text).toContain('/resume');
     expect(idle.sub_title_text).toContain('/settings');
+    expect(idle.sub_title_text).toContain('/doctor');
+    expect(idle.sub_title_text).toContain('/runs');
     expect(idle.sub_title_text).toContain('/测算');
-    expect(idle.sub_title_text).toContain('/help');
+    expect(idle.horizontal_content_list?.some((item) => item.keyname === '最近任务')).toBe(true);
 
     const busy = renderWeComCard(
       buildHomeCardView({

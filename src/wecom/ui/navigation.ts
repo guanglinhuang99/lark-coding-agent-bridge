@@ -11,6 +11,7 @@ export interface WeComHomeCardOptions {
   model?: string;
   reasoning?: string;
   threadId?: string;
+  recentTask?: string;
 }
 
 export interface WeComWorkspaceOption {
@@ -31,6 +32,7 @@ export interface WeComSessionOption {
  * have been validated in the real WeCom client.
  */
 export function buildHomeCardView(options: WeComHomeCardOptions): WeComCardView {
+  const recent = options.recentTask?.trim();
   return {
     kind: 'interactive',
     taskId: options.taskId,
@@ -42,7 +44,7 @@ export function buildHomeCardView(options: WeComHomeCardOptions): WeComCardView 
     tui: {
       status: options.busy ? 'running' : 'idle',
       eyebrow: 'CODEX · WECOM',
-      body: `${options.busy ? '当前会话正在运行。' : '发送消息开始任务。'} ${WECOM_COMMAND_HINT}`,
+      body: WECOM_COMMAND_HINT,
       steps: [
         { label: 'Runtime connected', status: 'done' },
         { label: options.busy ? 'Agent task executing' : 'Ready for next task', status: options.busy ? 'running' : 'pending' },
@@ -53,6 +55,7 @@ export function buildHomeCardView(options: WeComHomeCardOptions): WeComCardView 
       { label: '模型', value: clip(options.model?.trim() || 'Codex default', 26) },
       ...(options.reasoning ? [{ label: '推理', value: clip(options.reasoning, 26) }] : []),
       { label: '会话', value: clip(options.threadId?.trim() || 'new', 26) },
+      ...(recent ? [{ label: '最近任务', value: clip(recent, 34) }] : []),
     ],
     buttons: [
       ...(options.busy
