@@ -169,6 +169,7 @@ import {
   buildWeComDoctorCardView,
   buildWeComRecentTasksCardView,
   recentTaskHint,
+  type WeComDependencyCheck,
 } from './ui/doctor';
 
 type TextFrame = WsFrame<TextMessage>;
@@ -1779,7 +1780,7 @@ async function replyDoctor(frame: WsFrame, key: string): Promise<void> {
   const circuitOpen = ['codex-health', 'codex-history', 'media-download'].some(
     (name) => operationRunner.snapshot(name).state === 'open',
   );
-  const dependencies = [
+  const dependencies: WeComDependencyCheck[] = [
     {
       name: 'WeCom',
       status: connected ? 'ok' : 'error',
@@ -1810,7 +1811,7 @@ async function replyDoctor(frame: WsFrame, key: string): Promise<void> {
       status: circuitOpen ? 'warning' : 'ok',
       detail: circuitOpen ? 'downstream circuit open' : 'closed',
     },
-  ] as const;
+  ];
   await client.replyTemplateCard(
     frame,
     renderWeComCard(
