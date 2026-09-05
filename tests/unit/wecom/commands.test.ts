@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   parseWeComCommand,
   shouldUseRiskFastPath,
+  WECOM_COMMAND_HINT,
   WECOM_HELP_LINES,
   WECOM_RISK_USAGE_LINES,
 } from '../../../src/wecom/commands';
@@ -28,10 +29,13 @@ describe('WeCom command gate', () => {
     expect(shouldUseRiskFastPath(command, true, false)).toBe(true);
   });
 
-  it('supports help discovery and rejects lookalike commands', () => {
+  it('supports help discovery and reliability shortcuts', () => {
     expect(parseWeComCommand('/HELP')).toEqual({ kind: 'help' });
     expect(parseWeComCommand('/测算foo')).toEqual({ kind: 'other' });
     expect(WECOM_HELP_LINES.join('\n')).toContain('/测算 <交易或查询文本>');
-    expect(WECOM_HELP_LINES.join('\n')).toContain('/help');
+    expect(WECOM_HELP_LINES.join('\n')).toContain('/doctor');
+    expect(WECOM_HELP_LINES.join('\n')).toContain('/runs');
+    expect(WECOM_COMMAND_HINT).toContain('/doctor');
+    expect(WECOM_COMMAND_HINT).toContain('/runs');
   });
 });
