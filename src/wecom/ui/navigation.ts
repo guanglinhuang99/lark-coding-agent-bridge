@@ -44,7 +44,7 @@ export function buildHomeCardView(options: WeComHomeCardOptions): WeComCardView 
     tui: {
       status: options.busy ? 'running' : 'idle',
       eyebrow: 'CODEX · WECOM',
-      body: `${options.busy ? '当前会话正在运行。' : '发送消息开始任务。'} ${recent ? `最近：${recent}。` : ''} ${WECOM_COMMAND_HINT}`,
+      body: WECOM_COMMAND_HINT,
       steps: [
         { label: 'Runtime connected', status: 'done' },
         { label: options.busy ? 'Agent task executing' : 'Ready for next task', status: options.busy ? 'running' : 'pending' },
