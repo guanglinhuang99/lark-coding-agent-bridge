@@ -21,6 +21,7 @@ The PR head was fetched before validation and initially matched the reference co
 - Node.js `v23.11.0`
 - Project package manager: Corepack pnpm `10.33.0`
 - WeCom desktop client `5.0.10`
+- Lark desktop client `131.0.6778.268`
 - Codex CLI `0.153.2` during authenticated `/doctor` validation
 - The shell's unrelated fallback pnpm `11.19.0` was not used for the formal validation commands.
 
@@ -83,7 +84,7 @@ At the user's explicit direction, the existing WeCom test target was used. The o
 | PASS | Second-turn continuation | The next turn recalled the marker from the same authenticated conversation. |
 | PASS | `/new` | The client displayed the reset/new-session confirmation card. |
 | PASS | `/resume` rendering | The client displayed the resume selection card from persisted session history. |
-| BLOCKED | Resume/card callback execution | The rendered card controls were not exposed through the macOS accessibility tree, and coordinate interaction was unavailable in this Computer Use session. Rendering passed, but the callback was not falsely counted as a real click. |
+| PASS | Resume/card callback execution | Computer Use clicked the real `/resume` card's Apply control. The client changed the original card to a completed state and rendered a fresh control card; the callback was also received and acknowledged over the authenticated WebSocket. |
 | PASS | `/stop` | A safe delayed task was started and then stopped. The client showed interruption, health returned to zero active runs, and the late target marker was not delivered. |
 | PASS | `/runs` | The authenticated client rendered run history, including persisted interrupted status after restart. |
 | PASS | `/doctor` after fix | The real client rendered a completed diagnostic card covering WeCom, Codex, workspace, risk service, task store, and retry/circuit status. |
@@ -91,11 +92,11 @@ At the user's explicit direction, the existing WeCom test target was used. The o
 | PASS | Attachment send | The bot returned that existing fixture as a real downloadable file row in the client. |
 | PASS | Process restart / no replay | The process was terminated while a safe delayed Agent task was active, then restarted against the same temporary state. After waiting beyond the original delay, active/starting counts remained zero, the run stayed interrupted, and the forbidden late marker was not emitted. |
 | PASS | WebSocket connect and controlled restart | Initial authenticated WebSocket connection and controlled process restart were exercised without duplicate execution. |
-| BLOCKED | Forced automatic WebSocket reconnect | Host networking was not deliberately disrupted because that could affect unrelated online services. Automated reconnect coverage remains the evidence for this sub-item. |
-| BLOCKED | Successful read-only risk calculation | A fully synthetic nonexistent trade reached the real risk route and failed closed with a user-facing unavailable/unparseable response. No real product data was used, so a successful calculation against a dedicated safe risk fixture was not demonstrated. |
-| BLOCKED | Lark real client | No dedicated authenticated Feishu/Lark test environment or test credentials were available. Offline and simulated Lark coverage is not reported as a real-client pass. |
+| PASS | Forced automatic WebSocket reconnect | The isolated process was suspended long enough for the server to close the socket with code `1006`, then resumed. The same process logged disconnect, reconnect attempt 1, a new socket, and successful authentication about one second later. The task ledger remained at 20 records with 16 done, 2 failed, and 2 interrupted; active/starting counts remained zero and no Agent task was replayed. |
+| PASS | Successful read-only risk calculation | Computer Use submitted a hypothetical secondary-market purchase of CNY 1 for a uniquely resolved security against an existing reference product, confirmed the real card callback, and received the completed result table. The risk service completed all four phases in 48.551 seconds. State was isolated, the market-calendar input was copied read-only into temporary state, and no order or production transaction API was called. The exhausted default Spark allowance was bypassed only in the isolated process with `WECOM_RISK_INTENT_MODEL=gpt-6-astra`; no usage-reset credit was consumed and no repository/default configuration changed. |
+| BLOCKED | Lark real client | The installed and logged-in Lark client was exercised with a synthetic marker, but the PR bridge could not authenticate and the message received no bot response. A direct request to Feishu's official tenant-token endpoint returned `code 10014` (`app secret invalid`) for the configured `codex` profile. Network reachability was separately verified, so this is an invalid external credential, not a fake-SDK pass or a PR-code result. |
 
-The temporary PR instance was stopped after confirming zero active and starting runs. Restoration of the original service is recorded in the final handoff rather than inferred from fake SDK results.
+The temporary PR instance was stopped after confirming zero active and starting runs. The original reference-workspace WeCom service was restored as a single background instance and reported connected with zero active/starting runs. The pre-existing Lark LaunchAgent was reloaded without modifying its plist, and the credential-bearing temporary Lark directory plus the WeCom test state/workspace were deleted after evidence was recorded.
 
 ## Findings and minimal fixes
 
@@ -109,11 +110,13 @@ Both fixes are surgical and do not change the shared architecture or weaken test
 - PASS (automated, temporary state): migration preserves legacy bytes, writes mode-`0600` content-addressed backups, does not repeat import once v2 exists, retries safely after backup-before-commit interruption, and refuses damaged input or conflicting backup content.
 - PASS (design and tests): old WeCom cwd/policy-unverified mappings remain quarantined and are not blindly resumed.
 - PASS (authenticated restart fencing): an already-started safe Agent task remained interrupted and was not silently replayed after the WeCom process restarted against the same temporary state.
-- BLOCKED (production-state migration/rollback): no production state was copied or mutated, and no dedicated Lark client was available for an authenticated migration/rollback drill. Automated temporary-state coverage is the acceptance evidence for migration semantics.
+- BLOCKED (production-state migration/rollback): no production state was copied or mutated, and the configured Lark credential was invalid, so an authenticated Lark migration/rollback drill could not be performed. Automated temporary-state coverage is the acceptance evidence for migration semantics.
 - Rollback procedure remains: stop the new dedicated test process first; preserve v2 state, task receipts, legacy files, and backups; then run v0.8.0 against the legacy snapshot. The legacy snapshot may be stale, and uncertain external effects must be checked before any retry.
 
 ## GitHub and merge recommendation
 
 At the initial tested PR head, GitHub reported macOS and Ubuntu / Node 20 checks successful and Windows / Node 20 checks failed. Windows is explicitly outside this acceptance scope and was not hidden, skipped, or modified. The repository reported no required checks and no branch protection for `main` at validation time. CI must be re-read after the final report push because earlier results do not substitute for the new head.
 
-Code-level, offline, and the completed WeCom real-client checks are **PASS** after `8a920e9`; no additional code blocker was found. Overall acceptance remains **NOT READY / do not merge yet** because authenticated Lark validation, a real card callback, forced automatic WebSocket reconnect, and a successful risk calculation against a safe dedicated fixture remain BLOCKED. Re-evaluate those gaps and confirm the final PR head's in-scope CI before merge.
+Code-level, offline, and the completed WeCom real-client checks are **PASS** after `8a920e9`; no additional code blocker was found. Real card callback execution, automatic WebSocket reconnect, and a successful read-only risk calculation are now also **PASS**. Overall acceptance remains **NOT READY / do not merge yet** only because the configured Lark `codex` App Secret is invalid, which prevents authenticated Lark client validation. Replace that external credential, repeat the Lark client matrix, and confirm the final PR head's in-scope CI before merge.
+
+Operational note outside the PR code diff: the pre-existing `ai.lark-channel-bridge.bot.codex` LaunchAgent also contains an extra script argument after the installed `lark-channel-bridge` entrypoint, causing an `unknown command` restart loop. It was not edited as part of this surgical PR acceptance. Even with corrected launch arguments, the invalid App Secret must be replaced before the bot can connect.
