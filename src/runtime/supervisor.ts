@@ -8,6 +8,7 @@ import type { AgentAdapter } from '../agent/types';
 import { log } from '../core/logger';
 import { refreshOwnerControls } from '../policy/owner';
 import { SessionStore } from '../session/store';
+import { TaskLedger } from '../bridge/task-ledger';
 import { SessionCatalog } from '../session/catalog';
 import { WorkspaceStore } from '../workspace/store';
 import { preFlightChecks } from '../cli/preflight';
@@ -77,6 +78,7 @@ class ManagedProfile {
     private sessions: SessionStore,
     private sessionCatalog: SessionCatalog,
     private workspaces: WorkspaceStore,
+    private tasks: TaskLedger,
     private startChannelFn: StartChannelFn,
     private onExitCommand: (profile: string) => void,
   ) {}
@@ -96,11 +98,12 @@ class ManagedProfile {
     // this.locks and gets released by the catch — otherwise it would leak and
     // a retry in the same process would fail to re-lock.
     this.locks = [];
+    try {
     this.locks.push(await acquireProfileRuntimeLock(this.appPaths, this.profileConfig.agentKind));
     this.locks.push(
       await acquireAppRuntimeLock(this.appPaths, this.appId, this.profileConfig.agentKind),
     );
-    try {
+      await this.tasks.load();
       this.entry = await register({
         appId: this.appId,
         tenant: this.cfg.accounts.app.tenant,
@@ -117,6 +120,7 @@ class ManagedProfile {
         sessions: this.sessions,
         sessionCatalog: this.sessionCatalog,
         workspaces: this.workspaces,
+        taskLedger: this.tasks,
         controls: this.controls,
         appPaths: this.appPaths,
       });
@@ -141,6 +145,7 @@ class ManagedProfile {
     } catch (err) {
       log.warn('supervisor', 'disconnect-failed', { profile: this.profile, err: String(err) });
     }
+    await this.tasks.flush().catch((err) => log.fail('task-ledger', err, { step: 'profile-stop' }));
     if (this.entry) {
       await unregister(this.entry.id, this.appPaths.userRegistryFile).catch(() => undefined);
     }
@@ -231,6 +236,7 @@ class ManagedProfile {
         sessions: this.sessions,
         sessionCatalog: this.sessionCatalog,
         workspaces: this.workspaces,
+        taskLedger: this.tasks,
         controls: nextControls,
         appPaths: nextRuntime.appPaths,
       });
@@ -343,6 +349,7 @@ export class Supervisor {
     await sessionCatalog.load();
     const workspaces = new WorkspaceStore(appPaths.workspacesFile);
     await workspaces.load();
+    const tasks = new TaskLedger(`${appPaths.sessionsFile}.tasks.json`, { namespace: 'lark' });
 
     const managed = new ManagedProfile(
       appPaths.profile,
@@ -354,6 +361,7 @@ export class Supervisor {
       sessions,
       sessionCatalog,
       workspaces,
+      tasks,
       this.startChannelFn,
       (p) => void this.stopProfile(p).catch(() => undefined),
     );

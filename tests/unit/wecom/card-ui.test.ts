@@ -120,6 +120,22 @@ describe('WeCom Card UI', () => {
     expect(card.button_list).toBeUndefined();
   });
 
+  it('limits horizontal content to the six entries accepted by WeCom', () => {
+    const card = renderWeComCard({
+      kind: 'notice',
+      taskId: 'notice_fact_limit',
+      source: 'Codex Bridge',
+      title: '系统诊断',
+      facts: Array.from({ length: 7 }, (_, index) => ({
+        label: `检查 ${index + 1}`,
+        value: 'ok',
+      })),
+    });
+
+    expect(card.horizontal_content_list).toHaveLength(6);
+    expect(card.horizontal_content_list?.at(-1)?.keyname).toBe('检查 6');
+  });
+
   it('keeps status colors centralized', () => {
     expect(statusColor('running')).toBe(0);
     expect(statusColor('success')).toBe(1);

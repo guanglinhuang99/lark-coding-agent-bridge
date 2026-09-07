@@ -22,6 +22,7 @@ import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
 
 export interface StartRunFlowInput {
+  operationId?: string;
   scopeId: string;
   scope: ScopeContext;
   prompt: string;
@@ -75,6 +76,7 @@ export interface RecordRunSessionEventInput {
 }
 
 export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFlowResult> {
+  await Promise.all([input.sessions.flush(), input.sessionCatalog?.flush(), input.workspaces.flush()]);
   const requestedCwd =
     input.workspaces.cwdFor(input.scopeId) ?? input.profileConfig.workspaces.default ?? '';
   const workspace = await resolveWorkingDirectory(requestedCwd);
@@ -141,6 +143,7 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
   try {
     execution = await input.executor.submit({
       scopeId: input.scopeId,
+      operationId: input.operationId,
       policy,
       sessionId,
       threadId,

@@ -91,7 +91,25 @@ function makeLaunchdAdapter(profile: string, runArgs: string[]): ServiceAdapter 
       return out.ok ? disabled : out;
     },
     disableAutostart: () => launchd.disable(profile),
-    restart: () => launchd.kickstart(profile),
+    // `kickstart -k` reuses launchd's already-loaded ProgramArguments. That
+    // means a stale/malformed plist (for example an old extra script argument)
+    // can stay in a permanent restart loop even after the file on disk is fixed.
+    // Reinstall the canonical definition and fully reload the job so restart
+    // is also a repair path for legacy LaunchAgents.
+    restart: async () => {
+      await launchd.writePlist(profile, runArgs);
+      const out = launchd.bootout(profile);
+      if (!out.ok) return out;
+      const unloaded = await launchd.waitUntilUnloaded(profile);
+      if (!unloaded) {
+        return {
+          ok: false,
+          stderr: 'launchd job did not unload before restart',
+        };
+      }
+      launchd.enable(profile);
+      return launchd.bootstrap(profile);
+    },
     waitUntilStopped: (timeoutMs) => launchd.waitUntilUnloaded(profile, timeoutMs),
     deleteFile: () => launchd.deletePlist(profile),
     describeStatus: () => launchd.describeService(profile),
