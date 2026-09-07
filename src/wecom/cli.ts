@@ -1977,6 +1977,14 @@ async function replyReasoningSelection(frame: WsFrame, key: string): Promise<voi
 }
 
 async function replySessionSelection(frame: WsFrame, key: string): Promise<void> {
+  if (key.startsWith('group:')) {
+    await replyNoticeCard(frame, {
+      taskId: createNavigationTaskId('session'),
+      title: '🧵 请在私聊中恢复会话',
+      description: '为保护历史会话隐私，请在与机器人的私聊中使用 /resume。',
+    });
+    return;
+  }
   const workspace = sessionStore.workspaceFor(key);
   const taskId = createNavigationTaskId('session');
   try {
@@ -2032,6 +2040,11 @@ async function handleNavigationCardEvent(
   rawAction: string | undefined,
   selectedId: string | undefined,
 ): Promise<void> {
+  // Reject callbacks from group history cards issued before the privacy guard.
+  if (purpose === 'session' && key.startsWith('group:')) {
+    await updateInvalidCallback(frame, taskId);
+    return;
+  }
   if (rawAction !== navigationActionForPurpose(purpose)) {
     await updateInvalidCallback(frame, taskId);
     return;
