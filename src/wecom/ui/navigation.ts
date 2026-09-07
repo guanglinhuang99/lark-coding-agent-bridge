@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { WECOM_CARD_ACTIONS } from './actions';
 import { buildSelectionCardView } from './builders';
 import { WECOM_COMMAND_HINT } from '../commands';
@@ -123,10 +124,17 @@ export function buildSessionSelectionCardView(options: {
 }
 
 function sessionLabel(session: WeComSessionOption): string {
-  return [session.label, session.workspace, session.hint]
-    .map((item) => item?.trim())
-    .filter((item): item is string => Boolean(item))
-    .join(' · ');
+  const fingerprint = `#${createHash('sha256').update(session.id).digest('hex').slice(0, 6)}`;
+  const context = [
+    session.hint?.trim() ? clip(session.hint.trim(), 10) : undefined,
+    session.workspace?.trim() ? clip(session.workspace.trim(), 14) : undefined,
+    fingerprint,
+  ].filter((item): item is string => Boolean(item));
+  const prefix = context.join(' · ');
+  const separator = prefix ? ' · ' : '';
+  const titleBudget = Math.max(8, 60 - Array.from(`${prefix}${separator}`).length);
+  const title = clip(session.label.trim() || '(空会话)', titleBudget);
+  return `${prefix}${separator}${title}`;
 }
 
 function buildNavigationSelection(options: {

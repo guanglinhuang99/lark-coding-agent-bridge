@@ -96,8 +96,32 @@ describe('WeCom navigation cards', () => {
     );
 
     expect(card.button_selection?.question_key).toBe('session');
-    expect(card.button_selection?.option_list[0]?.text).toContain('web-cli');
-    expect(card.button_selection?.option_list[0]?.text).toContain('2h ago');
+    const first = card.button_selection?.option_list[0]?.text ?? '';
+    expect(first).toMatch(/^2h ago · web-cli · #[a-f0-9]{6} · /);
+    expect(first).toContain('Fix Outlook extension');
+    expect(first).not.toContain('thread-1');
     expect(card.button_list?.[0]?.key).toBe('session.resume');
+  });
+
+  it('keeps duplicate long resume titles distinguishable before client truncation', () => {
+    const repeated = 'Investigate production attachment roundtrip and session recovery '.repeat(3);
+    const card = renderWeComCard(
+      buildSessionSelectionCardView({
+        taskId: 'session_2',
+        sessions: [
+          { id: 'thread-alpha-secret', label: repeated, workspace: 'wecom-bot', hint: '3m ago' },
+          { id: 'thread-beta-secret', label: repeated, workspace: 'wecom-bot', hint: '4m ago' },
+        ],
+      }),
+    );
+
+    const labels = card.button_selection?.option_list.map((item) => item.text) ?? [];
+    expect(labels).toHaveLength(2);
+    expect(labels[0]).toMatch(/^3m ago · wecom-bot · #[a-f0-9]{6} · /);
+    expect(labels[1]).toMatch(/^4m ago · wecom-bot · #[a-f0-9]{6} · /);
+    expect(labels[0]).not.toBe(labels[1]);
+    expect(labels.every((label) => Array.from(label).length <= 60)).toBe(true);
+    expect(labels.join(' ')).not.toContain('thread-alpha-secret');
+    expect(labels.join(' ')).not.toContain('thread-beta-secret');
   });
 });
