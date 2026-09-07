@@ -9,7 +9,7 @@ Validation dates: 2026-09-05 and 2026-09-07 (Asia/Shanghai)
 - Reference and initial PR HEAD: `00a6a340a8ccd7486457f109ead672f99198cb9f`
 - Initial acceptance-fix commit: `553874c` (`fix(wecom): retry after durable claim failure`)
 - Actual code HEAD tested after real-client fix: `8a920e96b012e4d76738f6adc5c83b5d0f159e9b` (`fix(wecom): cap card facts for client limits`)
-- Validation worktree: `/tmp/lark-pr11-validation.dQoLKv`
+- Validation worktree: `isolated temp root`
 - Reference workspace preserved unchanged: `/Users/guanglin/Sync/wecom-bot`
 - Reference workspace state at start: branch `fix/wecom-rc-blockers`, HEAD `c461426a868e2847f84ec8ddd9aece1d4918e470`, with untracked `.pnpm-store/` and `AGENTS.md`
 
@@ -75,28 +75,33 @@ These are offline, simulated, or process-level results. They are not authenticat
 
 ## Authenticated real-client validation
 
-At the user's explicit direction, the existing WeCom test target was used. The original process was stopped only after confirming zero active/starting runs. The PR process used the same robot credentials but separate temporary state and workspace directories, and no second connection was run concurrently. Test messages were synthetic and the only transferred file was a harmless 102-byte text fixture. No credentials, login material, real attachment, session body, or raw state file is recorded here.
+At the user's explicit direction, the existing approved WeCom and Lark bot profiles were used during a maintenance window. The PR instance used an isolated temporary state/workspace root, with synthetic messages and synthetic text fixtures only; no second connection was run concurrently with the online service. No credentials, login material, message body, attachment, or raw state file is recorded here.
+
+The isolated Lark PR instance authenticated successfully only after generic proxy environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, including lowercase variants when present) were removed from its startup environment. The SDK's `respectProxyEnv` path did not honor `NO_PROXY`; this is an environment/startup prerequisite, not a product-code failure. Proxy endpoints and credentials are intentionally omitted.
 
 | Status | Real-client check | Evidence and conclusion |
 | --- | --- | --- |
-| PASS | Startup and authentication | The built PR process authenticated and connected using temporary state/workspace paths and read-only Codex sandboxing. The risk fast path used an explicit service directory. |
-| PASS | Ordinary conversation | A deterministic prompt returned the requested synthetic marker. |
-| PASS | Second-turn continuation | The next turn recalled the marker from the same authenticated conversation. |
-| PASS | `/new` | The client displayed the reset/new-session confirmation card. |
-| PASS | `/resume` rendering | The client displayed the resume selection card from persisted session history. |
-| PASS | Resume/card callback execution | Computer Use clicked the real `/resume` card's Apply control. The client changed the original card to a completed state and rendered a fresh control card; the callback was also received and acknowledged over the authenticated WebSocket. |
-| PASS | `/stop` | A safe delayed task was started and then stopped. The client showed interruption, health returned to zero active runs, and the late target marker was not delivered. |
-| PASS | `/runs` | The authenticated client rendered run history, including persisted interrupted status after restart. |
-| PASS | `/doctor` after fix | The real client rendered a completed diagnostic card covering WeCom, Codex, workspace, risk service, task store, and retry/circuit status. |
-| PASS | Attachment receive | The bot acknowledged and correctly summarized the harmless 102-byte text fixture. |
-| PASS | Attachment send | The bot returned that existing fixture as a real downloadable file row in the client. |
-| PASS | Process restart / no replay | The process was terminated while a safe delayed Agent task was active, then restarted against the same temporary state. After waiting beyond the original delay, active/starting counts remained zero, the run stayed interrupted, and the forbidden late marker was not emitted. |
-| PASS | WebSocket connect and controlled restart | Initial authenticated WebSocket connection and controlled process restart were exercised without duplicate execution. |
-| PASS | Forced automatic WebSocket reconnect | The isolated process was suspended long enough for the server to close the socket with code `1006`, then resumed. The same process logged disconnect, reconnect attempt 1, a new socket, and successful authentication about one second later. The task ledger remained at 20 records with 16 done, 2 failed, and 2 interrupted; active/starting counts remained zero and no Agent task was replayed. |
-| PASS | Successful read-only risk calculation | Computer Use submitted a hypothetical secondary-market purchase of CNY 1 for a uniquely resolved security against an existing reference product, confirmed the real card callback, and received the completed result table. The risk service completed all four phases in 48.551 seconds. State was isolated, the market-calendar input was copied read-only into temporary state, and no order or production transaction API was called. The exhausted default Spark allowance was bypassed only in the isolated process with `WECOM_RISK_INTENT_MODEL=gpt-6-astra`; no usage-reset credit was consumed and no repository/default configuration changed. |
-| BLOCKED | Lark real client | The installed and logged-in Lark client was exercised with a synthetic marker, but the PR bridge could not authenticate and the message received no bot response. A direct request to Feishu's official tenant-token endpoint returned `code 10014` (`app secret invalid`) for the configured `codex` profile. Network reachability was separately verified, so this is an invalid external credential, not a fake-SDK pass or a PR-code result. |
+| PASS | WeCom startup and authentication | The built PR process authenticated and connected using isolated temporary state/workspace paths and read-only Codex sandboxing. |
+| PASS | WeCom ordinary conversation and continuation | A deterministic prompt and a second turn returned the expected synthetic marker from the same authenticated conversation. |
+| PASS | WeCom `/new`, `/resume`, and `/stop` | Real reset, resume selection/callback, and safe in-run stop checks passed; stopped work did not emit its late marker. |
+| PASS | WeCom `/doctor`, attachments, and restart fencing | The diagnostic card, harmless attachment receive/send, and restart/no-replay checks passed. |
+| PASS | WeCom `/runs` | The real client displayed run history, including persisted interrupted status after restart. |
+| PASS | WeCom controlled/automatic WebSocket reconnect | Initial connection, controlled restart, and the previously exercised automatic reconnect completed without duplicate execution. |
+| PASS | WeCom successful read-only risk calculation | The isolated hypothetical risk check completed its result table without invoking an order or production transaction API. |
+| PASS | Lark startup and authentication | The isolated PR instance connected successfully with the existing `codex` profile after clearing the generic proxy environment. Credentials were not rotated, printed, or committed. |
+| PASS | Lark ordinary conversation and continuation | A synthetic ordinary prompt and follow-up continuation both completed successfully. |
+| PASS | Lark `/status` | The real client returned the expected status response. |
+| PASS | Lark card “new session” callback | Computer Use activated the card's new-session control; the real callback was received and acknowledged. |
+| PASS | Lark `/new` | The real client completed the new-session flow. |
+| PASS | Lark `/resume` list and click restore | The persisted session list rendered and clicking a real restore control resumed the selected conversation. |
+| PASS | Lark in-run `/stop` | A running synthetic task was stopped; the client showed interruption and no late target marker was delivered. |
+| PASS | Lark `/doctor` | Self-check, workspace, policy, and agent-echo diagnostics all completed successfully. |
+| PASS | Lark attachment receive/send | A 108-byte synthetic text attachment was read inbound and returned outbound as a real downloadable attachment. |
+| PASS | Lark `/reconnect` | The controlled reconnect completed, and a subsequent message was processed successfully. |
+| PASS | Lark process restart / no replay | Before and after restart, task-state counts were unchanged; intake remained 18 and queued/running remained 0. New messages after restart all returned PASS, with no silent replay of an already-started Agent task. |
+| N/A | Lark `/runs` | `/runs` is not a Lark built-in control command. It was handled as an ordinary Agent message and is excluded from the Lark control-command results; the real WeCom `/runs` check above passed. |
 
-The temporary PR instance was stopped after confirming zero active and starting runs. The original reference-workspace WeCom service was restored as a single background instance and reported connected with zero active/starting runs. The pre-existing Lark LaunchAgent was reloaded without modifying its plist, and the credential-bearing temporary Lark directory plus the WeCom test state/workspace were deleted after evidence was recorded.
+The authenticated checks used an isolated temporary root and workspace. The launchd plist was not modified, credentials were not rotated, and no credential-bearing files or raw test state were recorded in this report.
 
 ## Findings and minimal fixes
 
@@ -110,13 +115,13 @@ Both fixes are surgical and do not change the shared architecture or weaken test
 - PASS (automated, temporary state): migration preserves legacy bytes, writes mode-`0600` content-addressed backups, does not repeat import once v2 exists, retries safely after backup-before-commit interruption, and refuses damaged input or conflicting backup content.
 - PASS (design and tests): old WeCom cwd/policy-unverified mappings remain quarantined and are not blindly resumed.
 - PASS (authenticated restart fencing): an already-started safe Agent task remained interrupted and was not silently replayed after the WeCom process restarted against the same temporary state.
-- BLOCKED (production-state migration/rollback): no production state was copied or mutated, and the configured Lark credential was invalid, so an authenticated Lark migration/rollback drill could not be performed. Automated temporary-state coverage is the acceptance evidence for migration semantics.
+- BLOCKED (non-merge blocker; production-state migration/rollback): no production state was copied or mutated, and an authenticated production-state migration/rollback drill was intentionally not performed. Automated temporary-state coverage is the acceptance evidence for migration semantics; the production drill remains an operational follow-up.
 - Rollback procedure remains: stop the new dedicated test process first; preserve v2 state, task receipts, legacy files, and backups; then run v0.8.0 against the legacy snapshot. The legacy snapshot may be stale, and uncertain external effects must be checked before any retry.
 
 ## GitHub and merge recommendation
 
 At the initial tested PR head, GitHub reported macOS and Ubuntu / Node 20 checks successful and Windows / Node 20 checks failed. Windows is explicitly outside this acceptance scope and was not hidden, skipped, or modified. The repository reported no required checks and no branch protection for `main` at validation time. CI must be re-read after the final report push because earlier results do not substitute for the new head.
 
-Code-level, offline, and the completed WeCom real-client checks are **PASS** after `8a920e9`; no additional code blocker was found. Real card callback execution, automatic WebSocket reconnect, and a successful read-only risk calculation are now also **PASS**. Overall acceptance remains **NOT READY / do not merge yet** only because the configured Lark `codex` App Secret is invalid, which prevents authenticated Lark client validation. Replace that external credential, repeat the Lark client matrix, and confirm the final PR head's in-scope CI before merge.
+Code-level, offline, WeCom real-client, and Lark real-client checks are **PASS** after `8a920e9`; no additional code blocker was found. The Lark `/runs` item is **N/A** because it is not a Lark built-in command, while the real WeCom `/runs` check is **PASS**. Windows remains explicitly out of scope and was not hidden, skipped, or modified. Production-state migration/rollback remains **BLOCKED** as a non-merge operational follow-up because production state was intentionally not touched. Overall acceptance is **READY** to merge, subject to re-reading the in-scope CI result for the final report head after it is pushed.
 
-Operational note outside the PR code diff: the pre-existing `ai.lark-channel-bridge.bot.codex` LaunchAgent also contains an extra script argument after the installed `lark-channel-bridge` entrypoint, causing an `unknown command` restart loop. It was not edited as part of this surgical PR acceptance. Even with corrected launch arguments, the invalid App Secret must be replaced before the bot can connect.
+Operational note outside the PR code diff: the pre-existing `ai.lark-channel-bridge.bot.codex` LaunchAgent also contains an extra script argument after the installed `lark-channel-bridge` entrypoint, causing an `unknown command` restart loop. It was not edited as part of this surgical PR acceptance. The isolated authenticated validation invoked the PR entrypoint with the required proxy-cleared environment instead of changing that plist.
