@@ -1,39 +1,42 @@
 # PR #11 Shared Bridge Core Validation Results
 
-Validation date: 2026-09-05 (Asia/Shanghai)
+Validation dates: 2026-09-05 and 2026-09-07 (Asia/Shanghai)
 
 ## Scope and tested revision
 
 - Repository: `https://github.com/guanglinhuang99/lark-coding-agent-bridge.git`
 - Pull request: `#11` (`refactor/shared-bridge-core` -> `main`)
 - Reference and initial PR HEAD: `00a6a340a8ccd7486457f109ead672f99198cb9f`
-- Code validation HEAD after the acceptance fix: `553874c` (`fix(wecom): retry after durable claim failure`)
+- Initial acceptance-fix commit: `553874c` (`fix(wecom): retry after durable claim failure`)
+- Actual code HEAD tested after real-client fix: `8a920e96b012e4d76738f6adc5c83b5d0f159e9b` (`fix(wecom): cap card facts for client limits`)
 - Validation worktree: `/tmp/lark-pr11-validation.dQoLKv`
 - Reference workspace preserved unchanged: `/Users/guanglin/Sync/wecom-bot`
 - Reference workspace state at start: branch `fix/wecom-rc-blockers`, HEAD `c461426a868e2847f84ec8ddd9aece1d4918e470`, with untracked `.pnpm-store/` and `AGENTS.md`
 
-The PR head was fetched immediately before validation and still matched the reference commit. The isolated worktree was used so the reference workspace's uncommitted files were not reset, cleaned, staged, or overwritten.
+The PR head was fetched before validation and initially matched the reference commit. Testing then followed the latest branch commits shown above. The isolated worktree was used so the reference workspace's uncommitted files were not reset, cleaned, staged, or overwritten.
 
 ## Environment
 
 - macOS 26.6.2 (Build 25G83), Apple Silicon host
 - Node.js `v23.11.0`
 - Project package manager: Corepack pnpm `10.33.0`
+- WeCom desktop client `5.0.10`
+- Codex CLI `0.153.2` during authenticated `/doctor` validation
 - The shell's unrelated fallback pnpm `11.19.0` was not used for the formal validation commands.
 
 ## Automated checks
 
-All formal results below are from the fixed code tree represented by commit `553874c`.
+All formal results below are from the fixed code tree represented by commit `8a920e9`.
 
 | Status | Command | Result |
 | --- | --- | --- |
 | PASS | `corepack pnpm@10.33.0 install --frozen-lockfile` | Exit 0; lockfile unchanged; 248 packages installed using pnpm 10.33.0 |
-| PASS | `corepack pnpm@10.33.0 test` | Exit 0; 140/140 files and 989/989 tests passed |
+| PASS | `corepack pnpm@10.33.0 test` | Exit 0; 140/140 files and 990/990 tests passed |
 | PASS | `corepack pnpm@10.33.0 typecheck` | Exit 0 |
 | PASS | `corepack pnpm@10.33.0 build` | Exit 0 |
 | PASS | `git diff --check` | Exit 0 |
 | PASS | `corepack pnpm@10.33.0 exec vitest run tests/unit/bridge tests/integration/bot/shared-durable-channel.test.ts` | Exit 0; 5/5 files and 51/51 tests passed |
-| PASS | `corepack pnpm@10.33.0 exec vitest run tests/unit/wecom tests/integration/executor tests/integration/session tests/integration/runtime tests/static` | Exit 0; 36/36 files and 277/277 tests passed |
+| PASS | `corepack pnpm@10.33.0 exec vitest run tests/unit/wecom tests/integration/executor tests/integration/session tests/integration/runtime tests/static` | Exit 0; 36/36 files and 278/278 tests passed |
 
 The full test suite initially failed inside the restricted sandbox because 12 UI-server tests could not bind `127.0.0.1` (`EPERM`). Re-running the same command with approved local-listener access passed in full. This was an execution-environment restriction, not a product failure.
 
@@ -69,36 +72,48 @@ All commands used temporary `LARK_CHANNEL_HOME`, `WECOM_STATE_DIR`, configuratio
 
 These are offline, simulated, or process-level results. They are not authenticated Feishu or WeCom client results.
 
-## Real-client isolation and blocked checks
+## Authenticated real-client validation
 
-An existing WeCom bridge process was detected in the reference workspace and had an active external TLS connection. It was not stopped, restarted, inspected for content, or replaced. No clearly dedicated test bot or test credentials were available in the temporary worktree or process environment, so starting a second real connection would have risked affecting the online bot.
+At the user's explicit direction, the existing WeCom test target was used. The original process was stopped only after confirming zero active/starting runs. The PR process used the same robot credentials but separate temporary state and workspace directories, and no second connection was run concurrently. Test messages were synthetic and the only transferred file was a harmless 102-byte text fixture. No credentials, login material, real attachment, session body, or raw state file is recorded here.
 
-The following authenticated checks are therefore **BLOCKED**, not passed:
+| Status | Real-client check | Evidence and conclusion |
+| --- | --- | --- |
+| PASS | Startup and authentication | The built PR process authenticated and connected using temporary state/workspace paths and read-only Codex sandboxing. The risk fast path used an explicit service directory. |
+| PASS | Ordinary conversation | A deterministic prompt returned the requested synthetic marker. |
+| PASS | Second-turn continuation | The next turn recalled the marker from the same authenticated conversation. |
+| PASS | `/new` | The client displayed the reset/new-session confirmation card. |
+| PASS | `/resume` rendering | The client displayed the resume selection card from persisted session history. |
+| BLOCKED | Resume/card callback execution | The rendered card controls were not exposed through the macOS accessibility tree, and coordinate interaction was unavailable in this Computer Use session. Rendering passed, but the callback was not falsely counted as a real click. |
+| PASS | `/stop` | A safe delayed task was started and then stopped. The client showed interruption, health returned to zero active runs, and the late target marker was not delivered. |
+| PASS | `/runs` | The authenticated client rendered run history, including persisted interrupted status after restart. |
+| PASS | `/doctor` after fix | The real client rendered a completed diagnostic card covering WeCom, Codex, workspace, risk service, task store, and retry/circuit status. |
+| PASS | Attachment receive | The bot acknowledged and correctly summarized the harmless 102-byte text fixture. |
+| PASS | Attachment send | The bot returned that existing fixture as a real downloadable file row in the client. |
+| PASS | Process restart / no replay | The process was terminated while a safe delayed Agent task was active, then restarted against the same temporary state. After waiting beyond the original delay, active/starting counts remained zero, the run stayed interrupted, and the forbidden late marker was not emitted. |
+| PASS | WebSocket connect and controlled restart | Initial authenticated WebSocket connection and controlled process restart were exercised without duplicate execution. |
+| BLOCKED | Forced automatic WebSocket reconnect | Host networking was not deliberately disrupted because that could affect unrelated online services. Automated reconnect coverage remains the evidence for this sub-item. |
+| BLOCKED | Successful read-only risk calculation | A fully synthetic nonexistent trade reached the real risk route and failed closed with a user-facing unavailable/unparseable response. No real product data was used, so a successful calculation against a dedicated safe risk fixture was not demonstrated. |
+| BLOCKED | Lark real client | No dedicated authenticated Feishu/Lark test environment or test credentials were available. Offline and simulated Lark coverage is not reported as a real-client pass. |
 
-- WeCom and Lark ordinary conversation and second-turn continuation
-- `/new`, `/resume`, stop, model/reasoning, `/runs`, and `/doctor`
-- Template/card callbacks and text fallback
-- Attachment receive/send with a harmless test file
-- Read-only `/测算` against a dedicated test risk service
-- WebSocket reconnect and controlled process restart without replay
+The temporary PR instance was stopped after confirming zero active and starting runs. Restoration of the original service is recorded in the final handoff rather than inferred from fake SDK results.
 
-Blocker: no independently identified test robot credentials and no isolated authenticated risk dependency. Fake SDK/agent coverage was not counted as real-client acceptance.
+## Findings and minimal fixes
 
-## Finding and minimal fix
+1. `processMessageEvent` originally claimed the in-memory message dedupe entry before the durable task receipt. If the durable write failed, the task correctly did not execute, but an immediate platform redelivery with the same message ID was then discarded by the in-memory TTL cache. Commit `553874c` moves the memory claim after the durable claim/fail-closed block and adds a regression contract.
+2. Authenticated `/doctor` initially failed at the WeCom API boundary with error `42035` because its template card contained seven `horizontal_content_list` entries while WeCom accepts at most six. Commit `8a920e9` caps facts at six in the central notice and interactive card renderer and adds a regression test. Rebuilding and repeating the same real-client `/doctor` check passed.
 
-The review found one WeCom retry defect. `processMessageEvent` originally claimed the in-memory message dedupe entry before the durable task receipt. If the durable write failed, the task correctly did not execute, but an immediate platform redelivery with the same message ID was then discarded by the in-memory TTL cache and could not retry after storage recovered.
-
-Commit `553874c` moves the memory claim after the durable claim/fail-closed block and adds a regression contract. No architecture or unrelated code was changed. The fixed tree passed the full and targeted gates listed above.
+Both fixes are surgical and do not change the shared architecture or weaken tests, safety assertions, or timeouts. The final code tree passed all full and targeted gates listed above.
 
 ## Migration and rollback conclusion
 
 - PASS (automated, temporary state): migration preserves legacy bytes, writes mode-`0600` content-addressed backups, does not repeat import once v2 exists, retries safely after backup-before-commit interruption, and refuses damaged input or conflicting backup content.
 - PASS (design and tests): old WeCom cwd/policy-unverified mappings remain quarantined and are not blindly resumed.
-- BLOCKED (authenticated instance): no dedicated bot was available for a stop/migrate/run/rollback exercise.
+- PASS (authenticated restart fencing): an already-started safe Agent task remained interrupted and was not silently replayed after the WeCom process restarted against the same temporary state.
+- BLOCKED (production-state migration/rollback): no production state was copied or mutated, and no dedicated Lark client was available for an authenticated migration/rollback drill. Automated temporary-state coverage is the acceptance evidence for migration semantics.
 - Rollback procedure remains: stop the new dedicated test process first; preserve v2 state, task receipts, legacy files, and backups; then run v0.8.0 against the legacy snapshot. The legacy snapshot may be stale, and uncertain external effects must be checked before any retry.
 
 ## GitHub and merge recommendation
 
-At the initial tested PR head, GitHub reported macOS and Ubuntu / Node 20 checks successful and Windows / Node 20 checks failed. Windows is explicitly outside this acceptance scope and was not hidden, skipped, or modified. The repository reported no required checks and no branch protection for `main` at validation time.
+At the initial tested PR head, GitHub reported macOS and Ubuntu / Node 20 checks successful and Windows / Node 20 checks failed. Windows is explicitly outside this acceptance scope and was not hidden, skipped, or modified. The repository reported no required checks and no branch protection for `main` at validation time. CI must be re-read after the final report push because earlier results do not substitute for the new head.
 
-Code-level and offline acceptance is **PASS** after `553874c`; no remaining code blocker was found. Overall acceptance is **NOT READY / do not merge yet** because the requested authenticated client checks remain BLOCKED. Re-evaluate after a dedicated Lark/WeCom test robot and isolated risk dependency complete the real-client checklist, and after the final pushed PR head's macOS/Ubuntu CI is green.
+Code-level, offline, and the completed WeCom real-client checks are **PASS** after `8a920e9`; no additional code blocker was found. Overall acceptance remains **NOT READY / do not merge yet** because authenticated Lark validation, a real card callback, forced automatic WebSocket reconnect, and a successful risk calculation against a safe dedicated fixture remain BLOCKED. Re-evaluate those gaps and confirm the final PR head's in-scope CI before merge.
