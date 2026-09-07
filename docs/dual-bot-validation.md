@@ -87,3 +87,98 @@ node bin/lark-channel-bridge.mjs start --all --profile codex \
 3. **生产状态迁移/回滚仍未演练**：不得清理任务 ledger、覆盖新旧会话数据或把失败任务直接自动重跑。跨平台 CI、发布/推送/合并不在本轮实际执行范围。
 
 继续工作前核对工作树与适用 AGENTS.md，保留已有修改，不 reset/clean/stash 无关内容。补充真实检查结果时记录实际测试提交或工作树范围；不要把上述未执行项改成 PASS，除非获得相应证据。
+
+## Codex 独立验收（2026-09-07）
+
+### 基线、隔离与授权边界
+
+- 仓库核验：`origin=https://github.com/guanglinhuang99/lark-coding-agent-bridge.git`，PR #12，分支 `feat/dual-bot-lifecycle`。
+- 安全 fetch 后 PR 实际初始 HEAD：`99f76017c4ae56879d5f8c3416288ccf88b99c1a`；`origin/main=2a5cfec78cfd605dbe9c908dd0ca63535c0bd972`。已读取 PR 描述、最新 CI 交接评论和适用 AGENTS.md。
+- 使用 detached worktree `/private/tmp/wecom-pr12-acceptance`；参考工作区 `/Users/guanglin/Sync/wecom-bot` 保留原 HEAD、未跟踪 `.pnpm-store/` 与 `AGENTS.md`，不纳入提交。不在参考工作区安装依赖或构建。
+- 自动化验收使用 fake launchctl、fake 文件系统/PID、fake SDK/agent；完整检查通过白名单环境执行，HOME、LARK_CHANNEL_HOME、WECOM_STATE_DIR 指向 `/private/tmp/wecom-pr12-state/`。没有复制生产凭证、加载线上 env 或启动相同线上身份的连接。
+- 本机 Node `24.19.0`，pnpm `10.33.0`。首次 install 的 prepare 子命令解析到宿主 fallback pnpm，故该次不作为最终安装证据；之后用临时 PATH wrapper 固定全部 pnpm 子命令为 `corepack pnpm@10.33.0`，重新完成 `install --frozen-lockfile`（exit 0）。package.json、pnpm-lock.yaml 未改动，没有升级或全局安装依赖。
+
+### 真实生产验收边界
+
+| 项目 | 本次结果 | 原因 |
+| --- | --- | --- |
+| 企业微信临时 job 到持久定义生产切换 | BLOCKED | 本任务明确不授权卸载、重启或重新注册线上 job |
+| 新持久定义真实冷启动、新入口及日志生效 | NOT RUN | 未实施生产切换；模拟测试不代替此项 |
+| 登录自启 | NOT RUN | 未退出登录或重启机器 |
+| 真实对话、追问、`/new`、`/resume`、安全停止、卡片回调、小文件回传 | BLOCKED | 本次没有已授权的真实客户端测试会话，未发送消息 |
+| 生产状态迁移与回退演练 | NOT RUN | 未操作线上状态、ledger 或会话 |
+
+后续只能在另行批准的维护窗口执行：重新确认活动及排队任务为零、指定 label 与身份、保存回退依据，等待旧 WeCom job 和进程完全退出后启动同身份新定义，核验 health、日志和真实消息；飞书保持运行。不得制造并行同身份连接，不清理 ledger 或重放结果不确定的任务。
+
+### Windows 失败归因与最小修复
+
+初始 PR push CI `34086925366` 和 pull_request CI `34087023612`：macOS、Ubuntu 成功；Windows 失败。PR 新增的 fleet 两个测试文件贡献 5 个失败：只模拟 `process.platform=darwin`，但 `node:path` 和 `process.execPath` 仍来自 Windows（包括 `node.exe`）。修复统一使用 POSIX path、固定 fake Node、fake UID，并恢复原始 process 属性；保留定义保护及副作用断言，没有删除或 skip 用例。
+
+`main` 的 Windows run `34081386815` / job `101617183420` （HEAD `2a5cfec78cfd605dbe9c908dd0ca63535c0bd972`）汇总为 141 文件中 3 失败、138 通过；992 用例中 5 失败、986 通过、1 原有跳过。已存在其余 5 个失败：launchd-autostart 3 个（宿主 UID=-1），media 与 logger-redaction 各 1 个（Windows stat 不提供 POSIX 0600 权限语义）。三个测试文件的 Git blob 在 `main` 与初始 PR HEAD 完全相同。测试修复固定 macOS 模拟 UID；Windows 对真实 I/O 的包装器断言请求的 0600/0700 创建与 chmod 参数，macOS/Linux 保留实际 stat 权限检查，文件内容和脱敏断言继续执行。这不宣称验证了 Windows ACL。
+
+本机试图仅模拟 win32 启动测试工具时缺少 Windows Rollup 原生包，不能作为真实 Windows 复现或通过证据；最终跨平台结果以 GitHub runner 为准。未改 CI 平台矩阵，未增加 skip、删除用例、升级依赖或延长全局超时。
+
+### 缺陷复现与修复内容
+
+源码/测试修复提交：`ff1a351b957598885b0128e32a3552faf3d9d6e1`。本次不更改双进程架构，不引入总控服务。
+
+- 在独立临时旧源码副本（`git archive 99f7601`）运行新增 safety 测试中筛选的 8 项：8 项全部失败（exit 1；其余 11 项仅因 `-t` 筛选未执行，没有添加 skip）。复现包括 discovery 失败阻断健康同伴、EEXIST 配置竞争、存在的同名外部入口/Node 被接受、Lark 状态目录身份、工作目录/状态路径漂移、缺失 env 文件及多候选隔离。
+- launchd query 新增 5 项在修复前为 4 失败、1 通过，修复后 5 项通过。查询超时、权限或 spawn 错误不再被当作“已卸载”；只认明确的 service-not-found 状态，查询有 5 秒上限，未修改服务启动等待阈值。
+- fleet 查询失败同样保留“状态未确认”；服务发现失败也只使企业微信失败，飞书仍独立处理，总体返回非零。
+- 对实际 Node、同包 bin/dist 入口和飞书状态目录做身份检查；保留 Label、脚本参数、shell、符号链接及文件存在性保护。WeCom env 引用必须为存在的绝对文件路径；创建竞争后重新核验最终定义的 env 身份。
+- 新 WeCom 定义保持调用 cwd，以及已指定的 `WECOM_WORKSPACE` / `WECOM_STATE_DIR` 绝对路径。仅保存路径和 PATH，不复制 shell Secret 或 env 文件正文。原有定义不被覆盖，运行中的临时 job 不被卸载。
+
+旧源码复现命令使用当前新增测试及 `vitest run tests/unit/daemon/bot-fleet-safety.test.ts -t 'discovery failure|env file after a concurrent wx|same-basename|different node executable|state root differs|keeps caller cwd|existing env file|ambiguous discovered|discovery fails'`，工作目录 `/private/tmp/wecom-pr12-before-safety`。修复后的完整测试覆盖所有用例，见下方最终检查。
+
+### 最终本地检查
+
+实际完整测试 HEAD：`1c3de5619ebd361381ae63c2753987cef3fbbe04`（上一提交为源码修复，当前提交仅修复媒体测试原名标记）。白名单环境启动命令经临时 pnpm wrapper 固定为 `corepack pnpm@10.33.0`；所有构建产物仅在隔离 worktree。
+
+| 命令 | 结果 |
+| --- | --- |
+| `corepack pnpm@10.33.0 install --frozen-lockfile` | PASS，exit 0；锁文件未变 |
+| `pnpm exec vitest run tests/unit/daemon tests/unit/cli/service-profile.test.ts tests/unit/cli/kill-os-managed.test.ts tests/unit/cli/index-registration.test.ts` | PASS，exit 0；11 文件、89 用例 |
+| `pnpm test` | PASS，exit 0；146 文件、1055 用例，无跳过 |
+| `pnpm typecheck` | PASS，exit 0 |
+| `pnpm build` | PASS，exit 0；Vite、CLI/WeCom/library bundle、声明文件全部成功 |
+| `git diff --check` | PASS，exit 0 |
+| 构建 CLI 冲突参数检查 | PASS，8 组全部 exit 1，临时 HOME 内没有文件变更 |
+
+CLI 冲突检查逐项运行 `node bin/lark-channel-bridge.mjs`，参数为 `start --all --web-ui`、`start --all --agent codex`、`start --all --workspace /fake/workspace`、`start --all --app-id fake`、`start --all --skip-check-lark-cli`、`start --wecom-service ai.wecom-channel-bridge.test`、`status --all --web-ui`、`status --wecom-service ai.wecom-channel-bridge.test`。每次使用独立空 HOME、状态目录和工作目录。
+
+保留失败记录：在 `ff1a351` 上首次完整回归为 145 文件通过、1 文件失败；1054 用例通过、1 失败。原有 `attachment-resolver.test.ts` 要求完整路径不含 `private`，与本次隔离路径 `/private/tmp` 冲突；源码输出的完整 hash 路径已经符合精确断言。将测试原文件名及“不泄漏原名”断言使用的标记统一改为 `attachment-private-sentinel`，保留完整 hash 路径、内容及 file key 安全断言。该文件在 main 与初始 PR 相同，没有改媒体生产代码。相关 5 项及上表完整检查已在 `1c3de56` 复跑通过。
+
+### 验收清单映射（全部为离线模拟）
+
+| 要求 | 结果与证据 |
+| --- | --- |
+| 两边运行时重复 start、只读 status | PASS；fleet coordinator/backend 保留 PID，无重复 start，无写入或管理操作 |
+| 一边停止、两边停止 | PASS；两种单边停止均只启动必要服务；双停止分别 enable/bootstrap |
+| 单边失败隔离、总非零 | PASS；配置/discovery、enable、bootstrap、启动后退出、观察失败均覆盖，不停止成功同伴 |
+| loaded/running/连接区分 | PASS；外层状态、嵌套 coalition/environment、无 PID、死 PID、EPERM；查询失败保持未知；其他 PID 的注册不冒充当前平台连接 |
+| loaded crash job / unloaded restart | PASS；重建、卸载等待、enable/bootstrap 顺序；配置解析失败不写定义；未知卸载状态不 bootstrap；连接超时非零 |
+| 并发与身份 | PASS；同 env 重复调用、强制 EEXIST 异 env 竞争、强制 bootstrap 竞争赢家均覆盖；多个 WeCom 候选拒绝自动选择 |
+| 定义保护 | PASS；错误 Label、额外脚本、shell、符号链接、消失的 Node/入口、同 basename 外部路径、不同 Node、Lark 状态根不一致均拒绝且不覆盖 |
+| 临时 WeCom job 补建 | PASS；只创建缺失定义，0600/wx、env 路径引用，无 unload/kill；提示新参数尚未加载 |
+| 配置、PATH、工作目录及状态目录 | PASS；保留调用 cwd 与必要路径，bin/dist 同包入口核验，env 不存在或非绝对文件引用拒绝；不读取 Secret 正文 |
+| 单平台、supervisor、kill、CLI 参数 | PASS；相关集及完整回归通过，8 组 CLI 冲突在副作用前拒绝 |
+
+这里的 PASS 不包括真实 OS 冷启动、生产迁移或客户端收发；这些项目的 BLOCKED/NOT RUN 状态保持不变。
+
+### GitHub CI 与结论
+
+已读取 `1c3de5619ebd361381ae63c2753987cef3fbbe04` 的真实 GitHub 日志，不能以本机模拟替代 Windows 结果。
+
+| 平台 / Node 20 | Push CI | PR CI | 实际测试数量（两组一致） |
+| --- | --- | --- | --- |
+| macOS | PASS | PASS | 146 文件、1055 用例通过 |
+| Ubuntu | PASS | PASS | 146 文件、1055 用例通过 |
+| Windows | PASS | PASS | 146 文件通过；1054 用例通过、1 原有跳过 |
+
+Push run：[34088733463](https://github.com/guanglinhuang99/lark-coding-agent-bridge/actions/runs/34088733463)。PR run：[34088737657](https://github.com/guanglinhuang99/lark-coding-agent-bridge/actions/runs/34088737657)。全部 install、test、typecheck、build 步骤成功。Windows 唯一跳过为原有 `tests/unit/bridge/conversation-bindings.test.ts` 中依赖可变 symlink 的用例，本轮未改该文件或跳过条件。
+
+**代码与离线验收：PASS。** 本地完整验证及三平台两组 CI 均通过。此报告和使用说明作为后续纯文档提交，未改变已验证的源码、测试、依赖或锁文件；报告提交后的最终 HEAD / CI 另在 PR #12 的独立验收评论中记录。
+
+**生产切换：满足进入维护窗口审批与切换准备的代码条件，但尚未完成生产验收，也未授权直接切换。** 冷启动、登录自启、真实客户端收发与回退演练仍按上表保留 NOT RUN/BLOCKED。唯一优先下一步是另行批准维护窗口，按既定有序卸载、单实例启动和回退预案进行 WeCom 迁移及真实验证。
+
+修复已推送原 `feat/dual-bot-lifecycle` / [PR #12](https://github.com/guanglinhuang99/lark-coding-agent-bridge/pull/12)，保持 Draft；未合并、发布或部署。参考工作区仍为 `99f76017c4ae56879d5f8c3416288ccf88b99c1a`，仅有原先未跟踪的 `.pnpm-store/`、`AGENTS.md`。线上代码、dist、配置、会话和 job 未被本次验收更新。

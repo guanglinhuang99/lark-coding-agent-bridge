@@ -32,7 +32,9 @@ node bin/lark-channel-bridge.mjs start --all --profile codex \
   --wecom-env-file "$PWD/.env"
 ```
 
-首次设置只在目标 plist 不存在时创建它，权限为 `0600`，不会覆盖原有定义。plist 使用当前包的企业微信入口和当前 Node，保存 `PATH`、`WECOM_ENV_FILE` 路径引用、工作目录与日志路径；不会复制或输出 env 文件里的凭证。已有定义与显式传入的配置文件不一致时拒绝变更。
+首次设置只在目标 plist 不存在时创建它，权限为 `0600`，不会覆盖原有定义。plist 使用当前包的企业微信入口和当前 Node，保存 `PATH`、`WECOM_ENV_FILE` 路径引用、调用命令时的工作目录与日志路径；不会复制或输出 env 文件里的凭证。已有定义与 `--wecom-env-file` 或当前 `WECOM_ENV_FILE` 指定的配置文件不一致时拒绝变更；创建竞争中也会重新核验最终定义的配置引用。
+
+如果调用环境设置了 `WECOM_WORKSPACE` 或 `WECOM_STATE_DIR`，新定义仅保存这两个路径的绝对形式，保持工作区与会话目录语义；其他运行设置应写入指定 env 文件。不会根据 env 文件所在目录或包目录猜测工作区，也不会把 shell 中的 Secret 写入 plist。
 
 新企业微信服务日志位于：
 
@@ -41,7 +43,7 @@ node bin/lark-channel-bridge.mjs start --all --profile codex \
 <LARK_CHANNEL_HOME>/daemon/<WeCom service label>/stderr.log
 ```
 
-默认 `LARK_CHANNEL_HOME` 为 `~/.lark-channel`。已有 Lark 日志路径不改变。配置文件及其引用的 Python、Codex、工作区路径应长期可用；移动目录或升级并移除旧 Node 后需要单独检查服务定义。
+默认 `LARK_CHANNEL_HOME` 为 `~/.lark-channel`。已有 Lark 日志路径不改变。配置文件及其引用的 Python、Codex、工作区路径应长期可用；统一启动核验当前包的实际入口路径、当前 Node 和飞书状态目录身份；移动目录、切换包或升级 Node 后需要先用单平台流程检查、修复服务定义，统一入口不会接管另一个同名脚本。
 
 ## 已有临时 job 的兼容方式
 
@@ -63,6 +65,7 @@ node bin/lark-channel-bridge.mjs start --all --profile codex \
 | 多个企业微信候选 | 要求 `--wecom-service`，不按名称顺序或最近使用猜测 |
 | 旧定义有重复脚本参数、shell 包装器、错误 Label 或符号链接 | 拒绝从该定义启动，不覆盖文件 |
 | `status --all` | 不安装、重写、enable 或 bootstrap 服务 |
+| launchctl 查询超时或权限失败 | 状态未确认并返回非零，不当作服务不存在继续启动 |
 
 这里的“运行”表示 launchd 外层 job 为 running，且 PID 存活。它不等同于平台在线，更不等同于真实收发成功；需要结合飞书 profile 状态、企业微信 `--health` 及客户端消息回执验证。`runs` 是 launchd 累计启动次数，不能凭单个快照认定或排除重启循环。
 
