@@ -73,6 +73,11 @@ async function resolveServiceTarget(
   return { serviceId: profile, profile, webUi: false };
 }
 
+/** Lifecycle operations must unload launchd jobs even during crash backoff. */
+function serviceIsLoaded(adapter: ServiceAdapter): boolean {
+  return adapter.isLoaded?.() ?? adapter.isRunning();
+}
+
 /** Whether this platform has a service definition on disk for `serviceId`. */
 function serviceFileExists(serviceId: string): boolean {
   return getServiceAdapter(serviceId)?.fileExists() ?? false;
@@ -307,6 +312,7 @@ async function reportConnectAfter(
     );
     return;
   }
+  process.exitCode = 1;
   console.warn(`⚠ 已下发指令,但 30 秒内未观察到 bot 连接成功 (${verb})。`);
   console.warn(`  查看日志: tail -f ${daemonStderrPath(profile)}`);
   console.warn(`              tail -f ${daemonStdoutPath(profile)}`);
@@ -352,8 +358,8 @@ export async function runServiceStart(opts: ServiceStartOptions = {}): Promise<v
 
   await adapter.install();
 
-  // If already running, stop first so start operations don't race.
-  if (adapter.isRunning()) {
+  // Loaded jobs must be removed even when the process has crashed.
+  if (serviceIsLoaded(adapter)) {
     console.log('检测到旧 bot 实例,先停掉再重启...');
     const r = await adapter.stop();
     if (!r.ok) {
@@ -409,7 +415,7 @@ async function runServiceStartWebUi(opts: ServiceStartOptions): Promise<void> {
 
   await adapter.install();
 
-  if (adapter.isRunning()) {
+  if (serviceIsLoaded(adapter)) {
     console.log('检测到 supervisor 服务已在运行,先停掉再重启...');
     const r = await adapter.stop();
     if (!r.ok) {
@@ -446,7 +452,7 @@ export async function runServiceStop(opts: ServiceProfileOptions = {}): Promise<
     console.log(webUi ? 'supervisor 还没在后台运行过,无需停止。' : 'bot 还没在后台运行过,无需停止。');
     return;
   }
-  if (!adapter.isRunning()) {
+  if (!serviceIsLoaded(adapter)) {
     // Not running now, but the registration may still carry login-time
     // autostart (launchd RunAtLoad / systemd WantedBy) — which is exactly how
     // a "stopped" daemon comes back on its own. Make `stop` mean stopped.
@@ -504,11 +510,15 @@ export async function runServiceRestart(opts: ServiceProfileOptions = {}): Promi
   // Health-check waits on a profile connecting: classic → the service's own
   // profile; web-ui → whatever the supervisor auto-starts (the active profile).
   const waitProfile = webUi ? await resolveServiceProfile(undefined) : serviceId;
-  if (adapter.isRunning()) {
+  if (serviceIsLoaded(adapter)) {
     await reportConnectAfter('restarted', waitProfile, adapter.restart);
     return;
   }
-  await reportConnectAfter('started', waitProfile, adapter.start);
+  // Resolve config before install; stopped jobs can have stale arguments too.
+  await reportConnectAfter('started', waitProfile, async () => {
+    await adapter.install();
+    return adapter.start();
+  });
 }
 
 /** `bridge status` — report whether the daemon is running, with pid + log paths. */
@@ -522,26 +532,34 @@ export async function runServiceStatus(opts: ServiceProfileOptions = {}): Promis
     console.log(`  通过 ${startHint} 启动`);
     return;
   }
-  if (!adapter.isRunning()) {
-    console.log(`${label} 当前没在后台运行`);
-    console.log(`  通过 ${startHint} 重新启动`);
+  const observed = adapter.inspectStatus?.();
+  if (!(observed?.running ?? adapter.isRunning())) {
+    if (observed?.loaded) {
+      console.log(`⚠ ${label} 已加载，但进程未运行（状态: ${observed.state ?? 'unknown'}）`);
+      if (observed.lastExit && observed.lastExit !== '-1') console.log(`  上次退出码: ${observed.lastExit}`);
+      console.log('  用 `restart` 重建服务并查看日志；已加载不代表在线。');
+      process.exitCode = 1;
+    } else {
+      console.log(`${label} 当前没在后台运行`);
+      console.log(`  通过 ${startHint} 重新启动`);
+    }
     return;
   }
 
   const entry = !webUi && profile ? await lookupProfileEntry(profile) : undefined;
 
-  const { pid, lastExit } = adapter.parseStatus(adapter.describeStatus());
+  const { pid, lastExit } = observed ?? adapter.parseStatus(adapter.describeStatus());
 
   if (webUi) {
     console.log('✓ 控制面 supervisor 正在后台运行');
-    const online = readAndPrune().filter((e) => Boolean(e.botName));
+    const online = readAndPrune().filter((e) => Boolean(e.botName) && (!pid || e.pid === Number(pid)));
     if (online.length) {
       console.log(`  在线 bot: ${online.map((e) => e.botName).join('、')}`);
     }
-  } else if (entry) {
+  } else if (entry && (!pid || entry.pid === Number(pid))) {
     console.log(`✓ bot ${entry.botName} (${entry.appId}) 正在后台运行`);
   } else {
-    console.log('✓ bot 正在后台运行');
+    console.log('⚠ bot 进程正在运行，平台连接尚未确认');
   }
   if (pid) console.log(`  进程 ID: ${pid}`);
   console.log('  日志:');
@@ -566,7 +584,7 @@ export async function runServiceUnregister(opts: ServiceProfileOptions = {}): Pr
     console.log(`${label} 还没在后台运行过,无需清理。`);
     return;
   }
-  if (adapter.isRunning()) {
+  if (serviceIsLoaded(adapter)) {
     const r = await adapter.stopAndDisableAutostart();
     if (!r.ok) {
       console.warn(`⚠ 停止 ${label} 时有警告(继续清理):\n${formatServiceStderr(r.stderr)}`);

@@ -11,10 +11,32 @@ import {
   WeComMediaStore,
 } from '../../../src/wecom/media';
 
+const atomicWriteMock = vi.hoisted(() => ({
+  calls: [] as Array<{ path: string; mode: number | undefined }>,
+}));
+
+vi.mock('../../../src/platform/atomic-write', async () => {
+  const actual = await vi.importActual<typeof import('../../../src/platform/atomic-write')>(
+    '../../../src/platform/atomic-write',
+  );
+  return {
+    ...actual,
+    writeFileAtomic: async (
+      path: string,
+      data: string | Buffer,
+      opts?: import('../../../src/platform/atomic-write').AtomicWriteOptions,
+    ) => {
+      atomicWriteMock.calls.push({ path, mode: opts?.mode });
+      return actual.writeFileAtomic(path, data, opts);
+    },
+  };
+});
+
 const roots: string[] = [];
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  atomicWriteMock.calls.length = 0;
 });
 
 describe('WeCom media ingress', () => {
@@ -43,7 +65,7 @@ describe('WeCom media ingress', () => {
       originalName: '截图.png',
     });
     expect(await readFile(attachments[0]!.absPath)).toEqual(png);
-    expect((await stat(attachments[0]!.absPath)).mode & 0o777).toBe(0o600);
+    await expectPrivateFileMode(attachments[0]!.absPath);
   });
 
   it('rejects an oversized download without persisting it', async () => {
@@ -259,4 +281,14 @@ async function mediaRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'wecom-media-'));
   roots.push(root);
   return root;
+}
+
+async function expectPrivateFileMode(path: string): Promise<void> {
+  if (process.platform === 'win32') {
+    // Windows does not expose POSIX permission bits through fs. Verify the
+    // security intent at the atomic-write boundary instead.
+    expect(atomicWriteMock.calls).toContainEqual({ path, mode: 0o600 });
+    return;
+  }
+  expect((await stat(path)).mode & 0o777).toBe(0o600);
 }

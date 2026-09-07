@@ -1,0 +1,357 @@
+# 双平台启动与生命周期修复验证
+
+## 代码基线与范围
+
+验证日期：2026-09-07。机器：Mac mini / macOS。工作区：`/Users/guanglin/Sync/wecom-bot`。
+
+基线 HEAD：`2a5cfec78cfd605dbe9c908dd0ca63535c0bd972`。
+
+实现分支：`feat/dual-bot-lifecycle`。本报告记录初次验证时的基线 HEAD 加工作树补丁；当时尚未提交、推送或发布。随后整理为该分支的 PR，初次测试的时间与范围保持不变，实际验收以 PR 最新 HEAD 为准。没有改动 `package.json`、`pnpm-lock.yaml`；原有未跟踪 `.pnpm-store/`、`AGENTS.md` 保留，不纳入本轮提交。独立验收任务见 `codex-dual-bot-acceptance.md`。
+
+本轮增加 macOS 的 `start --all` / `status --all`，复用独立的 Lark、WeCom OS job，不创建新总控进程。修复 launchd loaded/running 混淆、未加载时 restart 不重建定义，以及 enable/连接等待失败的结果处理。
+
+## 自动化验证
+
+MCPX 的执行环境未提供 pnpm 命令；没有安装全局工具或更改项目指定的包管理器。使用已安装依赖执行等价的构建步骤。
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm run typecheck` | PASS，exit 0 |
+| `npm run build:web` | PASS，Vite 构建成功 |
+| `npm exec --offline -- tsup` | PASS，CLI、WeCom、库入口与声明文件构建成功 |
+| `npm exec --offline -- vitest run` | PASS，144/144 文件，1019/1019 用例，exit 0 |
+| `git diff --check` | PASS，exit 0 |
+| `git diff --cached --name-only` | 空；没有暂存任何文件 |
+
+初次完整类型检查、构建、测试及 diff 检查命令链于 `2026-09-07T05:03:58Z` 结束，exit 0。源码与测试在该命令前已完成；截至本报告整理入 PR，后续变更仅为说明、验证记录与独立验收交接。后续验收或修复应追加记录实际测试 HEAD，不能沿用本次通过结果。
+
+新增回归覆盖：外层 launchd 状态解析、嵌套环境/coalition 不误判、PID 存活检查、停止后的定义重建、配置解析失败不写服务文件、卸载/enable/bootstrap 顺序、连接超时非零、双平台重复启动、部分失败隔离、临时 job 不重复拉起、配置冲突拒绝、符号链接拒绝和只读 status。后端用假的 launchctl、文件系统和 PID 检查验证副作用，不操作实际测试 LaunchAgent。
+
+## 提交前复核
+
+2026-09-07 整理 PR 前重新执行 `npm run typecheck && npm run test:unit && git diff --check`，于 `2026-09-07T05:26:07Z` 结束，exit 0；100/100 单元测试文件、745/745 用例通过。本次没有改变生产源码或测试逻辑，只补充交接和文档，不重启机器人、不修改 LaunchAgent。该结果不替代后续 Codex 在 PR 最新 HEAD 上的独立验收；此前完整回归仍为上节所记的 144 文件、1019 用例。
+
+## 当前机器的无中断验证
+
+目标只限：
+
+```text
+ai.lark-channel-bridge.bot.codex
+ai.wecom-channel-bridge.riskbot-codex
+```
+
+本地最新 CLI 的 `start --help` / `status --help` 均包含 `--all`。多次执行 `start --all --profile codex` 和 `status --all --profile codex` 均 exit 0，无 stderr。没有通过全局旧 CLI 调用。
+
+| 项目 | 实际观测 |
+| --- | --- |
+| 飞书 job | running，PID 36940，runs=1 |
+| 企业微信 job | running，PID 7807，runs=1 |
+| 重复启动 | 两边 PID 和 runs 均保持不变，没有重启 |
+| 初始无配置参数的重复启动 | 两个目标服务定义的存在性/摘要前后不变 |
+| 飞书 `status --profile codex` | exit 0，识别到 codex bot 注册，PID 36940 |
+| 企业微信 `--health` | exit 0，healthy=true，reason=ok；PID7807、phase=connected、connected=true、activeRuns=0、startingRuns=0 |
+
+WeCom health 的心跳时间为 `2026-09-07T05:05:25.902Z`，采样时 ageMs=25021。以上是采样时的进程/健康证据，不是永久在线保证。没有读取 env 文件正文或把原始健康错误、凭证、会话正文写入报告。
+
+## 企业微信持久定义
+
+发现的现有 WeCom job 是 `launchctl submit` 提交的临时 job：没有对应磁盘 plist，stdout/stderr 指向 `/dev/null`。只从已加载启动命令提取并核验了配置文件路径和入口路径，没有打印原始 shell 命令或凭证。
+
+已执行：
+
+```sh
+node bin/lark-channel-bridge.mjs start --all --profile codex \
+  --wecom-service ai.wecom-channel-bridge.riskbot-codex \
+  --wecom-env-file /Users/guanglin/Sync/wecom-bot/.env
+```
+
+命令 exit 0，仅补建缺失的 `~/Library/LaunchAgents/ai.wecom-channel-bridge.riskbot-codex.plist` 和对应日志目录，没有改写飞书 plist。实际 `plutil -lint` exit 0，文件权限 `0600`，Label 匹配。
+
+新定义中的 ProgramArguments：
+
+```text
+/opt/homebrew/Cellar/node@24/24.19.0/bin/node
+~/Sync/wecom-bot/bin/wecom-channel-bridge.mjs
+```
+
+环境仅含 PATH 和 WECOM_ENV_FILE 路径引用；工作目录是该项目。配置文件正文没有复制到 plist。新日志位置是 `~/.lark-channel/daemon/ai.wecom-channel-bridge.riskbot-codex/{stdout,stderr}.log`。
+
+**当前运行的仍是 PID7807 的旧临时 job。** 没有 bootout 它，没有对它 bootstrap 新定义，也没有为了检验而制造第二条线上连接。因此新入口与新日志设置尚未在这个运行实例上生效。不能把磁盘定义验证标成冷启动、登录自启或运行实例迁移通过。
+
+持久定义创建后，省略 `--wecom-env-file` 的日常 `start --all --profile codex` 已再次实测通过；两个原 PID 仍保持不变。最终进程/定义核验于 `2026-09-07T05:08:33Z` 完成。
+
+## 剩余验收与 Codex 交接
+
+1. **真实客户端端到端尚未重做**：在用户已使用的飞书及企业微信会话，用无敏感内容测试普通对话、第二轮续接、`/new`、`/resume`、安全停止、卡片回调和小型文本附件。既有隔离实例验收记录不能代替本次部署结果；本轮没有发真实客户端消息。
+2. **持久 WeCom 冷启动/临时 job 切换尚未执行**：在明确的维护窗口，先重新检查当前 PID、活动任务、实际配置与状态目录，再对同一个目标 label 完成有序卸载和新定义加载；禁止新旧同身份连接并行。检查健康心跳、PID、日志和新消息回复，确认没有任务重放。不要改动其他服务。
+3. **生产状态迁移/回滚仍未演练**：不得清理任务 ledger、覆盖新旧会话数据或把失败任务直接自动重跑。跨平台 CI、发布/推送/合并不在本轮实际执行范围。
+
+继续工作前核对工作树与适用 AGENTS.md，保留已有修改，不 reset/clean/stash 无关内容。补充真实检查结果时记录实际测试提交或工作树范围；不要把上述未执行项改成 PASS，除非获得相应证据。
+
+## Codex 独立验收（2026-09-07）
+
+### 基线、隔离与授权边界
+
+- 仓库核验：`origin=https://github.com/guanglinhuang99/lark-coding-agent-bridge.git`，PR #12，分支 `feat/dual-bot-lifecycle`。
+- 安全 fetch 后 PR 实际初始 HEAD：`99f76017c4ae56879d5f8c3416288ccf88b99c1a`；`origin/main=2a5cfec78cfd605dbe9c908dd0ca63535c0bd972`。已读取 PR 描述、最新 CI 交接评论和适用 AGENTS.md。
+- 使用 detached worktree `/private/tmp/wecom-pr12-acceptance`；参考工作区 `/Users/guanglin/Sync/wecom-bot` 保留原 HEAD、未跟踪 `.pnpm-store/` 与 `AGENTS.md`，不纳入提交。不在参考工作区安装依赖或构建。
+- 自动化验收使用 fake launchctl、fake 文件系统/PID、fake SDK/agent；完整检查通过白名单环境执行，HOME、LARK_CHANNEL_HOME、WECOM_STATE_DIR 指向 `/private/tmp/wecom-pr12-state/`。没有复制生产凭证、加载线上 env 或启动相同线上身份的连接。
+- 本机 Node `24.19.0`，pnpm `10.33.0`。首次 install 的 prepare 子命令解析到宿主 fallback pnpm，故该次不作为最终安装证据；之后用临时 PATH wrapper 固定全部 pnpm 子命令为 `corepack pnpm@10.33.0`，重新完成 `install --frozen-lockfile`（exit 0）。package.json、pnpm-lock.yaml 未改动，没有升级或全局安装依赖。
+
+### 真实生产验收边界
+
+| 项目 | 本次结果 | 原因 |
+| --- | --- | --- |
+| 企业微信临时 job 到持久定义生产切换 | BLOCKED | 本任务明确不授权卸载、重启或重新注册线上 job |
+| 新持久定义真实冷启动、新入口及日志生效 | NOT RUN | 未实施生产切换；模拟测试不代替此项 |
+| 登录自启 | NOT RUN | 未退出登录或重启机器 |
+| 真实对话、追问、`/new`、`/resume`、安全停止、卡片回调、小文件回传 | BLOCKED | 本次没有已授权的真实客户端测试会话，未发送消息 |
+| 生产状态迁移与回退演练 | NOT RUN | 未操作线上状态、ledger 或会话 |
+
+后续只能在另行批准的维护窗口执行：重新确认活动及排队任务为零、指定 label 与身份、保存回退依据，等待旧 WeCom job 和进程完全退出后启动同身份新定义，核验 health、日志和真实消息；飞书保持运行。不得制造并行同身份连接，不清理 ledger 或重放结果不确定的任务。
+
+### Windows 失败归因与最小修复
+
+初始 PR push CI `34086925366` 和 pull_request CI `34087023612`：macOS、Ubuntu 成功；Windows 失败。PR 新增的 fleet 两个测试文件贡献 5 个失败：只模拟 `process.platform=darwin`，但 `node:path` 和 `process.execPath` 仍来自 Windows（包括 `node.exe`）。修复统一使用 POSIX path、固定 fake Node、fake UID，并恢复原始 process 属性；保留定义保护及副作用断言，没有删除或 skip 用例。
+
+`main` 的 Windows run `34081386815` / job `101617183420` （HEAD `2a5cfec78cfd605dbe9c908dd0ca63535c0bd972`）汇总为 141 文件中 3 失败、138 通过；992 用例中 5 失败、986 通过、1 原有跳过。已存在其余 5 个失败：launchd-autostart 3 个（宿主 UID=-1），media 与 logger-redaction 各 1 个（Windows stat 不提供 POSIX 0600 权限语义）。三个测试文件的 Git blob 在 `main` 与初始 PR HEAD 完全相同。测试修复固定 macOS 模拟 UID；Windows 对真实 I/O 的包装器断言请求的 0600/0700 创建与 chmod 参数，macOS/Linux 保留实际 stat 权限检查，文件内容和脱敏断言继续执行。这不宣称验证了 Windows ACL。
+
+本机试图仅模拟 win32 启动测试工具时缺少 Windows Rollup 原生包，不能作为真实 Windows 复现或通过证据；最终跨平台结果以 GitHub runner 为准。未改 CI 平台矩阵，未增加 skip、删除用例、升级依赖或延长全局超时。
+
+### 缺陷复现与修复内容
+
+源码/测试修复提交：`ff1a351b957598885b0128e32a3552faf3d9d6e1`。本次不更改双进程架构，不引入总控服务。
+
+- 在独立临时旧源码副本（`git archive 99f7601`）运行新增 safety 测试中筛选的 8 项：8 项全部失败（exit 1；其余 11 项仅因 `-t` 筛选未执行，没有添加 skip）。复现包括 discovery 失败阻断健康同伴、EEXIST 配置竞争、存在的同名外部入口/Node 被接受、Lark 状态目录身份、工作目录/状态路径漂移、缺失 env 文件及多候选隔离。
+- launchd query 新增 5 项在修复前为 4 失败、1 通过，修复后 5 项通过。查询超时、权限或 spawn 错误不再被当作“已卸载”；只认明确的 service-not-found 状态，查询有 5 秒上限，未修改服务启动等待阈值。
+- fleet 查询失败同样保留“状态未确认”；服务发现失败也只使企业微信失败，飞书仍独立处理，总体返回非零。
+- 对实际 Node、同包 bin/dist 入口和飞书状态目录做身份检查；保留 Label、脚本参数、shell、符号链接及文件存在性保护。WeCom env 引用必须为存在的绝对文件路径；创建竞争后重新核验最终定义的 env 身份。
+- 新 WeCom 定义保持调用 cwd，以及已指定的 `WECOM_WORKSPACE` / `WECOM_STATE_DIR` 绝对路径。仅保存路径和 PATH，不复制 shell Secret 或 env 文件正文。原有定义不被覆盖，运行中的临时 job 不被卸载。
+
+旧源码复现命令使用当前新增测试及 `vitest run tests/unit/daemon/bot-fleet-safety.test.ts -t 'discovery failure|env file after a concurrent wx|same-basename|different node executable|state root differs|keeps caller cwd|existing env file|ambiguous discovered|discovery fails'`，工作目录 `/private/tmp/wecom-pr12-before-safety`。修复后的完整测试覆盖所有用例，见下方最终检查。
+
+### 最终本地检查
+
+实际完整测试 HEAD：`1c3de5619ebd361381ae63c2753987cef3fbbe04`（上一提交为源码修复，当前提交仅修复媒体测试原名标记）。白名单环境启动命令经临时 pnpm wrapper 固定为 `corepack pnpm@10.33.0`；所有构建产物仅在隔离 worktree。
+
+| 命令 | 结果 |
+| --- | --- |
+| `corepack pnpm@10.33.0 install --frozen-lockfile` | PASS，exit 0；锁文件未变 |
+| `pnpm exec vitest run tests/unit/daemon tests/unit/cli/service-profile.test.ts tests/unit/cli/kill-os-managed.test.ts tests/unit/cli/index-registration.test.ts` | PASS，exit 0；11 文件、89 用例 |
+| `pnpm test` | PASS，exit 0；146 文件、1055 用例，无跳过 |
+| `pnpm typecheck` | PASS，exit 0 |
+| `pnpm build` | PASS，exit 0；Vite、CLI/WeCom/library bundle、声明文件全部成功 |
+| `git diff --check` | PASS，exit 0 |
+| 构建 CLI 冲突参数检查 | PASS，8 组全部 exit 1，临时 HOME 内没有文件变更 |
+
+CLI 冲突检查逐项运行 `node bin/lark-channel-bridge.mjs`，参数为 `start --all --web-ui`、`start --all --agent codex`、`start --all --workspace /fake/workspace`、`start --all --app-id fake`、`start --all --skip-check-lark-cli`、`start --wecom-service ai.wecom-channel-bridge.test`、`status --all --web-ui`、`status --wecom-service ai.wecom-channel-bridge.test`。每次使用独立空 HOME、状态目录和工作目录。
+
+保留失败记录：在 `ff1a351` 上首次完整回归为 145 文件通过、1 文件失败；1054 用例通过、1 失败。原有 `attachment-resolver.test.ts` 要求完整路径不含 `private`，与本次隔离路径 `/private/tmp` 冲突；源码输出的完整 hash 路径已经符合精确断言。将测试原文件名及“不泄漏原名”断言使用的标记统一改为 `attachment-private-sentinel`，保留完整 hash 路径、内容及 file key 安全断言。该文件在 main 与初始 PR 相同，没有改媒体生产代码。相关 5 项及上表完整检查已在 `1c3de56` 复跑通过。
+
+### 验收清单映射（全部为离线模拟）
+
+| 要求 | 结果与证据 |
+| --- | --- |
+| 两边运行时重复 start、只读 status | PASS；fleet coordinator/backend 保留 PID，无重复 start，无写入或管理操作 |
+| 一边停止、两边停止 | PASS；两种单边停止均只启动必要服务；双停止分别 enable/bootstrap |
+| 单边失败隔离、总非零 | PASS；配置/discovery、enable、bootstrap、启动后退出、观察失败均覆盖，不停止成功同伴 |
+| loaded/running/连接区分 | PASS；外层状态、嵌套 coalition/environment、无 PID、死 PID、EPERM；查询失败保持未知；其他 PID 的注册不冒充当前平台连接 |
+| loaded crash job / unloaded restart | PASS；重建、卸载等待、enable/bootstrap 顺序；配置解析失败不写定义；未知卸载状态不 bootstrap；连接超时非零 |
+| 并发与身份 | PASS；同 env 重复调用、强制 EEXIST 异 env 竞争、强制 bootstrap 竞争赢家均覆盖；多个 WeCom 候选拒绝自动选择 |
+| 定义保护 | PASS；错误 Label、额外脚本、shell、符号链接、消失的 Node/入口、同 basename 外部路径、不同 Node、Lark 状态根不一致均拒绝且不覆盖 |
+| 临时 WeCom job 补建 | PASS；只创建缺失定义，0600/wx、env 路径引用，无 unload/kill；提示新参数尚未加载 |
+| 配置、PATH、工作目录及状态目录 | PASS；保留调用 cwd 与必要路径，bin/dist 同包入口核验，env 不存在或非绝对文件引用拒绝；不读取 Secret 正文 |
+| 单平台、supervisor、kill、CLI 参数 | PASS；相关集及完整回归通过，8 组 CLI 冲突在副作用前拒绝 |
+
+这里的 PASS 不包括真实 OS 冷启动、生产迁移或客户端收发；这些项目的 BLOCKED/NOT RUN 状态保持不变。
+
+### GitHub CI 与结论
+
+已读取 `1c3de5619ebd361381ae63c2753987cef3fbbe04` 的真实 GitHub 日志，不能以本机模拟替代 Windows 结果。
+
+| 平台 / Node 20 | Push CI | PR CI | 实际测试数量（两组一致） |
+| --- | --- | --- | --- |
+| macOS | PASS | PASS | 146 文件、1055 用例通过 |
+| Ubuntu | PASS | PASS | 146 文件、1055 用例通过 |
+| Windows | PASS | PASS | 146 文件通过；1054 用例通过、1 原有跳过 |
+
+Push run：[34088733463](https://github.com/guanglinhuang99/lark-coding-agent-bridge/actions/runs/34088733463)。PR run：[34088737657](https://github.com/guanglinhuang99/lark-coding-agent-bridge/actions/runs/34088737657)。全部 install、test、typecheck、build 步骤成功。Windows 唯一跳过为原有 `tests/unit/bridge/conversation-bindings.test.ts` 中依赖可变 symlink 的用例，本轮未改该文件或跳过条件。
+
+**代码与离线验收：PASS。** 本地完整验证及三平台两组 CI 均通过。此报告和使用说明作为后续纯文档提交，未改变已验证的源码、测试、依赖或锁文件；报告提交后的最终 HEAD / CI 另在 PR #12 的独立验收评论中记录。
+
+**生产切换：满足进入维护窗口审批与切换准备的代码条件，但尚未完成生产验收，也未授权直接切换。** 冷启动、登录自启、真实客户端收发与回退演练仍按上表保留 NOT RUN/BLOCKED。唯一优先下一步是另行批准维护窗口，按既定有序卸载、单实例启动和回退预案进行 WeCom 迁移及真实验证。
+
+修复已推送原 `feat/dual-bot-lifecycle` / [PR #12](https://github.com/guanglinhuang99/lark-coding-agent-bridge/pull/12)，保持 Draft；未合并、发布或部署。参考工作区仍为 `99f76017c4ae56879d5f8c3416288ccf88b99c1a`，仅有原先未跟踪的 `.pnpm-store/`、`AGENTS.md`。线上代码、dist、配置、会话和 job 未被本次验收更新。
+
+
+### 第二任务独立复核归并（2026-09-07）
+
+本节收口第二任务在 `/private/tmp/wecom-pr12-independent-1355` 的独立证据，保留上方第一任务记录。第二任务原报告提交 `6bab5e292a385f40ef59bd1a74c61be38875b5f9` 不整体 cherry-pick，避免重复章节；本次基于已发布报告 `1349c3278abbb2fcb58d5c275e10bdbebef1e2f3` 追加归并说明。
+
+- 第二任务实际完整测试 HEAD 同为 `1c3de5619ebd361381ae63c2753987cef3fbbe04`：146 文件 / 1055 用例通过，相关 11 文件 / 89 用例通过；typecheck、build、diff 检查均 exit 0，8 组 CLI 冲突检查均非零退出且未生成文件。
+- 使用 Node 24.19.0、pnpm 10.33.0，冻结锁文件安装，白名单环境和独立临时 HOME、LARK_CHANNEL_HOME、WECOM_STATE_DIR；未更改线上配置或连接。
+- 独立核对 main/原 PR Windows 日志及最新三平台两组 CI，结论与主报告一致。第二任务首次沙箱完整测试 1042 通过 / 13 失败：12 个 UI 用例因本地监听 EPERM，1 个附件测试因 `/private/tmp` 与旧标记冲突；开放离线本地监听并使用 `/tmp` 后通过。之后在修正标记的 `1c3de56` 重新完成全部检查。
+- 独立结论已发布于 [PR 验收评论](https://github.com/guanglinhuang99/lark-coding-agent-bridge/pull/12#issuecomment-5565761811)。本次归并仅修改文档，不改变源码、测试或依赖；最终文档 HEAD 的 CI 结果在 PR 收口评论记录。
+
+### 下一阶段审批范围（仅预案，未执行）
+
+当前可申请企业微信持久定义切换的维护窗口；“继续验收/归并报告”不表示已授权生产操作。审批需明确执行时段、上线代码版本和范围：是否批准更新参考工作区构建并将指定旧 WeCom job 切换到持久定义，以及是否批准指定测试会话的真实消息与小文件收发。PR 合并、发布不包含在此范围内。
+
+批准后先只读核验 `ai.wecom-channel-bridge.riskbot-codex` 的实际定义、活动/排队任务为零、单一身份、当前构建和回退所需配置；记录并保护回退材料，不写入仓库。历史 PID 或已有 plist 不能代替现场核验，未核验生产当前状态前不生成可直接执行的卸载命令。
+
+执行顺序为：确认回退依据可用 → 完成已批准的构建版本准备 → 停止并等待旧 WeCom job 与进程完全退出 → 同身份启动新持久定义 → 核验新 PID、参数、health、日志、无任务重放 → 在获准会话完成真实收发。飞书保持运行，全程不得出现同身份并行连接。更新共享构建前还需确认不会影响仍运行的飞书；否则停止该更新步骤并另行确定隔离部署路径。
+
+新服务失败时先停止并确认新实例退出，再按已核验的旧定义和构建恢复；不清空 ledger，不自动重放执行结果不确定的任务。无法确认退出、身份、任务或回退依据时停止切换。登录自启仍单列 NOT RUN，除非另外批准相应验证。以上审批和现场核验尚未完成。
+
+
+## 已批准生产切换（2026-09-07）
+
+用户明确批准维护窗口生产更新、企业微信单实例切换及指定会话真实收发测试。以下记录替代此前“未授权切换”的当前状态，历史记录保留；真实测试会话尚未明确，未发送消息。
+
+- 部署代码/文档 HEAD：`82ea0e4a6dc169e83b23271564ca19bda89f416b`。参考工作区从 `99f7601` 仅快进至该版本；保留原未跟踪 `.pnpm-store/` 和 `AGENTS.md`。
+- 实际磁盘 `dist/wecom.js` 与隔离验收产物逐字节相同，SHA-256 `088d4cb65aedb8ece84d9202df77e75a2e38cee3afe8e956c93861f001535633`，未替换该文件或依赖。仅原子更新已验收 CLI，SHA-256 `c88649741ece69d905a418c85fb3a5ddf32de604e7a7ebcd48be7eda5be89370`；未在共享目录执行会清理 dist 的 build。
+- 仓库外私有回退材料位于 `~/.local/state/wecom-cutover/20260907-pr12`，目录 0700、文件 0600，保存切换前定义、构建、env 和状态；没有把凭证、原始日志或会话内容提交到 Git。回退脚本未实际触发，回退演练仍 NOT RUN。
+- 现场旧 job 为 `ai.wecom-channel-bridge.riskbot-codex`，PID 7807，临时 shell 提交；持久定义引用同一 env 文件和工作目录。只发现一个企业微信候选进程且无子进程，健康心跳新鲜，connected=true、activeRuns=0、startingRuns=0；间隔 5 秒重复确认。旧状态目录没有 tasks.json，因此无法从旧 ledger 独立量化队列，未把缺失文件冒充已验证的 ledger 零任务。
+- 2026-09-07 14:16 CST：bootout 指定旧 job 后，确认 launchctl 返回明确不存在且 PID 7807 已退出，才 enable/bootstrap 同 label 的持久定义。新 PID 89496 在 14:16:43 获得 connected 健康状态；没有新旧同身份实例并行。
+- 持久启动后的真实 launchctl 参数与 plist 一致，工作目录、env 引用、新 stdout/stderr 路径生效；只读 `status --all --profile codex --wecom-service ai.wecom-channel-bridge.riskbot-codex` exit 0。新 job PID 89496、runs=1；飞书 PID 36940、runs=1，未停止或重启飞书。
+- 后续只读采样：health connected、activeRuns=0、startingRuns=0；新 stdout 有连接标记，stderr 0 字节，未观察到错误行。env 和 sessions.json 与切换前快照逐字节相同；未清空状态、ledger 或重放任务。
+
+| 生产验收项 | 当前结果 |
+| --- | --- |
+| 受控旧临时 job → 持久 job 切换 | PASS |
+| 新持久定义启动、新入口/工作目录/日志生效 | PASS；进程和平台连接证据，不代表真实消息收发 |
+| 飞书连续运行 | PASS；PID/runs 不变 |
+| 配置与已有会话保持 | PASS；字节比对一致 |
+| 线上重复两次 start --all | BLOCKED；自动审批拒绝该命令组，认为重复生产启动未明确授权、存在并行连接风险；命令组未执行，已请求专项批准 |
+| 指定会话真实对话/追问/会话卡片/小文件收发 | BLOCKED；待用户指定现有测试会话或手动发送测试消息 |
+| 登录自启 / 系统重启后冷启动 | NOT RUN；未退出登录或重启机器 |
+| 生产回退演练 | NOT RUN；已有回退材料，未触发回退 |
+
+本次未合并 PR、发布包或创建新 PR。生产切换已成功，完整客户端与登录自启验收仍未完成，不能将这些项目标为 PASS。
+
+
+### 用户确认真实消息回复（2026-09-07）
+
+在请求用户于现有企业微信测试会话发送无敏感消息后，用户明确反馈“可以收到回复”。据此将**企业微信普通消息发送与回复接收**记为 PASS（用户客户端确认）；本任务未读取或保存消息正文，也未自行向其他会话发送消息。
+
+反馈后只读核验：企业微信 PID 89496、runs=1，health 于 14:19:42 CST 显示 connected=true、activeRuns=0、startingRuns=0；飞书 PID 36940、runs=1 未变。生产运行版本仍为 82ea0e4，后续提交仅追加报告。
+
+此前真实客户端验收的整体 BLOCKED 状态按项目细分：普通消息收发 PASS；多轮续接、/new、/resume、安全停止、卡片回调、小文件回传及飞书真实客户端收发均 NOT RUN（尚无对应证据）。登录自启、系统重启后冷启动与回退演练仍 NOT RUN。线上重复 start --all 仍 BLOCKED，用户“可以收到回复”仅确认收发结果，不视为专项重复启动批准。
+
+
+### Computer Use 真实客户端验收（2026-09-07 14:34–14:45 CST）
+
+用户明确要求使用 computer use 执行测试。全部客户端操作通过原生企业微信/飞书 UI 完成，目标为既有 `riskbot@codex` 与 `codex` 私聊；只发送合成测试消息及 84 字节专用 input.txt，不使用业务附件，不改权限或服务配置。
+
+| 项目 | 结果及实际 UI 证据 |
+| --- | --- |
+| 企业微信多轮续接 | PASS；记忆“青竹731”后，下一轮准确回复该代号 |
+| 小文本上传/读取 | PASS；input.txt 的 FILE-731、17、25 被准确读出 |
+| 生成结果文件并回传 | BLOCKED；机器人报告只读工作区，/status 明确显示 read-only；只回复应有内容（sum=42），没有生成附件，未放宽权限 |
+| 已有原文件回传 | FAIL；机器人称“已回传”，实际仅显示本地路径 Markdown 链接，未出现收到的文件附件卡片，点击未打开文件；不能将文字承诺当成附件发送成功 |
+| 会话控制卡片新会话 | PASS；点击“新会话”后卡片显示已创建，新会话隔离追问回复“未知” |
+| 企业微信停止命令 | PASS；/stop 后测试输出显示“已中断”，最终 /status 显示空闲 |
+| 恢复会话 | PARTIAL；无参数 /resume 正常打开选择卡片，但多个相同且截断的标题不能可靠识别原测试会话，未点击应用。测试误用的 /resume 加 ID 被当普通输入，已中断；不能声称支持该参数格式。当前保留新测试会话，原会话未删除 |
+| 飞书普通消息回复 | PASS（有延迟）；首次回显请求等待期间主动 /stop，界面确认已被中断；随后 LARK-731-OK 收到机器人实际回复“收到：LARK-731-OK。”。不能由此声称低延迟或所有消息均成功 |
+| 飞书停止控制 | PASS；首个测试请求得到“已被中断”回复，未重启飞书进程 |
+
+未执行服务重复 start、登录自启、系统重启或回退。本轮只做客户端验收和报告追加，不自动修复文件发送链路或扩大工作区权限。未保存含其他聊天内容的截图或完整 AX 树到仓库。此前普通消息收发/离线 PASS 保持；**完整生产客户端验收尚未通过**，优先排查已有文件回传仅发链接的问题，再确认只读模式下生成文件的预期产品行为与恢复会话选项辨识。
+
+### 原附件回传最小修复（2026-09-07）
+
+用户在上述真实客户端失败诊断后明确批准修复。基线为 PR HEAD `7b8910eb7e802d1ec271249875370a3a01b9e09c`，在隔离 worktree `/private/tmp/wecom-pr12-independent-1355` 实施；实际代码提交及最终 CI 链接在本节后续收口记录和 PR 评论中记录。生产仍运行 `82ea0e4`，本轮没有部署、重启或创建新连接。
+
+**根因证据**：原始 agent 输出为缓存附件的绝对路径；客户端的 `~` 是展示脱敏。桥接结构化 egress 事件为 sent=0、skipped=outside-workspace，文件在状态目录 media 中而非 workspace，因此在上传前被阻止。此前先展示模型文字、对 skipped 仅记日志，导致“已回传”的文字与真实附件投递不一致。该发送实现与 main 一致，属于既有缺陷；只读模式不能生成新文件是另一项预期权限限制。
+
+**最小修复**：
+
+- 使用现有下载附件的 SHA-256 和规范化路径，按 conversation binding（会话范围、工作区、策略）及 Codex thread ID 记录已接收附件；进程内最多 100 个会话、每会话 20 个文件，不引入新持久状态或扩大 sandbox。
+- 仅用户明确写出附件名的回传请求可放行该已接收文件，例如“请把 input.txt 原样回传给我”；否定、疑问、相似但不相同的文件名不能授权。后续轮次无需再次附文件，但重启、记录淘汰或新的会话须重新上传。恢复同一已记录会话仍使用其自身来源记录。
+- 上传前核对实际读取字节的 SHA-256，保留任意工作区外文件、符号链接逃逸和未请求输入附件的拒绝，以及数量、单文件、总大小限制。发送使用原始文件名。
+- 根据 upload/send 的实际结果单独发送已确认与未确认发送数量（回执超时可能已送达，明确提醒核对）；每个文件发送失败记入未确认发送，并继续处理其他文件。模型提示明确使用“准备回传”，不能以模型“已发送”作为成功证据。通知本身失败时提示可能已有部分文件发出。
+- 新增 8 个回归用例覆盖同会话跨轮、其他会话/新会话/隐式请求隔离、内容修改、符号链接替换、限额、上传/发送失败、来源记录上限/重启丢弃、模型未输出链接和连续上传失败的尝试限额。原有安全断言保留。
+
+**验证环境与命令**：Node 24.19.0、pnpm 10.33.0，沿用锁文件和已冻结安装的依赖；白名单环境、临时 HOME/LARK_CHANNEL_HOME/WECOM_STATE_DIR，不加载生产 env。首次新增测试 typecheck 暴露严格索引类型错误，已改为定长元组及安全索引后复跑；不省略类型检查。
+
+- `pnpm exec vitest run tests/unit/wecom`：31 文件 / 255 用例 PASS（含新增 6 项）。
+- `pnpm exec vitest run tests/unit/daemon tests/unit/cli/service-profile.test.ts tests/unit/cli/kill-os-managed.test.ts tests/unit/cli/index-registration.test.ts`：11 文件 / 89 用例 PASS。
+- `pnpm test`：首轮 147 文件 / 1061 用例 PASS；`pnpm typecheck`、`pnpm build`、`git diff --check` 均 exit 0。最终补齐两项独立审查发现后再复跑，结果见下方收口。
+- 修复前 HEAD `7b8910e` 的 macOS、Ubuntu、Windows 两组 CI 共 6 项 SUCCESS；该结果不冒充本修复 CI。
+
+**剩余事项**：本修复尚未部署，修复后的真实客户端附件卡片接收为 NOT RUN，不能以 fake client 测试替代。只读工作区生成新文件仍 BLOCKED；登录自启、重启冷启动、回退演练仍 NOT RUN；线上重复 start 的专项审批状态保持此前 BLOCKED。恢复会话标题可辨识问题不在本补丁范围。应在修复 CI 通过及获准更新后，用同一测试会话重新上传合成 input.txt，再发送上述明确回传请求，确认实际附件卡片及内容；不同时建立第二条同凭证连接。
+
+独立审查补齐：明确请求的可信附件直接纳入发送候选，不依赖模型生成链接；失败上传也计入 maxCount，避免失败后无限尝试。发送回执超时记为未确认而非断言未送达。
+
+最终离线收口：完整 `pnpm test` **147 文件 / 1063 用例 PASS**，相关生命周期 **11 文件 / 89 用例 PASS**，附件专项 **2 文件 / 12 用例 PASS**；`pnpm typecheck`、`pnpm build`、`git diff --check` 均 exit 0。独立只读审查复现了失败尝试预算并确认修复，同时复核无链接回传、规范路径去重和通知措辞，未发现剩余阻塞。本轮源码、测试和报告之外没有依赖、配置或生产工作区修改。
+
+修复提交与 CI 收口：实际修复代码 HEAD 为 **`19b9f246e2aca4f6b46efa4751ad612abe5a114f`**，即上述最终离线验收补丁的提交版本。该提交的 [push CI](https://github.com/guanglinhuang99/lark-coding-agent-bridge/actions/runs/34093610878) 与 [PR CI](https://github.com/guanglinhuang99/lark-coding-agent-bridge/actions/runs/34093614210) 已全部完成，macOS、Ubuntu、Windows 共 **6/6 SUCCESS**。本次后续提交仅追加此收口记录，不改变已验收代码；最新文档 HEAD 状态以 PR 检查为准。代码与离线验收 PASS，具备申请受控更新并复测附件的代码条件，修复后的完整生产客户端验收仍 NOT RUN。
+
+## 附件修复部署准备与再交接（2026-09-07）
+
+用户要求完成可执行的部分，其余交给 Codex。本轮已核验 PR #12 的 `db669b6d799dcb222fdcda1a5c98b2f79a7c9b1a`，push/PR 三平台六项 CI SUCCESS；已将参考工作区从 `82ea0e4` 仅安全快进到该提交。保留 `.pnpm-store/` 和 `AGENTS.md`，没有安装依赖、构建共享 dist、操作服务或扩大权限。
+
+`npm run typecheck && git diff --check` 于 `2026-09-07T07:39:34Z` 结束，exit 0。附件专项和独立构建命令因 MCPX 额外确认要求未执行；没有把它们记为本次 PASS。目标运行状态查询同样未执行，没有本轮新 PID、空闲或连接证据。
+
+核验以下共享产物摘要前后一致：
+
+```text
+dist/cli.js   c88649741ece69d905a418c85fb3a5ddf32de604e7a7ebcd48be7eda5be89370
+dist/wecom.js 088d4cb65aedb8ece84d9202df77e75a2e38cee3afe8e956c93861f001535633
+dist/index.js 5f765804b81cb7acdb74631d27f54a6ec1cb0db99a411635e7908f26eb54530f
+```
+
+因此源码已更新不等于附件修复已部署；`dist/wecom.js` 仍为此前产物，尚未替换或重载。已新增本机忽略目录中的 WeCom-only 构建配置 `.codex-handoff/tsup.wecom-attachment.config.ts`，输出到独立目录且 clean=false；配置存在，不代表构建已完成，旧交接文件未覆盖。
+
+后续明确交接见 `docs/codex-wecom-attachment-rollout.md`，合成样本为 `docs/fixtures/wecom-attachment/input.txt`。交接包含现场空闲/身份检查、隔离构建、单个 WeCom 产物更新、飞书保护、回退条件、真实附件卡片与字节比对标准，以及否定请求/新会话不回传的验证。所有服务、真实客户端和此前未执行事项仍按各自证据保留状态，不自动合并 PR、发布或将未执行项改为通过。
+
+## 附件修复受控部署与真实客户端验收（2026-09-07 15:53–16:14 CST）
+
+本轮用户明确授权完成企业微信附件修复的单服务更新、既有测试私聊附件收发，以及向同一分支/PR 提交报告。**附件修复部署 PASS；原附件真实回传及字节比对 PASS；跨会话来源隔离 PASS；飞书保护 PASS。** 未再次执行临时 job 首次迁移，没有改架构、放宽 read-only、合并或发布。
+
+### 源码与本轮隔离验证
+
+- 现场工作区与 PR #12 HEAD 均为 `59f9ca3fcb646dd9b64a101e0172f507d9cf42ce`，分支 `feat/dual-bot-lifecycle`，PR 为 OPEN / Draft。该 HEAD 的 [push CI](https://github.com/guanglinhuang99/lark-coding-agent-bridge/actions/runs/34096838716) 与 [PR CI](https://github.com/guanglinhuang99/lark-coding-agent-bridge/actions/runs/34096842623) 三平台共六项 SUCCESS。
+- 保留原有未跟踪 `.pnpm-store/`、`AGENTS.md`。本轮报告之外未改源码、测试、依赖、锁文件、配置或启动入口。
+- 在干净独立 worktree `/private/tmp/wecom-pr12-independent-1355` 验证和构建，源码 HEAD 为 `db669b6d799dcb222fdcda1a5c98b2f79a7c9b1a`；与现场 HEAD 的差异仅为交接文档和合成样本。已验收附件代码提交为 `19b9f246e2aca4f6b46efa4751ad612abe5a114f`。
+- Node `24.19.0`、pnpm `10.33.0`；白名单环境及独立临时 HOME/状态，`pnpm install --frozen-lockfile --ignore-scripts` exit 0。未加载生产凭证或建立第二条机器人连接。
+- 附件专项 `vitest run tests/unit/wecom/egress.test.ts tests/unit/wecom/received-artifacts.test.ts`：**2 文件 / 12 用例 PASS**；`pnpm typecheck`、WeCom-only 构建、`node --check`、`git diff --check` 均 exit 0。本轮没有重跑完整测试或完整包构建，不借用历史 1063 用例结果作为本轮结果。
+- 单入口配置与项目 WeCom 构建选项对齐，`clean=false`、`splitting=false`，输出到独立 worktree 的 `.codex-handoff/wecom-attachment-db669b6/wecom.js`，392,056 字节。未在生产目录运行会清理共享 dist 的完整构建。
+- 两处锁文件 SHA-256 均为 `d4a95a8cc6c212d170b095dd021e409da85e6667de783f0cd90cdf68466f5008`；外部依赖均可解析且版本一致：SDK `1.0.7`、cross-spawn `7.0.6`、proper-lockfile `4.1.2`、graceful-fs `4.2.11`。相对旧运行代码 `82ea0e4`，源码变化仅为 `src/wecom/{cli,egress,media}.ts`，CLI/daemon、bin、package.json 和锁文件未变。
+
+### 现场安全检查、更新与运行证据
+
+目标始终为 `ai.wecom-channel-bridge.riskbot-codex`。磁盘与已加载定义均使用 `/opt/homebrew/Cellar/node@24/24.19.0/bin/node` 和 `/Users/guanglin/Sync/wecom-bot/bin/wecom-channel-bridge.mjs`，cwd 为仓库，配置引用为仓库 `.env`，实际状态目录为 `/Users/guanglin/.lark-channel/wecom`。没有输出凭证或完整环境。plist 和 env 权限均为 0600，更新后字节未变。
+
+- 更新前 PID `89496` / runs `1`；至少两次新鲜心跳 connected、activeRuns=0、startingRuns=0，实际入口 `--health` exit 0。初见账本最后更新于 14:43，未直接视为安全空闲；通过既有 `riskbot@codex` 私聊 `/status` 获得空闲、排队 0、read-only 回复，并确认账本于 15:54:30 新增 done 记录。schemaVersion=1，done=12、interrupted=1、queued/running=0；目标无子进程。代码核对确认附件接收和风险任务也经该持久任务入口记录。
+- 仓库外私有回退材料保存于 `/private/tmp/wecom-attachment-rollout-20260907/rollback`：旧 wecom.js、原 plist、env 和最新状态副本；目录 0700、文件 0600，未提交。保留实时会话和账本，不以旧快照覆盖上线后的状态。回退默认只恢复程序，未执行回退演练。
+- 执行前再次核验空闲及飞书保护基线；只 bootout 指定 WeCom job，明确确认 job 不存在且旧 PID 退出后，原子替换 `dist/wecom.js`，再 enable/bootstrap 同一 plist。没有 SIGKILL、并行同身份连接或其他服务操作。
+- 新 PID **25983**，启动于 **15:58:27 CST**，参数与原定义一致，15:58:27 即 connected。采样时间包括 15:58、15:59:37、16:00:20、16:10:43、16:13:03、16:13:40；新 PID/runs 始终为 **25983 / 1**。约 **15 分钟**观察窗口内没有持续重启循环；只按更新前日志字节偏移检查新增日志，unknown command=0、reconnecting=0、结构化 error 事件=0。
+- 16:13:40 最终心跳 connected、activeRuns=0、startingRuns=0，账本 done=20、interrupted=1、queued/running=0；旧 PID 不存在，新进程无子进程。测试期间可见正常 active/starting 状态，不将执行中的测试误报为空闲。
+
+| 产物 | 更新前 SHA-256 | 更新后 SHA-256 |
+| --- | --- | --- |
+| dist/wecom.js | `088d4cb65aedb8ece84d9202df77e75a2e38cee3afe8e956c93861f001535633` | `0c5b5b6427dbd2564aa0c6ee5ce9f1ea43ab8c7058472ed2b9f695d9694c9e7e` |
+| dist/cli.js | `c88649741ece69d905a418c85fb3a5ddf32de604e7a7ebcd48be7eda5be89370` | 相同 |
+| dist/index.js | `5f765804b81cb7acdb74631d27f54a6ec1cb0db99a411635e7908f26eb54530f` | 相同 |
+
+飞书 `ai.lark-channel-bridge.bot.codex` 全程 **PID 36940 / runs 1**，启动时间仍为 12:16:27，原 Node、入口和 `run --profile codex` 参数不变。未停止、重载或修改飞书及其他 LaunchAgent；上述两个共享产物哈希不变。本轮没有发送飞书消息，飞书客户端收发沿用历史独立记录。
+
+### 原生客户端附件验收
+
+通过原生企业微信既有 `riskbot@codex` 私聊和系统文件选择器，在更新后重新上传仓库 `docs/fixtures/wecom-attachment/input.txt`。原测试线程 `01a07a9a-15cd-7863-8425-2ea57f9f02bd` 保留，客户端权限仍为 read-only。未通过内部接口模拟用户上传。
+
+| 验证 | 实际结果 |
+| --- | --- |
+| 读取、不回传 | PASS；发送“请读取 input.txt，只回答 case、value_a 和 value_b，不要回传文件”，最终实际回复为 `case=PR12-ATTACHMENT-20260907`、`value_a=17`、`value_b=25`，无新增机器人附件。上传自身先触发一个读取轮次，指定文本随后排队执行；两轮 egress 均 sent=0。 |
+| 同会话下一轮原样回传 | PASS；发送“请把 input.txt 原样回传给我”，出现模型准备回传文字之外的、机器人侧真实 `input.txt 95B` 文件卡片。16:00:27 egress sent=1，但该计数只作辅助证据。 |
+| 下载与字节验证 | PASS；从返回文件卡片打开客户端已下载附件，系统文本编辑器显示 input.txt 及合成内容；取得其企业微信 Caches/Files 路径后，将实际客户端下载文件保留为 `/private/tmp/wecom-attachment-rollout-20260907/returned-input.txt`（0600）。原件与返回文件均为 **95 字节**，SHA-256 均为 **`6c897075bd3b7a1c5ea16cdc67d60f356626e29cb51e87733e409146886dfda5`**，逐字节相等。未用源码样本复制品代替下载文件。 |
+| 新会话同名样本干扰 | 已解释；点击“新会话”，卡片明确显示已创建，新线程为 `01a07aec-0525-7cf3-b5d9-7979f3fa81c4`。不上传而发送相同请求时，模型找到并回传仓库内同名样本。仅提取该测试线程输出链接核对：原会话链接为状态目录 media 缓存，新会话链接为仓库 `docs/fixtures/wecom-attachment/input.txt`，不是借用旧附件来源。不能把“新会话完全没有任何文件发送”标为通过。 |
+| 新会话来源隔离补测 | PASS；明确限定上一会话接收来源、排除仓库同名文件后，客户端回复当前会话没有可用的上一会话附件来源，不发送文件。再提供旧缓存确切路径并明确请求原样回传，模型虽输出链接，桥接仍 **sent=0、skipped=outside-workspace**（16:13:08），客户端无新增文件卡片，并提示 0 个确认发送、需重新上传。证明路径提示不会授予跨会话附件来源权限。 |
+
+原生文件选择器首次剪贴板读取超时，通过当前路径输入框重试成功；打开系统文本编辑器的工具调用曾耗时约 9 分钟，最终返回了实际缓存文件窗口。这些 UI 延迟不计为服务重启或附件失败，也不声称客户端低延迟。未保存包含其他聊天的截图、完整 AX 树、原始日志或状态正文到仓库。
+
+### 结论与边界
+
+本次附件修复的部署、真实文件回传、字节一致性、跨会话缓存来源拒绝和飞书保护均已完成。无需额外源码修复。后续报告提交不改变上述运行产物；其 HEAD/CI 应与部署源码和 bundle hash 分开看待。
+
+PR 保持 Draft，不合并、不发布、不开启自动合并。本轮附件专项不再有部署或客户端阻塞，但不将历史整体验收未完成项抹去：恢复会话辨识仍 PARTIAL；只读工作区生成新文件限制未放宽；登录自启、系统重启冷启动、回退演练仍 NOT RUN，生产重复 start 的历史专项仍 BLOCKED。本轮未补做这些项目，不能因此宣称所有生产验收项目或自动转 Ready 条件均已完成。

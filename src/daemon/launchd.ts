@@ -11,6 +11,7 @@ import {
   launchAgentPlistPath,
 } from './paths';
 import { paths } from '../config/paths';
+import { inspectLaunchdStatus, type LaunchdStatus } from './launchd-status';
 
 export interface PlistInputs {
   /** Absolute path to the node binary that should run the bridge. */
@@ -106,12 +107,16 @@ interface LaunchctlResult {
   ok: boolean;
   stderr: string;
   stdout: string;
+  status: number | null;
+  error?: Error;
 }
 
 function runLaunchctl(args: string[]): LaunchctlResult {
-  const r = spawnSync('launchctl', args, { encoding: 'utf8' });
+  const r = spawnSync('launchctl', args, { encoding: 'utf8', ...(args[0] === 'print' ? { timeout: 5000 } : {}) });
   return {
-    ok: r.status === 0,
+    ok: r.status === 0 && !r.error,
+    status: r.status,
+    error: r.error,
     stderr: r.stderr ?? '',
     stdout: r.stdout ?? '',
   };
@@ -152,13 +157,22 @@ export function kickstart(profile: string): LaunchctlResult {
   return runLaunchctl(['kickstart', '-k', serviceTarget(profile)]);
 }
 
-/** `launchctl print <target>` returns 0 iff the service is loaded.
- * We discard the verbose stdout for the existence check. */
+/** Query failures are unknown, never evidence that unloading completed. */
+function queryService(profile: string): LaunchctlResult {
+  const result = runLaunchctl(['print', serviceTarget(profile)]);
+  if (!result.ok && (result.error || result.status !== 113)) {
+    throw new Error('无法确认 launchd 服务状态；未将查询失败视为服务不存在');
+  }
+  return result;
+}
+
 export function isLoaded(profile: string): boolean {
-  const r = spawnSync('launchctl', ['print', serviceTarget(profile)], {
-    stdio: ['ignore', 'ignore', 'ignore'],
-  });
-  return r.status === 0;
+  return queryService(profile).ok;
+}
+
+export function inspectService(profile: string): LaunchdStatus {
+  const result = queryService(profile);
+  return inspectLaunchdStatus(result.ok, result.stdout);
 }
 
 /**

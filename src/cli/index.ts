@@ -25,6 +25,7 @@ import {
 } from './commands/service';
 import { runStart } from './commands/start';
 import { runUi } from './commands/ui';
+import { runAllServices } from '../daemon/bot-fleet';
 
 const program = new Command();
 
@@ -165,6 +166,9 @@ program
 program
   .command('start')
   .description('Install (if needed) and start the bridge as an OS-managed daemon')
+  .option('--all', 'ensure one configured Lark and one WeCom service are running (macOS; no duplicate start)')
+  .option('--wecom-service <label>', 'select a WeCom service for --all when several exist')
+  .option('--wecom-env-file <path>', 'existing WeCom env file for first-time persistent service setup with --all')
   .option('--profile <name>', 'profile name (defaults to active profile)')
   .option('--web-ui', 'run the supervisor + web console as the background service (hosts all profiles) instead of a single profile')
   .option('--agent <kind>', 'agent kind for first-run profile bootstrap (claude or codex)')
@@ -182,7 +186,18 @@ program
     appSecret?: string;
     tenant?: string;
     skipCheckLarkCli?: boolean;
+    all?: boolean;
+    wecomService?: string;
+    wecomEnvFile?: string;
   }) => {
+    if (opts.all) {
+      if (opts.webUi || opts.agent || opts.workspace || opts.appId || opts.appSecret || opts.tenant || opts.skipCheckLarkCli) {
+        throw new Error('--all only accepts --profile, --wecom-service and --wecom-env-file; configure each bot separately first');
+      }
+      await runAllServices('start', opts);
+      return;
+    }
+    if (opts.wecomService || opts.wecomEnvFile) throw new Error('WeCom service options require --all');
     await runServiceStart(opts);
   });
 
@@ -209,7 +224,15 @@ program
   .description('Show OS service status (pid, last exit, log paths)')
   .option('--profile <name>', 'profile name (defaults to active profile)')
   .option('--web-ui', 'target the supervisor service instead of a per-profile one')
-  .action(async (opts: { profile?: string; webUi?: boolean }) => {
+  .option('--all', 'show Lark and WeCom process states together (macOS)')
+  .option('--wecom-service <label>', 'select a WeCom service for --all')
+  .action(async (opts: { profile?: string; webUi?: boolean; all?: boolean; wecomService?: string }) => {
+    if (opts.all) {
+      if (opts.webUi) throw new Error('--all cannot be combined with --web-ui');
+      await runAllServices('status', opts);
+      return;
+    }
+    if (opts.wecomService) throw new Error('--wecom-service requires --all');
     await runServiceStatus({ profile: opts.profile, webUi: opts.webUi });
   });
 

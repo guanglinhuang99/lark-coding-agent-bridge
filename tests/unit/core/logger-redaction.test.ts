@@ -10,10 +10,42 @@ import {
   sanitizeLogsForDoctor,
 } from '../../../src/core/logger.js';
 
+const fsMock = vi.hoisted(() => ({
+  actual: undefined as typeof import('node:fs') | undefined,
+  mkdirSync: vi.fn(),
+  openSync: vi.fn(),
+  chmodSync: vi.fn(),
+  createWriteStream: vi.fn(),
+}));
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  fsMock.actual = actual;
+  fsMock.mkdirSync.mockImplementation(actual.mkdirSync);
+  fsMock.openSync.mockImplementation(actual.openSync);
+  fsMock.chmodSync.mockImplementation(actual.chmodSync);
+  fsMock.createWriteStream.mockImplementation(actual.createWriteStream);
+  return {
+    ...actual,
+    mkdirSync: fsMock.mkdirSync,
+    openSync: fsMock.openSync,
+    chmodSync: fsMock.chmodSync,
+    createWriteStream: fsMock.createWriteStream,
+  };
+});
+
 let logsDir = '';
 
 describe('logger redaction', () => {
   beforeEach(async () => {
+    fsMock.mkdirSync.mockImplementation(fsMock.actual!.mkdirSync);
+    fsMock.openSync.mockImplementation(fsMock.actual!.openSync);
+    fsMock.chmodSync.mockImplementation(fsMock.actual!.chmodSync);
+    fsMock.createWriteStream.mockImplementation(fsMock.actual!.createWriteStream);
+    fsMock.mkdirSync.mockClear();
+    fsMock.openSync.mockClear();
+    fsMock.chmodSync.mockClear();
+    fsMock.createWriteStream.mockClear();
     logsDir = await mkdtemp(join(tmpdir(), 'logger-redaction-'));
     configureLogger({
       logsDir,
@@ -47,8 +79,7 @@ describe('logger redaction', () => {
     expect(text).not.toContain('/Users/example/private/project');
     expect(text).toContain('[REDACTED]');
     expect(text).toContain('[REDACTED_PATH]');
-    expect((await stat(join(logsDir, 'bridge-20260525.jsonl'))).mode & 0o777).toBe(0o600);
-    expect((await stat(logsDir)).mode & 0o777).toBe(0o700);
+    await expectPrivateLogModes();
   });
 
   it('redacts nested sdk args after stringify-style recursion', async () => {
@@ -141,4 +172,20 @@ describe('logger redaction', () => {
 
 async function readTodayLog(): Promise<string> {
   return readFile(join(logsDir, 'bridge-20260525.jsonl'), 'utf8');
+}
+
+async function expectPrivateLogModes(): Promise<void> {
+  const file = join(logsDir, 'bridge-20260525.jsonl');
+  if (process.platform === 'win32') {
+    // Windows does not expose POSIX permission bits through fs. Verify the
+    // security intent at each creation/chmod boundary instead.
+    expect(fsMock.mkdirSync).toHaveBeenCalledWith(logsDir, { recursive: true, mode: 0o700 });
+    expect(fsMock.openSync).toHaveBeenCalledWith(file, 'a', 0o600);
+    expect(fsMock.chmodSync).toHaveBeenCalledWith(logsDir, 0o700);
+    expect(fsMock.chmodSync).toHaveBeenCalledWith(file, 0o600);
+    expect(fsMock.createWriteStream).toHaveBeenCalledWith(file, { flags: 'a', mode: 0o600 });
+    return;
+  }
+  expect((await stat(file)).mode & 0o777).toBe(0o600);
+  expect((await stat(logsDir)).mode & 0o777).toBe(0o700);
 }
