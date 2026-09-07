@@ -616,6 +616,26 @@ describe('profile-aware service commands', () => {
     expect(mocks.adapter.start).not.toHaveBeenCalled();
   });
 
+  it('does not repair a loaded job when profile resolution fails', async () => {
+    mocks.resolveProfileRuntime.mockRejectedValueOnce(new Error('profile not found'));
+    mocks.adapter.isLoaded = vi.fn(() => true);
+    await expect(runServiceRestart({ profile: 'codex-dev' })).rejects.toThrow('profile not found');
+    expect(mocks.adapter.restart).not.toHaveBeenCalled();
+    expect(mocks.adapter.install).not.toHaveBeenCalled();
+  });
+
+  it('does not identify another PID registry entry as this service connection', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => { lines.push(String(line)); });
+    mocks.adapter.inspectStatus = vi.fn(() => ({ loaded: true, running: true, pid: '200' }));
+    mocks.readAndPrune.mockReturnValue([
+      processEntry({ pid: 100, profileName: 'codex-dev', botName: 'OtherProcess' }),
+    ]);
+    await runServiceStatus({ profile: 'codex-dev' });
+    expect(lines.join('\n')).toContain('平台连接尚未确认');
+    expect(lines.join('\n')).not.toContain('OtherProcess');
+  });
+
   it('returns nonzero when a launched bot never connects', async () => {
     vi.useFakeTimers();
     mocks.adapter.isLoaded = vi.fn(() => false);

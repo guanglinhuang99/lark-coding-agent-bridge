@@ -62,10 +62,24 @@ export async function controlBotFleet(
 class FleetError extends Error {}
 const WECOM_PREFIX = 'ai.wecom-channel-bridge.';
 
-function launchctl(args: string[]): { ok: boolean; status: number | null; stdout: string } {
+interface LaunchctlResult {
+  ok: boolean;
+  status: number | null;
+  stdout: string;
+  stderr: string;
+  error?: Error;
+}
+
+function launchctl(args: string[]): LaunchctlResult {
   const result = spawnSync('/bin/launchctl', args, { encoding: 'utf8', timeout: 5000, maxBuffer: 1024 * 1024 });
   // Never include launchctl's raw environment / arguments in diagnostics.
-  return { ok: result.status === 0 && !result.error, status: result.status, stdout: result.stdout ?? '' };
+  return {
+    ok: result.status === 0 && !result.error,
+    status: result.status,
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
+    ...(result.error ? { error: result.error } : {}),
+  };
 }
 function requireLaunchctl(args: string[]): void {
   const result = launchctl(args);
@@ -73,6 +87,13 @@ function requireLaunchctl(args: string[]): void {
 }
 function validWeComLabel(label: string): boolean {
   return /^ai\.wecom-channel-bridge\.[A-Za-z0-9][A-Za-z0-9._-]*$/.test(label);
+}
+
+/** `launchctl print` uses 113 for a service that is not loaded. A spawn
+ * failure, timeout, permission error, or any other status is uncertainty and
+ * must not be treated as permission to bootstrap a second service. */
+function isMissingLaunchctlService(result: LaunchctlResult): boolean {
+  return !result.ok && !result.error && result.status === 113;
 }
 
 export function selectWeComLabel(labels: string[], explicit?: string): string {
@@ -96,6 +117,17 @@ function discoverWeComLabel(explicit?: string): string {
   return selectWeComLabel([...loaded, ...installed]);
 }
 
+function discoveryFailureService(label: string, error: unknown): FleetService {
+  const message = error instanceof FleetError ? error.message : '无法确定企业微信服务；未尝试新建机器人连接';
+  return {
+    name: '企业微信',
+    label,
+    prepare: async () => { throw new FleetError(message); },
+    inspect: () => { throw new FleetError(message); },
+    start: async () => {},
+  };
+}
+
 function plistField(file: string, key: string, format: 'raw' | 'json'): string {
   const result = spawnSync('/usr/bin/plutil', ['-extract', key, format, '-o', '-', file],
     { encoding: 'utf8', timeout: 5000, maxBuffer: 128 * 1024 });
@@ -103,38 +135,117 @@ function plistField(file: string, key: string, format: 'raw' | 'json'): string {
   return result.stdout.trim();
 }
 
+function canonicalPath(file: string): string | undefined {
+  if (!isAbsolute(file) || !existsSync(file)) return undefined;
+  try {
+    const resolved = realpathSync(resolve(file));
+    return lstatSync(resolved).isFile() ? resolved : undefined;
+  }
+  catch { return undefined; }
+}
+
+function samePath(left: string, right: string): boolean {
+  const leftResolved = resolve(left);
+  const rightResolved = resolve(right);
+  try { return realpathSync(leftResolved) === realpathSync(rightResolved); }
+  catch { return leftResolved === rightResolved; }
+}
+
+/**
+ * The daemon can be invoked from a source checkout (`bin/*.mjs`) or directly
+ * from a packed/built tree (`dist/{cli,wecom}.js`). Accept those exact package
+ * paths, but never an unrelated file that merely has the same basename.
+ */
+function canonicalEntryPaths(kind: 'lark' | 'wecom'): string[] {
+  const current = canonicalPath(process.argv[1] ?? '');
+  if (!current) return [];
+  const currentName = basename(current);
+  const packageRoot = ['bin', 'dist'].includes(basename(dirname(current)))
+    ? dirname(dirname(current)) : undefined;
+  const candidates: string[] = [];
+  const allowedCurrent = kind === 'lark'
+    ? ['lark-channel-bridge', 'lark-channel-bridge.mjs', 'cli.js']
+    : ['wecom-channel-bridge', 'wecom-channel-bridge.mjs', 'wecom.js'];
+  if (allowedCurrent.includes(currentName)) candidates.push(current);
+  if (packageRoot) {
+    candidates.push(kind === 'lark'
+      ? join(packageRoot, 'bin', 'lark-channel-bridge.mjs')
+      : join(packageRoot, 'bin', 'wecom-channel-bridge.mjs'));
+    candidates.push(kind === 'lark'
+      ? join(packageRoot, 'dist', 'cli.js')
+      : join(packageRoot, 'dist', 'wecom.js'));
+  }
+  return [...new Set(candidates.map(canonicalPath).filter((value): value is string => Boolean(value)))];
+}
+
+function assertWeComEnvReference(file: string, expectedEnvFile: string): void {
+  let actual: string;
+  try { actual = plistField(file, 'EnvironmentVariables.WECOM_ENV_FILE', 'raw'); }
+  catch { throw new FleetError('无法读取目标企业微信 env 文件引用；未修改现有定义'); }
+  const actualPath = canonicalPath(actual);
+  const expectedPath = canonicalPath(resolve(expectedEnvFile));
+  if (!actualPath || !expectedPath || actualPath !== expectedPath) {
+    throw new FleetError('指定的 env 文件与已安装企业微信服务不同；未覆盖配置或重启，请单独完成配置变更');
+  }
+}
+
+function assertWeComEnvReferenceExists(file: string): void {
+  let actual: string;
+  try { actual = plistField(file, 'EnvironmentVariables.WECOM_ENV_FILE', 'raw'); }
+  catch { throw new FleetError('无法读取目标企业微信 env 文件引用；未修改现有定义'); }
+  if (!canonicalPath(actual)) {
+    throw new FleetError('目标企业微信 env 文件不存在或不是常规文件；未启动该定义');
+  }
+}
+
 /** Refuse unrelated files, wrappers and the legacy extra-script-argument shape. */
 function validateDefinition(file: string, label: string, kind: 'lark' | 'wecom', profile?: string): void {
-  if (lstatSync(file).isSymbolicLink() || !lstatSync(file).isFile()) throw new FleetError('服务定义必须是常规文件，不能是符号链接');
+  const stat = lstatSync(file);
+  if (stat.isSymbolicLink() || !stat.isFile()) throw new FleetError('服务定义必须是常规文件，不能是符号链接');
   if (plistField(file, 'Label', 'raw') !== label) throw new FleetError('服务定义的 Label 不匹配；未启动或覆盖该文件');
   let args: unknown;
   try { args = JSON.parse(plistField(file, 'ProgramArguments', 'json')); }
   catch { throw new FleetError('服务参数无效；请用单平台命令修复该定义'); }
   if (!Array.isArray(args) || !args.every((arg) => typeof arg === 'string')) throw new FleetError('服务参数必须是字符串数组');
   const argv = args as string[];
-  const entry = basename(argv[1] ?? '');
+  const nodePath = canonicalPath(argv[0] ?? '');
+  const expectedNodePath = canonicalPath(process.execPath);
+  const entryPath = canonicalPath(argv[1] ?? '');
+  const expectedEntryPaths = canonicalEntryPaths(kind);
   const valid = kind === 'lark'
-    ? argv.length === 5 && ['lark-channel-bridge', 'lark-channel-bridge.mjs', 'cli.js'].includes(entry)
+    ? argv.length === 5 && expectedEntryPaths.includes(entryPath ?? '')
       && argv[2] === 'run' && argv[3] === '--profile' && argv[4] === profile
-    : argv.length === 2 && ['wecom-channel-bridge', 'wecom-channel-bridge.mjs', 'wecom.js'].includes(entry);
-  if (!valid || basename(argv[0] ?? '') !== 'node' || !argv.slice(0, 2).every(isAbsolute) || !argv.slice(0, 2).every(existsSync)) {
+    : argv.length === 2 && expectedEntryPaths.includes(entryPath ?? '');
+  if (!valid || nodePath === undefined || expectedNodePath === undefined || nodePath !== expectedNodePath) {
     throw new FleetError('服务参数不是 canonical 入口；请先单独修复，统一启动不会执行 shell 包装器');
+  }
+  if (kind === 'lark') {
+    const configuredRoot = plistField(file, 'EnvironmentVariables.LARK_CHANNEL_HOME', 'raw');
+    if (!isAbsolute(configuredRoot) || !samePath(configuredRoot, paths.rootDir)) {
+      throw new FleetError('服务定义的 LARK_CHANNEL_HOME 与当前 profile 状态目录不同；未启动该定义');
+    }
+  } else {
+    assertWeComEnvReferenceExists(file);
   }
 }
 
 export function buildWeComServicePlist(input: {
   label: string; node: string; entry: string; envFile: string; cwd: string; envPath: string; logDir: string;
+  runtimePaths?: Partial<Record<'WECOM_WORKSPACE' | 'WECOM_STATE_DIR', string>>;
 }): string {
   if (!validWeComLabel(input.label)) throw new FleetError('企业微信服务名无效');
   const escape = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const string = (value: string) => `<string>${escape(value)}</string>`;
+  const runtimePaths = (['WECOM_WORKSPACE', 'WECOM_STATE_DIR'] as const)
+    .filter((key) => input.runtimePaths?.[key] !== undefined)
+    .map((key) => `<key>${key}</key>${string(input.runtimePaths![key]!)}`).join('');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>Label</key>${string(input.label)}
 <key>ProgramArguments</key><array>${string(input.node)}${string(input.entry)}</array>
 <key>WorkingDirectory</key>${string(input.cwd)}
-<key>EnvironmentVariables</key><dict><key>PATH</key>${string(input.envPath)}<key>WECOM_ENV_FILE</key>${string(input.envFile)}</dict>
+<key>EnvironmentVariables</key><dict><key>PATH</key>${string(input.envPath)}<key>WECOM_ENV_FILE</key>${string(input.envFile)}${runtimePaths}</dict>
 <key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>ThrottleInterval</key><integer>30</integer>
 <key>StandardOutPath</key>${string(join(input.logDir, 'stdout.log'))}
 <key>StandardErrorPath</key>${string(join(input.logDir, 'stderr.log'))}
@@ -143,6 +254,9 @@ export function buildWeComServicePlist(input: {
 
 function inspectJob(label: string, file: string): BotServiceState {
   const result = launchctl(['print', `gui/${userInfo().uid}/${label}`]);
+  if (!result.ok && !isMissingLaunchctlService(result)) {
+    throw new FleetError('无法查询目标服务状态；未假定服务不存在，也未尝试启动');
+  }
   return { ...inspectLaunchdStatus(result.ok, result.stdout), persistent: existsSync(file),
     temporary: result.ok && /^\s*path = \(submitted by launchctl\[/m.test(result.stdout) };
 }
@@ -184,12 +298,8 @@ function makeServices(profile: string, wecomLabel: string, opts: FleetOptions): 
     prepare: async () => {
       if (existsSync(wecomFile)) {
         validateDefinition(wecomFile, wecomLabel, 'wecom');
-        if (opts.wecomEnvFile) {
-          const existing = plistField(wecomFile, 'EnvironmentVariables.WECOM_ENV_FILE', 'raw');
-          if (realpathSync(resolve(opts.wecomEnvFile)) !== realpathSync(existing)) {
-            throw new FleetError('指定的 env 文件与已安装企业微信服务不同；未覆盖配置或重启，请单独完成配置变更');
-          }
-        }
+        const requestedEnvFile = opts.wecomEnvFile ?? process.env.WECOM_ENV_FILE;
+        if (requestedEnvFile) assertWeComEnvReference(wecomFile, requestedEnvFile);
         return;
       }
       const envFileInput = opts.wecomEnvFile ?? process.env.WECOM_ENV_FILE;
@@ -204,15 +314,25 @@ function makeServices(profile: string, wecomLabel: string, opts: FleetOptions): 
       if (!['lark-channel-bridge', 'lark-channel-bridge.mjs', 'cli.js'].includes(entryName)) throw new FleetError('无法确认当前包的 CLI 入口');
       const entry = join(dirname(currentEntry), entryName === 'cli.js' ? 'wecom.js' : 'wecom-channel-bridge.mjs');
       if (!existsSync(entry)) throw new FleetError('缺少当前包的企业微信入口；请先构建项目');
-      const cwd = resolve(dirname(currentEntry), '..');
+      // Match a foreground invocation: relative env-file settings resolve
+      // against the caller's working directory, never the package location.
+      const cwd = process.cwd();
+      const runtimePaths = Object.fromEntries(
+        (['WECOM_WORKSPACE', 'WECOM_STATE_DIR'] as const)
+          .filter((key) => Boolean(process.env[key]))
+          .map((key) => [key, resolve(cwd, process.env[key]!)]),
+      );
       const logDir = join(paths.rootDir, 'daemon', wecomLabel);
       const content = buildWeComServicePlist({ label: wecomLabel, node: process.execPath, entry,
-        envFile, cwd, envPath: process.env.PATH ?? '', logDir });
+        envFile, cwd, envPath: process.env.PATH ?? '', logDir, runtimePaths });
       mkdirSync(dirname(wecomFile), { recursive: true });
       mkdirSync(logDir, { recursive: true });
       try { writeFileSync(wecomFile, content, { encoding: 'utf8', mode: 0o600, flag: 'wx' }); }
       catch (err) { if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err; }
       validateDefinition(wecomFile, wecomLabel, 'wecom');
+      // A concurrent start may have won the wx race with a different env
+      // file. Validate the winner before allowing its job to be bootstrapped.
+      assertWeComEnvReference(wecomFile, envFile);
       // Deliberately do not unload a legacy live job: the new definition is for next bootstrap.
     },
     inspect: () => inspectJob(wecomLabel, wecomFile),
@@ -225,8 +345,18 @@ export async function runAllServices(action: 'start' | 'status', opts: FleetOpti
   const root = opts.profile ? undefined : await loadRootConfig(paths.configFile);
   const profile = opts.profile ?? await readActiveProfile(paths.rootDir) ?? root?.activeProfile;
   if (!profile) throw new FleetError('请用 --profile 指定飞书 profile，或先配置 active profile');
-  const wecomLabel = discoverWeComLabel(opts.wecomService);
-  const results = await controlBotFleet(action, makeServices(profile, wecomLabel, opts));
+  let wecomLabel = opts.wecomService ?? `${WECOM_PREFIX}unselected`;
+  let wecomDiscoveryError: unknown;
+  try {
+    wecomLabel = discoverWeComLabel(opts.wecomService);
+  } catch (err) {
+    // Discovery is one platform's preparation step. Keep the Lark service's
+    // independent failure boundary while reporting this invocation non-zero.
+    wecomDiscoveryError = err;
+  }
+  const services = makeServices(profile, wecomLabel, opts);
+  if (wecomDiscoveryError) services[1] = discoveryFailureService(wecomLabel, wecomDiscoveryError);
+  const results = await controlBotFleet(action, services);
   for (const result of results) {
     const state = result.status;
     const running = state?.running;

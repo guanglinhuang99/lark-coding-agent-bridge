@@ -99,6 +99,19 @@ describe('launchd restart reload', () => {
     expect(mocks.bootstrap).not.toHaveBeenCalled();
   });
 
+  it('does not bootstrap a start after enable fails', async () => {
+    mocks.enable.mockReturnValue({ ok: false, stdout: '', stderr: 'enable failed' });
+    expect(await getServiceAdapter('codex')?.start()).toMatchObject({ ok: false });
+    expect(mocks.bootstrap).not.toHaveBeenCalled();
+  });
+
+  it('does not bootstrap when unload observation is unknown', async () => {
+    mocks.waitUntilUnloaded.mockRejectedValueOnce(new Error('query failed'));
+    await expect(getServiceAdapter('codex')?.restart()).rejects.toThrow('query failed');
+    expect(mocks.enable).not.toHaveBeenCalled();
+    expect(mocks.bootstrap).not.toHaveBeenCalled();
+  });
+
   it('orders write, bootout, unload wait, enable and bootstrap', async () => {
     await getServiceAdapter('codex', ['run', '--profile', 'codex'])?.restart();
     const calls = [mocks.writePlist, mocks.bootout, mocks.waitUntilUnloaded, mocks.enable, mocks.bootstrap]

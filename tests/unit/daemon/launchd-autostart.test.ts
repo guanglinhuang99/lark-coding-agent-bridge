@@ -2,6 +2,14 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   spawnSync: vi.fn((_bin: string, _args: string[]) => ({ status: 0, stdout: '', stderr: '' })),
+  // Windows reports uid=-1. Keep this launchd simulation tied to a stable
+  // per-user target so the test exercises the macOS command contract.
+  userInfo: vi.fn(() => ({ uid: 501 })),
+}));
+
+vi.mock('node:os', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:os')>()),
+  userInfo: mocks.userInfo,
 }));
 
 vi.mock('node:child_process', async (importOriginal) => ({

@@ -1,4 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
+
+// Keep the macOS plist builder assertions independent of the CI host OS.
+vi.mock('node:path', async (original) => {
+  const actual = await original<typeof import('node:path')>();
+  return { ...actual, ...actual.posix };
+});
+
+import { join } from 'node:path';
 import { buildWeComServicePlist, controlBotFleet, selectWeComLabel, type BotServiceState, type FleetService } from '../../../src/daemon/bot-fleet';
 
 function fake(name: string, initial: BotServiceState): FleetService {
@@ -20,6 +28,16 @@ describe('independent bot fleet start', () => {
     expect((await controlBotFleet('start', services)).every((r) => r.outcome === 'already-running')).toBe(true);
     services.forEach((s) => expect(s.start).toHaveBeenCalledTimes(1));
   });
+  it.each([0, 1])('starts only stopped service %i while preserving the running peer', async (stopped) => {
+    const services = ['lark', 'wecom'].map((name, index) => fake(name,
+      index === stopped ? { loaded: false, running: false } : { loaded: true, running: true, pid: '999' }));
+    const result = await controlBotFleet('start', services);
+    expect(result.every((row) => row.ok)).toBe(true);
+    expect(services[stopped]!.start).toHaveBeenCalledOnce();
+    expect(services[1 - stopped]!.start).not.toHaveBeenCalled();
+    expect(result[1 - stopped]!.status?.pid).toBe('999');
+  });
+
   it('does not duplicate a loaded crash loop, while still starting the other platform', async () => {
     const broken = fake('lark', { loaded: true, running: false, state: 'spawn scheduled', lastExit: '1' });
     const good = fake('wecom', { loaded: false, running: false });
@@ -62,9 +80,10 @@ describe('WeCom service selection and definition', () => {
     expect(selectWeComLabel([])).toBe('ai.wecom-channel-bridge.bot');
   });
   it('stores only an env-file reference, one entrypoint and bounded launchd retry rate', () => {
+    const logDir = '/logs';
     const plist = buildWeComServicePlist({ label: 'ai.wecom-channel-bridge.test', node: '/node',
       entry: '/pkg/bin/wecom-channel-bridge.mjs', envFile: '/private/a&b.env', cwd: '/pkg',
-      envPath: '/bin:/usr/bin', logDir: '/logs' });
+      envPath: '/bin:/usr/bin', logDir });
     expect(plist).toContain('<key>ProgramArguments</key><array><string>/node</string><string>/pkg/bin/wecom-channel-bridge.mjs</string></array>');
     expect(plist).toContain('/private/a&amp;b.env');
     expect(plist).toContain('<key>WECOM_ENV_FILE</key>');
@@ -72,6 +91,6 @@ describe('WeCom service selection and definition', () => {
     expect(plist).not.toContain('WECOM_BOT_ID');
     expect(plist).not.toContain('/bin/zsh');
     expect(plist).toContain('<key>ThrottleInterval</key><integer>30</integer>');
-    expect(plist).toContain('/logs/stderr.log');
+    expect(plist).toContain(join(logDir, 'stderr.log'));
   });
 });
