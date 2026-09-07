@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises';
+import { mkdir, realpath } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -83,7 +83,10 @@ import {
   WeComMediaStore,
   type WeComMediaInput,
 } from './media';
-import { sendLinkedWorkspaceArtifacts } from './egress';
+import {
+  sendLinkedWorkspaceArtifacts, ReceivedArtifactRegistry, requestedReceivedArtifacts,
+  artifactDeliverySummary, type ReceivedArtifact,
+} from './egress';
 import { resolveWeComModelConfig } from './model-config';
 import { readWeComModelAllowlist, weComModelOptions } from './model-options';
 import { handleEnterChat as handleEnterChatEvent } from './enter-chat-handler';
@@ -326,6 +329,7 @@ const sessionStore = new WeComConversationBindings(sessionFile, {
   maxEntries: sessionMaxEntries,
 });
 await sessionStore.load();
+const receivedArtifacts = new ReceivedArtifactRegistry();
 const taskStore = new WeComTaskStore(taskFile, {
   maxAgeMs: taskMaxAgeMs,
   maxEntries: taskMaxEntries,
@@ -1426,6 +1430,15 @@ async function runCodexPrompt(
   await sessionStore.flush();
   const sessionBinding = sessionStore.bindingFor(key);
   let threadId = sessionStore.threadId(key);
+  const artifactScope = (id: string | undefined) => JSON.stringify([sessionBinding, id]);
+  const received = [
+    ...receivedArtifacts.get(artifactScope(threadId)),
+    ...await Promise.all(attachments.filter((item) => item.decision === 'accepted').map(async (item) => ({
+      path: await realpath(item.absPath).catch(() => item.absPath),
+      hash: item.hash, name: path.basename(item.originalName ?? item.absPath),
+    }))),
+  ];
+  const requestedAttachments = requestedReceivedArtifacts(displayPrompt, received);
   let state = freshRunState();
   let lastSent = renderStream(state, threadId);
   let lastFlushAt = Date.now();
@@ -1566,10 +1579,11 @@ async function runCodexPrompt(
         log.fail('wecom-session', err, { step: 'persist-after-run' });
       });
 
+      receivedArtifacts.remember(artifactScope(threadId), received);
       const finalText = renderStream(state, threadId);
       await streamUpdates.finish(finalText);
       if (state.terminal === 'done') {
-        await sendGeneratedArtifacts(frame, state, attachments, sessionBinding.cwdRealpath);
+        await sendGeneratedArtifacts(frame, state, received, sessionBinding.cwdRealpath, requestedAttachments);
       }
       if (state.terminal === 'error') {
         await deliverErrorCard(frame, 'execution');
@@ -2596,13 +2610,14 @@ function attachmentSummary(attachments: readonly NormalizedAttachment[]): string
 async function sendGeneratedArtifacts(
   frame: WsFrame,
   state: RunState,
-  attachments: readonly NormalizedAttachment[],
+  attachments: readonly ReceivedArtifact[],
   workspace: string,
+  requestedAttachments: readonly ReceivedArtifact[],
 ): Promise<number> {
   const body = frame.body;
   if (!body) return 0;
   const markdown = agentOutputText(state);
-  if (!markdown) return 0;
+  if (!markdown && !requestedAttachments.length) return 0;
   try {
     const result = await sendLinkedWorkspaceArtifacts(
       client,
@@ -2611,9 +2626,8 @@ async function sendGeneratedArtifacts(
       markdown,
       {
         ...artifactOptions,
-        excludedPaths: attachments
-          .filter((attachment) => attachment.decision === 'accepted')
-          .map((attachment) => attachment.absPath),
+        requestedAttachments,
+        excludedPaths: attachments.map((attachment) => attachment.path),
       },
     );
     const bytes = result.sent.reduce((sum, item) => sum + item.size, 0);
@@ -2624,6 +2638,10 @@ async function sendGeneratedArtifacts(
     });
     reportMetric('wecom_egress_bytes', bytes);
     reportMetric('wecom_egress_files', result.sent.length);
+    const summary = artifactDeliverySummary(result);
+    if (summary) await client.sendMessage(messageTarget(body), {
+      msgtype: 'markdown', markdown: { content: summary },
+    });
     return result.sent.length;
   } catch (err) {
     log.fail('wecom-media-egress', err);
@@ -2632,8 +2650,8 @@ async function sendGeneratedArtifacts(
       msgtype: 'markdown',
       markdown: {
         content: renderWeComNotice(
-          '生成文件回传失败',
-          ['请查看本机 bridge 日志。'],
+          '文件回传或结果通知未完成',
+          ['部分文件可能已发送，请以实际收到的附件为准；详情请查看本机 bridge 日志。'],
           { status: 'error', eyebrow: 'CODEX · WECOM' },
         ),
       },
