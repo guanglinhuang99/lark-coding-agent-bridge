@@ -27,7 +27,7 @@ export function renderWeComCard(view: WeComCardView): TemplateCard {
       ...(subtitle ? { sub_title_text: clip(subtitle, 112) } : {}),
       ...(view.facts?.length
         ? {
-            horizontal_content_list: view.facts.map((fact) => ({
+            horizontal_content_list: view.facts.slice(0, 6).map((fact) => ({
               keyname: fact.label,
               value: fact.value,
             })),
@@ -51,7 +51,7 @@ export function renderWeComCard(view: WeComCardView): TemplateCard {
     ...(subtitle ? { sub_title_text: clip(subtitle, 112) } : {}),
     ...(view.facts?.length
       ? {
-          horizontal_content_list: view.facts.map((fact) => ({
+          horizontal_content_list: view.facts.slice(0, 6).map((fact) => ({
             keyname: fact.label,
             value: fact.value,
           })),
