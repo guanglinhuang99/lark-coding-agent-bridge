@@ -202,3 +202,29 @@ Push run：[34088733463](https://github.com/guanglinhuang99/lark-coding-agent-br
 执行顺序为：确认回退依据可用 → 完成已批准的构建版本准备 → 停止并等待旧 WeCom job 与进程完全退出 → 同身份启动新持久定义 → 核验新 PID、参数、health、日志、无任务重放 → 在获准会话完成真实收发。飞书保持运行，全程不得出现同身份并行连接。更新共享构建前还需确认不会影响仍运行的飞书；否则停止该更新步骤并另行确定隔离部署路径。
 
 新服务失败时先停止并确认新实例退出，再按已核验的旧定义和构建恢复；不清空 ledger，不自动重放执行结果不确定的任务。无法确认退出、身份、任务或回退依据时停止切换。登录自启仍单列 NOT RUN，除非另外批准相应验证。以上审批和现场核验尚未完成。
+
+
+## 已批准生产切换（2026-09-07）
+
+用户明确批准维护窗口生产更新、企业微信单实例切换及指定会话真实收发测试。以下记录替代此前“未授权切换”的当前状态，历史记录保留；真实测试会话尚未明确，未发送消息。
+
+- 部署代码/文档 HEAD：`82ea0e4a6dc169e83b23271564ca19bda89f416b`。参考工作区从 `99f7601` 仅快进至该版本；保留原未跟踪 `.pnpm-store/` 和 `AGENTS.md`。
+- 实际磁盘 `dist/wecom.js` 与隔离验收产物逐字节相同，SHA-256 `088d4cb65aedb8ece84d9202df77e75a2e38cee3afe8e956c93861f001535633`，未替换该文件或依赖。仅原子更新已验收 CLI，SHA-256 `c88649741ece69d905a418c85fb3a5ddf32de604e7a7ebcd48be7eda5be89370`；未在共享目录执行会清理 dist 的 build。
+- 仓库外私有回退材料位于 `~/.local/state/wecom-cutover/20260907-pr12`，目录 0700、文件 0600，保存切换前定义、构建、env 和状态；没有把凭证、原始日志或会话内容提交到 Git。回退脚本未实际触发，回退演练仍 NOT RUN。
+- 现场旧 job 为 `ai.wecom-channel-bridge.riskbot-codex`，PID 7807，临时 shell 提交；持久定义引用同一 env 文件和工作目录。只发现一个企业微信候选进程且无子进程，健康心跳新鲜，connected=true、activeRuns=0、startingRuns=0；间隔 5 秒重复确认。旧状态目录没有 tasks.json，因此无法从旧 ledger 独立量化队列，未把缺失文件冒充已验证的 ledger 零任务。
+- 2026-09-07 14:16 CST：bootout 指定旧 job 后，确认 launchctl 返回明确不存在且 PID 7807 已退出，才 enable/bootstrap 同 label 的持久定义。新 PID 89496 在 14:16:43 获得 connected 健康状态；没有新旧同身份实例并行。
+- 持久启动后的真实 launchctl 参数与 plist 一致，工作目录、env 引用、新 stdout/stderr 路径生效；只读 `status --all --profile codex --wecom-service ai.wecom-channel-bridge.riskbot-codex` exit 0。新 job PID 89496、runs=1；飞书 PID 36940、runs=1，未停止或重启飞书。
+- 后续只读采样：health connected、activeRuns=0、startingRuns=0；新 stdout 有连接标记，stderr 0 字节，未观察到错误行。env 和 sessions.json 与切换前快照逐字节相同；未清空状态、ledger 或重放任务。
+
+| 生产验收项 | 当前结果 |
+| --- | --- |
+| 受控旧临时 job → 持久 job 切换 | PASS |
+| 新持久定义启动、新入口/工作目录/日志生效 | PASS；进程和平台连接证据，不代表真实消息收发 |
+| 飞书连续运行 | PASS；PID/runs 不变 |
+| 配置与已有会话保持 | PASS；字节比对一致 |
+| 线上重复两次 start --all | BLOCKED；自动审批拒绝该命令组，认为重复生产启动未明确授权、存在并行连接风险；命令组未执行，已请求专项批准 |
+| 指定会话真实对话/追问/会话卡片/小文件收发 | BLOCKED；待用户指定现有测试会话或手动发送测试消息 |
+| 登录自启 / 系统重启后冷启动 | NOT RUN；未退出登录或重启机器 |
+| 生产回退演练 | NOT RUN；已有回退材料，未触发回退 |
+
+本次未合并 PR、发布包或创建新 PR。生产切换已成功，完整客户端与登录自启验收仍未完成，不能将这些项目标为 PASS。
