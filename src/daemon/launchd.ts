@@ -11,6 +11,7 @@ import {
   launchAgentPlistPath,
 } from './paths';
 import { paths } from '../config/paths';
+import { inspectLaunchdStatus, type LaunchdStatus } from './launchd-status';
 
 export interface PlistInputs {
   /** Absolute path to the node binary that should run the bridge. */
@@ -159,6 +160,11 @@ export function isLoaded(profile: string): boolean {
     stdio: ['ignore', 'ignore', 'ignore'],
   });
   return r.status === 0;
+}
+
+export function inspectService(profile: string): LaunchdStatus {
+  const result = runLaunchctl(['print', serviceTarget(profile)]);
+  return inspectLaunchdStatus(result.ok, result.stdout);
 }
 
 /**

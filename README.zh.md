@@ -4,6 +4,8 @@
 
 [English README](./README.md)
 
+已配置飞书和企业微信机器人时，macOS 可用 `start --all` 一次启动两边，用 `status --all` 合并查看进程状态。参见[双平台启动说明](./docs/dual-bot-start.md)。
+
 关于能实现的效果，详情可以阅读[飞书文档](https://larkcommunity.feishu.cn/docx/OaRIdFIRFoLM3xxTmKwcetHqn5e)
 
 ## 主要功能

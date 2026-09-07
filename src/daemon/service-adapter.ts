@@ -1,4 +1,5 @@
 import * as launchd from './launchd';
+import { parseLaunchdStatus, type LaunchdStatus } from './launchd-status';
 import { launchAgentPlistPath, systemdUnitPath, windowsTaskName } from './paths';
 import * as schtasks from './schtasks';
 import * as systemd from './systemd';
@@ -26,6 +27,10 @@ export interface ServiceAdapter {
 
   /** Whether the service is currently running (process alive). */
   isRunning(): boolean;
+
+  /** launchd jobs may be loaded without a live process (e.g. crash backoff). */
+  isLoaded?(): boolean;
+  inspectStatus?(): LaunchdStatus;
 
   /** Path/name to the service definition (for status output). */
   servicePath(): string;
@@ -72,14 +77,16 @@ function makeLaunchdAdapter(profile: string, runArgs: string[]): ServiceAdapter 
   return {
     platformName: 'launchd (macOS)',
     fileExists: () => launchd.plistExists(profile),
-    isRunning: () => launchd.isLoaded(profile),
+    isRunning: () => launchd.inspectService(profile).running,
+    isLoaded: () => launchd.isLoaded(profile),
+    inspectStatus: () => launchd.inspectService(profile),
     servicePath: () => launchAgentPlistPath(profile),
     install: () => launchd.writePlist(profile, runArgs),
     // A previous `stop` may have left the job disabled in launchd's override
     // DB, where it would stay dead through bootstrap. Always enable first.
     start: () => {
-      launchd.enable(profile);
-      return launchd.bootstrap(profile);
+      const enabled = launchd.enable(profile);
+      return enabled.ok ? launchd.bootstrap(profile) : enabled;
     },
     stop: () => launchd.bootout(profile),
     // bootout alone is session-scoped: the plist keeps RunAtLoad=true, so
@@ -98,8 +105,8 @@ function makeLaunchdAdapter(profile: string, runArgs: string[]): ServiceAdapter 
     // is also a repair path for legacy LaunchAgents.
     restart: async () => {
       await launchd.writePlist(profile, runArgs);
-      const out = launchd.bootout(profile);
-      if (!out.ok) return out;
+      const out = launchd.isLoaded(profile) ? launchd.bootout(profile) : { ok: true, stderr: '' };
+      if (!out.ok && launchd.isLoaded(profile)) return out;
       const unloaded = await launchd.waitUntilUnloaded(profile);
       if (!unloaded) {
         return {
@@ -107,16 +114,13 @@ function makeLaunchdAdapter(profile: string, runArgs: string[]): ServiceAdapter 
           stderr: 'launchd job did not unload before restart',
         };
       }
-      launchd.enable(profile);
-      return launchd.bootstrap(profile);
+      const enabled = launchd.enable(profile);
+      return enabled.ok ? launchd.bootstrap(profile) : enabled;
     },
     waitUntilStopped: (timeoutMs) => launchd.waitUntilUnloaded(profile, timeoutMs),
     deleteFile: () => launchd.deletePlist(profile),
     describeStatus: () => launchd.describeService(profile),
-    parseStatus: (text) => ({
-      pid: text.match(/pid\s*=\s*(\d+)/)?.[1],
-      lastExit: text.match(/last exit code\s*=\s*(-?\d+)/i)?.[1],
-    }),
+    parseStatus: (text) => parseLaunchdStatus(text),
   };
 }
 

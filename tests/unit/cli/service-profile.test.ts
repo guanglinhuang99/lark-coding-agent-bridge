@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ServiceAdapter } from '../../../src/daemon/service-adapter';
 import type { ProcessEntry } from '../../../src/runtime/registry';
 
@@ -59,9 +59,11 @@ vi.mock('../../../src/cli/preflight', () => ({
   preFlightChecks: mocks.preFlightChecks,
 }));
 
-const { runServiceStart, runServiceStatus, runServiceStop, runServiceUnregister } = await import('../../../src/cli/commands/service');
+const { runServiceStart, runServiceStatus, runServiceStop, runServiceUnregister, runServiceRestart } = await import('../../../src/cli/commands/service');
 
+const originalExitCode = process.exitCode;
 describe('profile-aware service commands', () => {
+  afterEach(() => { process.exitCode = originalExitCode; vi.useRealTimers(); });
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.adapter = {
@@ -565,6 +567,63 @@ describe('profile-aware service commands', () => {
     expect(mocks.adapter.deleteFile).toHaveBeenCalled();
     expect(lines).toContain('✓ 已清除后台运行注册');
     expect(lines).toContain('  (配置 / 日志 / 会话保留在 /tmp/lark-channel-home)');
+  });
+
+  it('reports crash backoff as loaded but not running with nonzero status', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => { lines.push(String(line)); });
+    mocks.adapter.inspectStatus = vi.fn(() => ({ loaded: true, running: false, state: 'spawn scheduled', lastExit: '1' }));
+    await runServiceStatus({ profile: 'codex-dev' });
+    expect(lines.join('\n')).toContain('已加载，但进程未运行');
+    expect(lines.join('\n')).not.toContain('✓');
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('stops a loaded crash-loop job rather than only disabling autostart', async () => {
+    mocks.adapter.isLoaded = vi.fn(() => true);
+    mocks.readAndPrune.mockReturnValue([]);
+    await runServiceStop({ profile: 'codex-dev' });
+    expect(mocks.adapter.stopAndDisableAutostart).toHaveBeenCalledOnce();
+    expect(mocks.adapter.disableAutostart).not.toHaveBeenCalled();
+  });
+
+  it('reloads an unhealthy loaded job through the repair restart path', async () => {
+    mocks.adapter.isLoaded = vi.fn(() => true);
+    mocks.readAndPrune.mockReturnValueOnce([]).mockReturnValue([
+      processEntry({ pid: 100, appId: 'cli_codex', profileName: 'codex-dev', botName: 'Test' }),
+    ]);
+    await runServiceRestart({ profile: 'codex-dev' });
+    expect(mocks.adapter.restart).toHaveBeenCalledOnce();
+    expect(mocks.adapter.start).not.toHaveBeenCalled();
+  });
+
+  it('rewrites a stopped job definition before starting it', async () => {
+    mocks.adapter.isLoaded = vi.fn(() => false);
+    mocks.readAndPrune.mockReturnValueOnce([]).mockReturnValue([
+      processEntry({ pid: 101, appId: 'cli_codex', profileName: 'codex-dev', botName: 'Test' }),
+    ]);
+    await runServiceRestart({ profile: 'codex-dev' });
+    expect(mocks.adapter.install).toHaveBeenCalledOnce();
+    expect(mocks.adapter.start).toHaveBeenCalledOnce();
+    expect(vi.mocked(mocks.adapter.install).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(mocks.adapter.start).mock.invocationCallOrder[0]!);
+  });
+
+  it('does not rewrite stopped services when profile resolution fails', async () => {
+    mocks.resolveProfileRuntime.mockRejectedValueOnce(new Error('profile not found'));
+    mocks.adapter.isLoaded = vi.fn(() => false);
+    await expect(runServiceRestart({ profile: 'codex-dev' })).rejects.toThrow('profile not found');
+    expect(mocks.adapter.install).not.toHaveBeenCalled();
+    expect(mocks.adapter.start).not.toHaveBeenCalled();
+  });
+
+  it('returns nonzero when a launched bot never connects', async () => {
+    vi.useFakeTimers();
+    mocks.adapter.isLoaded = vi.fn(() => false);
+    mocks.readAndPrune.mockReturnValue([]);
+    const pending = runServiceRestart({ profile: 'codex-dev' });
+    await vi.advanceTimersByTimeAsync(31_000);
+    await pending;
+    expect(process.exitCode).toBe(1);
   });
 });
 

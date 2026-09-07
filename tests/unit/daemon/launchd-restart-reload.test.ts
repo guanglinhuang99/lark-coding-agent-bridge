@@ -38,6 +38,7 @@ describe('launchd restart reload', () => {
     vi.clearAllMocks();
     forcePlatform('darwin');
     mocks.writePlist.mockResolvedValue(undefined);
+    mocks.isLoaded.mockReturnValue(true);
     mocks.bootout.mockReturnValue({ ok: true, stdout: '', stderr: '' });
     mocks.waitUntilUnloaded.mockResolvedValue(true);
     mocks.enable.mockReturnValue({ ok: true, stdout: '', stderr: '' });
@@ -80,5 +81,28 @@ describe('launchd restart reload', () => {
       stderr: 'launchd job did not unload before restart',
     });
     expect(mocks.bootstrap).not.toHaveBeenCalled();
+  });
+
+  it('rebuilds an unloaded job without an unnecessary bootout', async () => {
+    mocks.isLoaded.mockReturnValue(false);
+    const result = await getServiceAdapter('codex', ['run', '--profile', 'codex'])?.restart();
+    expect(result?.ok).toBe(true);
+    expect(mocks.writePlist).toHaveBeenCalledOnce();
+    expect(mocks.bootout).not.toHaveBeenCalled();
+    expect(mocks.bootstrap).toHaveBeenCalledOnce();
+  });
+
+  it('does not bootstrap after enable fails', async () => {
+    mocks.enable.mockReturnValue({ ok: false, stdout: '', stderr: 'enable failed' });
+    const result = await getServiceAdapter('codex', ['run', '--profile', 'codex'])?.restart();
+    expect(result).toMatchObject({ ok: false, stderr: 'enable failed' });
+    expect(mocks.bootstrap).not.toHaveBeenCalled();
+  });
+
+  it('orders write, bootout, unload wait, enable and bootstrap', async () => {
+    await getServiceAdapter('codex', ['run', '--profile', 'codex'])?.restart();
+    const calls = [mocks.writePlist, mocks.bootout, mocks.waitUntilUnloaded, mocks.enable, mocks.bootstrap]
+      .map((fn) => fn.mock.invocationCallOrder[0]!);
+    expect(calls).toEqual([...calls].sort((a, b) => a - b));
   });
 });

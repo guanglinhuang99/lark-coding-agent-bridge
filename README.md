@@ -4,6 +4,8 @@ A lightweight bot that bridges Feishu / Lark messenger with your local Claude Co
 
 [中文 README](./README.zh.md)
 
+For already configured Lark and WeCom bots on macOS, `start --all` starts both independent services and `status --all` reports their process states together. See the [dual-bot startup guide](./docs/dual-bot-start.md).
+
 For a product walkthrough, see the [Feishu document](https://larkcommunity.feishu.cn/docx/OaRIdFIRFoLM3xxTmKwcetHqn5e).
 
 ## What it does
