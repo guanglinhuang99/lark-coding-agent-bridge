@@ -24,7 +24,7 @@ describe('hash media attachment resolver', () => {
         resource: {
           type: 'image',
           fileKey: 'img_secret_key',
-          fileName: 'private name.png',
+          fileName: 'attachment-private-sentinel name.png',
         } as never,
       },
     ]);
@@ -37,11 +37,12 @@ describe('hash media attachment resolver', () => {
       mime: 'image/png',
       sourceMessageId: 'om_1',
       sourceFileKey: 'img_secret_key',
-      originalName: 'private name.png',
+      originalName: 'attachment-private-sentinel name.png',
       decision: 'accepted',
     });
     expect(attachment?.absPath).not.toContain('img_secret_key');
-    expect(attachment?.absPath).not.toContain('private');
+    // The source-name sentinel must not collide with macOS's /private/tmp.
+    expect(attachment?.absPath).not.toContain('attachment-private-sentinel');
     expect(await readFile(attachment!.absPath, 'utf8')).toBe('image-bytes');
   });
 
