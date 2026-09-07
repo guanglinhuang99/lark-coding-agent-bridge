@@ -303,3 +303,55 @@ dist/index.js 5f765804b81cb7acdb74631d27f54a6ec1cb0db99a411635e7908f26eb54530f
 因此源码已更新不等于附件修复已部署；`dist/wecom.js` 仍为此前产物，尚未替换或重载。已新增本机忽略目录中的 WeCom-only 构建配置 `.codex-handoff/tsup.wecom-attachment.config.ts`，输出到独立目录且 clean=false；配置存在，不代表构建已完成，旧交接文件未覆盖。
 
 后续明确交接见 `docs/codex-wecom-attachment-rollout.md`，合成样本为 `docs/fixtures/wecom-attachment/input.txt`。交接包含现场空闲/身份检查、隔离构建、单个 WeCom 产物更新、飞书保护、回退条件、真实附件卡片与字节比对标准，以及否定请求/新会话不回传的验证。所有服务、真实客户端和此前未执行事项仍按各自证据保留状态，不自动合并 PR、发布或将未执行项改为通过。
+
+## 附件修复受控部署与真实客户端验收（2026-09-07 15:53–16:14 CST）
+
+本轮用户明确授权完成企业微信附件修复的单服务更新、既有测试私聊附件收发，以及向同一分支/PR 提交报告。**附件修复部署 PASS；原附件真实回传及字节比对 PASS；跨会话来源隔离 PASS；飞书保护 PASS。** 未再次执行临时 job 首次迁移，没有改架构、放宽 read-only、合并或发布。
+
+### 源码与本轮隔离验证
+
+- 现场工作区与 PR #12 HEAD 均为 `59f9ca3fcb646dd9b64a101e0172f507d9cf42ce`，分支 `feat/dual-bot-lifecycle`，PR 为 OPEN / Draft。该 HEAD 的 [push CI](https://github.com/guanglinhuang99/lark-coding-agent-bridge/actions/runs/34096838716) 与 [PR CI](https://github.com/guanglinhuang99/lark-coding-agent-bridge/actions/runs/34096842623) 三平台共六项 SUCCESS。
+- 保留原有未跟踪 `.pnpm-store/`、`AGENTS.md`。本轮报告之外未改源码、测试、依赖、锁文件、配置或启动入口。
+- 在干净独立 worktree `/private/tmp/wecom-pr12-independent-1355` 验证和构建，源码 HEAD 为 `db669b6d799dcb222fdcda1a5c98b2f79a7c9b1a`；与现场 HEAD 的差异仅为交接文档和合成样本。已验收附件代码提交为 `19b9f246e2aca4f6b46efa4751ad612abe5a114f`。
+- Node `24.19.0`、pnpm `10.33.0`；白名单环境及独立临时 HOME/状态，`pnpm install --frozen-lockfile --ignore-scripts` exit 0。未加载生产凭证或建立第二条机器人连接。
+- 附件专项 `vitest run tests/unit/wecom/egress.test.ts tests/unit/wecom/received-artifacts.test.ts`：**2 文件 / 12 用例 PASS**；`pnpm typecheck`、WeCom-only 构建、`node --check`、`git diff --check` 均 exit 0。本轮没有重跑完整测试或完整包构建，不借用历史 1063 用例结果作为本轮结果。
+- 单入口配置与项目 WeCom 构建选项对齐，`clean=false`、`splitting=false`，输出到独立 worktree 的 `.codex-handoff/wecom-attachment-db669b6/wecom.js`，392,056 字节。未在生产目录运行会清理共享 dist 的完整构建。
+- 两处锁文件 SHA-256 均为 `d4a95a8cc6c212d170b095dd021e409da85e6667de783f0cd90cdf68466f5008`；外部依赖均可解析且版本一致：SDK `1.0.7`、cross-spawn `7.0.6`、proper-lockfile `4.1.2`、graceful-fs `4.2.11`。相对旧运行代码 `82ea0e4`，源码变化仅为 `src/wecom/{cli,egress,media}.ts`，CLI/daemon、bin、package.json 和锁文件未变。
+
+### 现场安全检查、更新与运行证据
+
+目标始终为 `ai.wecom-channel-bridge.riskbot-codex`。磁盘与已加载定义均使用 `/opt/homebrew/Cellar/node@24/24.19.0/bin/node` 和 `/Users/guanglin/Sync/wecom-bot/bin/wecom-channel-bridge.mjs`，cwd 为仓库，配置引用为仓库 `.env`，实际状态目录为 `/Users/guanglin/.lark-channel/wecom`。没有输出凭证或完整环境。plist 和 env 权限均为 0600，更新后字节未变。
+
+- 更新前 PID `89496` / runs `1`；至少两次新鲜心跳 connected、activeRuns=0、startingRuns=0，实际入口 `--health` exit 0。初见账本最后更新于 14:43，未直接视为安全空闲；通过既有 `riskbot@codex` 私聊 `/status` 获得空闲、排队 0、read-only 回复，并确认账本于 15:54:30 新增 done 记录。schemaVersion=1，done=12、interrupted=1、queued/running=0；目标无子进程。代码核对确认附件接收和风险任务也经该持久任务入口记录。
+- 仓库外私有回退材料保存于 `/private/tmp/wecom-attachment-rollout-20260907/rollback`：旧 wecom.js、原 plist、env 和最新状态副本；目录 0700、文件 0600，未提交。保留实时会话和账本，不以旧快照覆盖上线后的状态。回退默认只恢复程序，未执行回退演练。
+- 执行前再次核验空闲及飞书保护基线；只 bootout 指定 WeCom job，明确确认 job 不存在且旧 PID 退出后，原子替换 `dist/wecom.js`，再 enable/bootstrap 同一 plist。没有 SIGKILL、并行同身份连接或其他服务操作。
+- 新 PID **25983**，启动于 **15:58:27 CST**，参数与原定义一致，15:58:27 即 connected。采样时间包括 15:58、15:59:37、16:00:20、16:10:43、16:13:03、16:13:40；新 PID/runs 始终为 **25983 / 1**。约 **15 分钟**观察窗口内没有持续重启循环；只按更新前日志字节偏移检查新增日志，unknown command=0、reconnecting=0、结构化 error 事件=0。
+- 16:13:40 最终心跳 connected、activeRuns=0、startingRuns=0，账本 done=20、interrupted=1、queued/running=0；旧 PID 不存在，新进程无子进程。测试期间可见正常 active/starting 状态，不将执行中的测试误报为空闲。
+
+| 产物 | 更新前 SHA-256 | 更新后 SHA-256 |
+| --- | --- | --- |
+| dist/wecom.js | `088d4cb65aedb8ece84d9202df77e75a2e38cee3afe8e956c93861f001535633` | `0c5b5b6427dbd2564aa0c6ee5ce9f1ea43ab8c7058472ed2b9f695d9694c9e7e` |
+| dist/cli.js | `c88649741ece69d905a418c85fb3a5ddf32de604e7a7ebcd48be7eda5be89370` | 相同 |
+| dist/index.js | `5f765804b81cb7acdb74631d27f54a6ec1cb0db99a411635e7908f26eb54530f` | 相同 |
+
+飞书 `ai.lark-channel-bridge.bot.codex` 全程 **PID 36940 / runs 1**，启动时间仍为 12:16:27，原 Node、入口和 `run --profile codex` 参数不变。未停止、重载或修改飞书及其他 LaunchAgent；上述两个共享产物哈希不变。本轮没有发送飞书消息，飞书客户端收发沿用历史独立记录。
+
+### 原生客户端附件验收
+
+通过原生企业微信既有 `riskbot@codex` 私聊和系统文件选择器，在更新后重新上传仓库 `docs/fixtures/wecom-attachment/input.txt`。原测试线程 `01a07a9a-15cd-7863-8425-2ea57f9f02bd` 保留，客户端权限仍为 read-only。未通过内部接口模拟用户上传。
+
+| 验证 | 实际结果 |
+| --- | --- |
+| 读取、不回传 | PASS；发送“请读取 input.txt，只回答 case、value_a 和 value_b，不要回传文件”，最终实际回复为 `case=PR12-ATTACHMENT-20260907`、`value_a=17`、`value_b=25`，无新增机器人附件。上传自身先触发一个读取轮次，指定文本随后排队执行；两轮 egress 均 sent=0。 |
+| 同会话下一轮原样回传 | PASS；发送“请把 input.txt 原样回传给我”，出现模型准备回传文字之外的、机器人侧真实 `input.txt 95B` 文件卡片。16:00:27 egress sent=1，但该计数只作辅助证据。 |
+| 下载与字节验证 | PASS；从返回文件卡片打开客户端已下载附件，系统文本编辑器显示 input.txt 及合成内容；取得其企业微信 Caches/Files 路径后，将实际客户端下载文件保留为 `/private/tmp/wecom-attachment-rollout-20260907/returned-input.txt`（0600）。原件与返回文件均为 **95 字节**，SHA-256 均为 **`6c897075bd3b7a1c5ea16cdc67d60f356626e29cb51e87733e409146886dfda5`**，逐字节相等。未用源码样本复制品代替下载文件。 |
+| 新会话同名样本干扰 | 已解释；点击“新会话”，卡片明确显示已创建，新线程为 `01a07aec-0525-7cf3-b5d9-7979f3fa81c4`。不上传而发送相同请求时，模型找到并回传仓库内同名样本。仅提取该测试线程输出链接核对：原会话链接为状态目录 media 缓存，新会话链接为仓库 `docs/fixtures/wecom-attachment/input.txt`，不是借用旧附件来源。不能把“新会话完全没有任何文件发送”标为通过。 |
+| 新会话来源隔离补测 | PASS；明确限定上一会话接收来源、排除仓库同名文件后，客户端回复当前会话没有可用的上一会话附件来源，不发送文件。再提供旧缓存确切路径并明确请求原样回传，模型虽输出链接，桥接仍 **sent=0、skipped=outside-workspace**（16:13:08），客户端无新增文件卡片，并提示 0 个确认发送、需重新上传。证明路径提示不会授予跨会话附件来源权限。 |
+
+原生文件选择器首次剪贴板读取超时，通过当前路径输入框重试成功；打开系统文本编辑器的工具调用曾耗时约 9 分钟，最终返回了实际缓存文件窗口。这些 UI 延迟不计为服务重启或附件失败，也不声称客户端低延迟。未保存包含其他聊天的截图、完整 AX 树、原始日志或状态正文到仓库。
+
+### 结论与边界
+
+本次附件修复的部署、真实文件回传、字节一致性、跨会话缓存来源拒绝和飞书保护均已完成。无需额外源码修复。后续报告提交不改变上述运行产物；其 HEAD/CI 应与部署源码和 bundle hash 分开看待。
+
+PR 保持 Draft，不合并、不发布、不开启自动合并。本轮附件专项不再有部署或客户端阻塞，但不将历史整体验收未完成项抹去：恢复会话辨识仍 PARTIAL；只读工作区生成新文件限制未放宽；登录自启、系统重启冷启动、回退演练仍 NOT RUN，生产重复 start 的历史专项仍 BLOCKED。本轮未补做这些项目，不能因此宣称所有生产验收项目或自动转 Ready 条件均已完成。
