@@ -283,3 +283,5 @@ Push run：[34088733463](https://github.com/guanglinhuang99/lark-coding-agent-br
 独立审查补齐：明确请求的可信附件直接纳入发送候选，不依赖模型生成链接；失败上传也计入 maxCount，避免失败后无限尝试。发送回执超时记为未确认而非断言未送达。
 
 最终离线收口：完整 `pnpm test` **147 文件 / 1063 用例 PASS**，相关生命周期 **11 文件 / 89 用例 PASS**，附件专项 **2 文件 / 12 用例 PASS**；`pnpm typecheck`、`pnpm build`、`git diff --check` 均 exit 0。独立只读审查复现了失败尝试预算并确认修复，同时复核无链接回传、规范路径去重和通知措辞，未发现剩余阻塞。本轮源码、测试和报告之外没有依赖、配置或生产工作区修改。
+
+修复提交与 CI 收口：实际修复代码 HEAD 为 **`19b9f246e2aca4f6b46efa4751ad612abe5a114f`**，即上述最终离线验收补丁的提交版本。该提交的 [push CI](https://github.com/guanglinhuang99/lark-coding-agent-bridge/actions/runs/34093610878) 与 [PR CI](https://github.com/guanglinhuang99/lark-coding-agent-bridge/actions/runs/34093614210) 已全部完成，macOS、Ubuntu、Windows 共 **6/6 SUCCESS**。本次后续提交仅追加此收口记录，不改变已验收代码；最新文档 HEAD 状态以 PR 检查为准。代码与离线验收 PASS，具备申请受控更新并复测附件的代码条件，修复后的完整生产客户端验收仍 NOT RUN。
