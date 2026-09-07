@@ -285,3 +285,21 @@ Push run：[34088733463](https://github.com/guanglinhuang99/lark-coding-agent-br
 最终离线收口：完整 `pnpm test` **147 文件 / 1063 用例 PASS**，相关生命周期 **11 文件 / 89 用例 PASS**，附件专项 **2 文件 / 12 用例 PASS**；`pnpm typecheck`、`pnpm build`、`git diff --check` 均 exit 0。独立只读审查复现了失败尝试预算并确认修复，同时复核无链接回传、规范路径去重和通知措辞，未发现剩余阻塞。本轮源码、测试和报告之外没有依赖、配置或生产工作区修改。
 
 修复提交与 CI 收口：实际修复代码 HEAD 为 **`19b9f246e2aca4f6b46efa4751ad612abe5a114f`**，即上述最终离线验收补丁的提交版本。该提交的 [push CI](https://github.com/guanglinhuang99/lark-coding-agent-bridge/actions/runs/34093610878) 与 [PR CI](https://github.com/guanglinhuang99/lark-coding-agent-bridge/actions/runs/34093614210) 已全部完成，macOS、Ubuntu、Windows 共 **6/6 SUCCESS**。本次后续提交仅追加此收口记录，不改变已验收代码；最新文档 HEAD 状态以 PR 检查为准。代码与离线验收 PASS，具备申请受控更新并复测附件的代码条件，修复后的完整生产客户端验收仍 NOT RUN。
+
+## 附件修复部署准备与再交接（2026-09-07）
+
+用户要求完成可执行的部分，其余交给 Codex。本轮已核验 PR #12 的 `db669b6d799dcb222fdcda1a5c98b2f79a7c9b1a`，push/PR 三平台六项 CI SUCCESS；已将参考工作区从 `82ea0e4` 仅安全快进到该提交。保留 `.pnpm-store/` 和 `AGENTS.md`，没有安装依赖、构建共享 dist、操作服务或扩大权限。
+
+`npm run typecheck && git diff --check` 于 `2026-09-07T07:39:34Z` 结束，exit 0。附件专项和独立构建命令因 MCPX 额外确认要求未执行；没有把它们记为本次 PASS。目标运行状态查询同样未执行，没有本轮新 PID、空闲或连接证据。
+
+核验以下共享产物摘要前后一致：
+
+```text
+dist/cli.js   c88649741ece69d905a418c85fb3a5ddf32de604e7a7ebcd48be7eda5be89370
+dist/wecom.js 088d4cb65aedb8ece84d9202df77e75a2e38cee3afe8e956c93861f001535633
+dist/index.js 5f765804b81cb7acdb74631d27f54a6ec1cb0db99a411635e7908f26eb54530f
+```
+
+因此源码已更新不等于附件修复已部署；`dist/wecom.js` 仍为此前产物，尚未替换或重载。已新增本机忽略目录中的 WeCom-only 构建配置 `.codex-handoff/tsup.wecom-attachment.config.ts`，输出到独立目录且 clean=false；配置存在，不代表构建已完成，旧交接文件未覆盖。
+
+后续明确交接见 `docs/codex-wecom-attachment-rollout.md`，合成样本为 `docs/fixtures/wecom-attachment/input.txt`。交接包含现场空闲/身份检查、隔离构建、单个 WeCom 产物更新、飞书保护、回退条件、真实附件卡片与字节比对标准，以及否定请求/新会话不回传的验证。所有服务、真实客户端和此前未执行事项仍按各自证据保留状态，不自动合并 PR、发布或将未执行项改为通过。
