@@ -1,0 +1,10 @@
+{
+  "kind": "candidate-only-live-strict-chain",
+  "aiRequests": 0,
+  "complete": true,
+  "pass": true,
+  "samples": 13,
+  "planned": 13,
+  "notRun": 0,
+  "evidenceBoundary": "Real fixed candidate parser, client, confirmation registry and calculation. Expected fallback only proves handoff is required; no real AI, platform callback or before/after performance comparison."
+}

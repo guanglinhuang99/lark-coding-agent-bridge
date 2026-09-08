@@ -1,0 +1,10 @@
+{
+  "originalPlistSha256": "cb6e4c35145a3849bd8e4f40f7fc4e8d30368ccf6656fdfc238d9211a31e1ab4",
+  "candidatePlistSha256": "7bb1a15233639b26caeffae96bc87c2135b30d82e09cb55b3543fa9a2ea5bc35",
+  "originalArtifactSha256": "434ec142377872e864c5298d9082cd5f2ce5015e13bb121548afa9f6c5f073a8",
+  "candidateArtifactSha256": "e2ec69f0da5def23cd080cec414bfe8bacf3bf7836f9b237ebbd988406c6b23b",
+  "status": "prepared-not-executed",
+  "candidateCommit": "6d28a6a673b3d400f3d30e15018b5a5621d545cf",
+  "originalCommit": "unknown - preserve actual existing artifact",
+  "state": "new isolated candidate-state; original state untouched"
+}

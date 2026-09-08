@@ -1,0 +1,88 @@
+{
+  "model": "gpt-5.3-codex-spark",
+  "artifact": "40e196ce3872a0a616b195646a6561dbeaad204e5a8be95ed21ebc50e0403fed",
+  "checks": [
+    {
+      "scenario": "pre-restart-stale-card",
+      "status": "pass",
+      "calculationCalls": 0
+    },
+    {
+      "scenario": "security-name-candidates",
+      "status": "pass",
+      "selectedCode": "100115.SZ",
+      "requiresFinalConfirmation": true
+    },
+    {
+      "scenario": "consecutive-confirm-clicks",
+      "status": "pass",
+      "observedCalculationCalls": 1,
+      "callbackDeliveryCount": "not observed",
+      "result": "NO_DATA preserved; not full PASS"
+    },
+    {
+      "scenario": "tenor-single-field",
+      "status": "pass",
+      "daysBefore": 7,
+      "daysAfter": 14,
+      "aiCalls": 0,
+      "requiresReconfirmation": true
+    },
+    {
+      "scenario": "compound-correction",
+      "status": "pass",
+      "daysAfter": 21,
+      "amountCny": 20000000,
+      "aiCalls": 1,
+      "calculationCalls": 1,
+      "result": "PASS 6 before and after"
+    },
+    {
+      "scenario": "primary-security-identifier",
+      "status": "pass",
+      "market": "primary",
+      "securityCode": "100115.SZ",
+      "calculationCalls": 0
+    },
+    {
+      "scenario": "same-process-five-minute-expiry",
+      "status": "pass",
+      "preparedAt": "2026-09-08T16:19:48.793+08:00",
+      "clickedAfter": "2026-09-08T08:25:00Z",
+      "result": "card expired",
+      "calculationCalls": 0
+    },
+    {
+      "scenario": "negative-amount-platform-confirm",
+      "status": "safety-pass-display-defect",
+      "calculationCalls": 0,
+      "defect": "stream says completed before generic failure; invalid amount is not explained"
+    }
+  ],
+  "failures": [
+    {
+      "scenario": "first-security-candidate-request",
+      "backendMethod": "list_products",
+      "backendMs": 76107,
+      "errorCategory": "pin-read-failure",
+      "aiCalls": 0,
+      "calculationCalls": 0,
+      "retrySucceeded": true
+    }
+  ],
+  "platformAiUsage": [
+    {
+      "scenario": "security-name-candidates",
+      "inputTokens": 2050,
+      "outputTokens": 375,
+      "reasoningOutputTokens": 332
+    },
+    {
+      "scenario": "compound-correction",
+      "inputTokens": 2107,
+      "outputTokens": 372,
+      "reasoningOutputTokens": 332
+    }
+  ],
+  "capturedUtc": "2026-09-08T08:27:09.574368+00:00"
+}

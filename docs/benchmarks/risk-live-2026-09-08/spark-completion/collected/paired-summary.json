@@ -1,0 +1,63 @@
+{
+  "kind": "read-only-collected-pair-summary",
+  "sourceDirectory": "/private/tmp/wecom-live-20260908/spark-collected-live",
+  "versions": {
+    "before": [
+      "f00d635b36536dccac7ebeb73235e7dcf584d49b"
+    ],
+    "after": [
+      "6d28a6a673b3d400f3d30e15018b5a5621d545cf"
+    ]
+  },
+  "rows": 46,
+  "scenarios": {
+    "intent_case_0": {
+      "attempts": 23,
+      "usablePairs": 22,
+      "failures": 1,
+      "failureCategories": {
+        "ai-run-error": 2
+      },
+      "allAttempts": {
+        "before": {
+          "n": 23,
+          "observedRows": 23,
+          "success": 22,
+          "failures": 1,
+          "missingRows": 0,
+          "duplicateRows": 0,
+          "successRate": 0.9565217391304348,
+          "failureCategories": {
+            "ai-run-error": 1
+          }
+        },
+        "after": {
+          "n": 23,
+          "observedRows": 23,
+          "success": 22,
+          "failures": 1,
+          "missingRows": 0,
+          "duplicateRows": 0,
+          "successRate": 0.9565217391304348,
+          "failureCategories": {
+            "ai-run-error": 1
+          }
+        }
+      },
+      "completeConsistentPairs": {
+        "before": {
+          "n": 22,
+          "medianMs": 10991.422396000009,
+          "p95Ms": 16176.966165999998
+        },
+        "after": {
+          "n": 22,
+          "medianMs": 10632.561041500012,
+          "p95Ms": 16089.30120799999
+        }
+      },
+      "absoluteReductionMs": 358.8613544999971,
+      "reductionPercent": 3.2649218779053912
+    }
+  }
+}

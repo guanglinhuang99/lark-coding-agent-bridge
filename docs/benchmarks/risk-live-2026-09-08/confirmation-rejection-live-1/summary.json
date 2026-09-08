@@ -1,0 +1,17 @@
+{
+  "kind": "real-ai-invalid-confirmation-replay",
+  "version": "after",
+  "commit": "6d28a6a673b3d400f3d30e15018b5a5621d545cf",
+  "caseCount": 4,
+  "passed": 4,
+  "failed": 0,
+  "status": "passed-after-router-rejection",
+  "routeAssertions": {
+    "everyRouteResultRiskError": true,
+    "calculatePretradeCalls": 0,
+    "serviceCalls": 0,
+    "stateHashesMatched": 4
+  },
+  "failedCaseIds": [],
+  "evidenceBoundary": "This is a hash-checked replay of real-AI normalized invalid states through the fixed after router. It proves route rejection and zero service calls for the replay; it does not replay the model or prove platform callback delivery."
+}

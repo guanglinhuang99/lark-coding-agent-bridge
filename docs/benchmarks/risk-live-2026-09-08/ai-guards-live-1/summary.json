@@ -1,0 +1,37 @@
+{
+  "kind": "real-ai-intent-safety-guard",
+  "status": "risk-observed-invalid-confirmation",
+  "versions": {
+    "before": "f00d635b36536dccac7ebeb73235e7dcf584d49b",
+    "after": "6d28a6a673b3d400f3d30e15018b5a5621d545cf"
+  },
+  "caseCount": 5,
+  "before": {
+    "n": 5,
+    "success": 1,
+    "failures": 4,
+    "statuses": {
+      "risk-observed-invalid-confirmation": 4,
+      "safe-no-confirm": 1
+    },
+    "aiCalls": 5,
+    "calculationCalls": 0
+  },
+  "after": {
+    "n": 5,
+    "success": 1,
+    "failures": 4,
+    "statuses": {
+      "risk-observed-invalid-confirmation": 4,
+      "safe-no-confirm": 1
+    },
+    "aiCalls": 5,
+    "calculationCalls": 0
+  },
+  "noCalculation": {
+    "observedCalls": 0,
+    "routerInvocations": 0,
+    "confirmationInvocations": 0
+  },
+  "evidenceBoundary": "Only real AI extraction plus read-only product/security normalization is measured. A normalized confirm state is observed but never confirmed or routed."
+}

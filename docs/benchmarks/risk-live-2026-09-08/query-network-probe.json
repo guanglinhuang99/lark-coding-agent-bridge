@@ -1,0 +1,18 @@
+[
+  {
+    "version": "before",
+    "exit_code": 0,
+    "duration_ms": 8758.92075,
+    "utc": "2026-09-08T01:27:52Z",
+    "method": "list_products",
+    "product_count": 251
+  },
+  {
+    "version": "after",
+    "exit_code": 0,
+    "duration_ms": 8734.878875000002,
+    "utc": "2026-09-08T01:28:01Z",
+    "method": "list_products",
+    "product_count": 251
+  }
+]

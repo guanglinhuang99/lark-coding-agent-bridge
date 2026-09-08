@@ -1,0 +1,34 @@
+{
+  "baseRelease": "/Users/guanglin/.lark-channel/releases/wecom-risk-batch-20260908-60a6bf0d9956",
+  "baseArtifactSha256": "60a6bf0d9956e841564c2cadd102fe630d45d2cdda60e614801c3c4486eeaec7",
+  "artifactSha256": "1733dab0256f35ade2cd21becb4b83026e45a18c5c19578e14f76054891a353e",
+  "changes": [
+    {
+      "entry": "wecom.js",
+      "functions": [
+        "inferAccountQuery",
+        "normalizeProductText",
+        "matchProductCandidates"
+      ]
+    },
+    {
+      "entry": "cli.js",
+      "functions": []
+    },
+    {
+      "entry": "index.js",
+      "functions": []
+    }
+  ],
+  "sourceHashes": {
+    "src/wecom/risk/parser.ts": "048f41fa3f3c0b1f66fdc6a6026d36327cb0632adfb6889ba70ac7d1f849a772",
+    "src/wecom/risk/intent.ts": "e771f52529d66aa7e228af4ee08d5f13f88606392a4509c1bb2301186bf34add"
+  },
+  "buildMethod": "Replace only three top-level function declarations with TypeScript-transpiled source; retain all other release bytes",
+  "model": "gpt-5.6-luna",
+  "release": "/Users/guanglin/.lark-channel/releases/wecom-account-20260908-1733dab0256f",
+  "previousRelease": "/Users/guanglin/.lark-channel/releases/wecom-risk-batch-20260908-60a6bf0d9956",
+  "stateDir": "/Users/guanglin/.lark-channel/releases/wecom-risk-20260908-40e196ce3872/state",
+  "originalPlistSha256": "d0d5870ce0a787fd472895b0775ab4e21c3582c5ca193e048bc7b9557b290441",
+  "bridgeSha256": "cfdaf346062251d13720a861e3e35d42e892f6aa0b3739bc68d0ca9e68d7e880"
+}

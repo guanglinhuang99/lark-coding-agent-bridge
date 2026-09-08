@@ -21,7 +21,6 @@ import { CodexAdapter } from '../agent/codex/adapter';
 import { ActiveRuns } from '../bridge/active-runs';
 import { RunExecutor } from '../bridge/run-executor';
 import { startWeComAgentRun } from './agent-runtime';
-import { listCodexThreadHistory } from '../session/codex-history';
 import { formatRelTime } from '../session/history';
 import type { AgentRun } from '../agent/types';
 import {
@@ -63,6 +62,7 @@ import {
   type WeComConversationSubmission,
 } from './runtime';
 import { WeComConversationBindings } from './conversation-bindings';
+import { loadWorkspaceConfig, type WeComWorkspace } from './workspace-config';
 import { bindingPolicyFingerprint, type SessionBindingIdentity } from '../bridge/identity';
 import { acquireStateDirectoryLock } from '../bridge/state-lock';
 import {
@@ -142,11 +142,13 @@ import {
   type WeComCardPurpose,
 } from './card-routing';
 import { RiskProgressRelay } from './risk/progress';
+import { executeCreditCommand } from './risk/credit-command';
 import {
   parseWeComCommand,
   shouldUseRiskFastPath,
   WECOM_HELP_LINES,
   WECOM_RISK_USAGE_LINES,
+  WECOM_CREDIT_USAGE_LINES,
 } from './commands';
 import {
   applyDirectRiskIntentInput,
@@ -159,6 +161,8 @@ import {
   mergeRiskIntentDraft,
   normalizeRiskDraft,
   normalizeSecurity,
+  selectRiskIntentSecurity,
+  confirmationSummary,
   parseRiskIntentOutputPartial,
   RiskIntentClarificationError,
   RiskIntentStateRegistry,
@@ -201,6 +205,8 @@ const envFile = path.resolve(process.env.WECOM_ENV_FILE?.trim() || '.env');
 if (existsSync(envFile)) loadEnvFile(envFile);
 
 const workspace = path.resolve(process.env.WECOM_WORKSPACE || process.cwd());
+const workspacesFile = process.env.WECOM_WORKSPACES_FILE?.trim();
+const configuredWorkspaces = await loadWorkspaceConfig(workspace, workspacesFile);
 const stateDir = path.resolve(
   process.env.WECOM_STATE_DIR || path.join(os.homedir(), '.lark-channel', 'wecom'),
 );
@@ -339,8 +345,11 @@ await taskStore.load();
 const operationRunner = new WeComOperationRunner();
 const activeRuns = new Map<string, ActiveRunRecord>();
 const startingRuns = new Set<string>();
+const riskIntentRunsStarting = new Set<string>();
+const riskIntentStopRequests = new Set<string>();
 const navigationCardTtlMs = 5 * 60_000;
 const navigationCards = new WeComNavigationCardRegistry();
+const controlCardScopes = new Map<string, { key: string; expiresAt: number }>();
 const messageDeduplicator = new WeComMessageDeduplicator(
   messageDedupeTtlMs,
   messageDedupeMaxEntries,
@@ -367,6 +376,20 @@ const codex = new CodexAdapter({
 });
 const agentRuns = new ActiveRuns();
 const runExecutor = new RunExecutor({ agent: codex, pool: runGate.pool, activeRuns: agentRuns });
+// Extraction has its own minimal adapter but shares admission and process shutdown tracking.
+const riskIntentWorkspace = path.join(stateDir, 'risk-intent-workspace');
+await mkdir(riskIntentWorkspace, { recursive: true });
+const riskIntentExecutor = new RunExecutor({
+  agent: new CodexAdapter({
+    binary: process.env.CODEX_BINARY?.trim() || 'codex',
+    profileStateDir: stateDir,
+    inheritCodexHome: true,
+    purpose: 'risk-intent',
+    sandbox: 'read-only',
+  }),
+  pool: runGate.pool,
+  activeRuns: agentRuns,
+});
 const riskDirectEnabled = Boolean(
   riskPython && existsSync(riskServiceDir) && existsSync(riskBridgePath) && existsSync(riskPython),
 );
@@ -506,17 +529,36 @@ function handleMessageEvent<T extends BaseMessage>(frame: WsFrame<T>): void {
 }
 
 async function processMessageEvent<T extends BaseMessage>(frame: WsFrame<T>): Promise<void> {
+  const chatKey = frame.body ? conversationKey(frame.body) : undefined;
+  // Freeze the workspace at ingress. Every queue entry and late callback keeps
+  // this scope even when the chat switches workspace before it runs.
+  let capturedScope = chatKey ? sessionStore.captureScope(chatKey) : undefined;
   const messageId = frame.body?.msgid;
   let durableTaskId: string | undefined;
   if (messageId && frame.body) {
     try {
-      const claim = await taskStore.claimInbound(messageId, conversationKey(frame.body));
+      const claim = await taskStore.claimInbound(messageId, capturedScope!);
       if (!claim.accepted) {
         log.info('wecom-message', 'duplicate-durable', { status: claim.task.status });
         reportMetric('wecom_duplicate_message', 1, { layer: 'durable' });
         return;
       }
       durableTaskId = claim.task.id;
+      if (sessionStore.conversationScope(claim.task.conversationKey) !== chatKey) {
+        await taskStore.markFailed(durableTaskId, 'conversation-scope-mismatch').catch(() => {});
+        await replyOnce(frame, '任务未执行', ['任务的聊天归属不匹配，请重新发送。']).catch(() => {});
+        return;
+      }
+      if (claim.replayed && !isWorkspaceScope(claim.task.conversationKey)) {
+        await taskStore.markFailed(durableTaskId, 'legacy-scope-unverified').catch(() => {});
+        await replyOnce(frame, '任务未恢复', [
+          '这条历史任务缺少可验证的 Workspace 记录，已停止自动恢复。请重新发送原问题。',
+        ]).catch(() => {});
+        return;
+      }
+      // A replayed task carries the scope that was captured before the process
+      // restart. Do not route it through the workspace selected meanwhile.
+      capturedScope = claim.task.conversationKey;
       if (claim.replayed) {
         log.info('wecom-task', 'replayed-after-restart', { taskId: durableTaskId });
         reportMetric('wecom_task_replayed_after_restart', 1);
@@ -539,7 +581,7 @@ async function processMessageEvent<T extends BaseMessage>(frame: WsFrame<T>): Pr
   }
 
   try {
-    await handleMessage(frame, durableTaskId);
+    await handleMessage(frame, durableTaskId, capturedScope);
     if (durableTaskId) {
       await taskStore.markDone(durableTaskId).catch((err: unknown) => {
         log.fail('wecom-task', err, { step: 'mark-done' });
@@ -555,6 +597,7 @@ async function processMessageEvent<T extends BaseMessage>(frame: WsFrame<T>): Pr
 async function handleMessage<T extends BaseMessage>(
   frame: WsFrame<T>,
   durableTaskId?: string,
+  capturedScope?: string,
 ): Promise<void> {
   const body = frame.body;
   if (!body) return;
@@ -563,12 +606,13 @@ async function handleMessage<T extends BaseMessage>(
   const mediaInputs = collectWeComMediaInputs(body);
   if (!text && mediaInputs.length === 0) return;
 
-  const key = conversationKey(body);
+  const key = capturedScope ?? sessionStore.captureScope(conversationKey(body));
+  const scopedWorkspace = sessionStore.workspaceFor(key);
   const parsedCommand = parseWeComCommand(text);
   if (durableTaskId) {
     const task = classifyTask(text, {
       hasAttachments: mediaInputs.length > 0,
-      risk: parsedCommand.kind === 'risk-measurement',
+      risk: parsedCommand.kind === 'risk-measurement' || parsedCommand.kind === 'credit-query',
     });
     await taskStore.annotate(durableTaskId, task).catch((err: unknown) => {
       log.fail('wecom-task', err, { step: 'annotate' });
@@ -576,6 +620,10 @@ async function handleMessage<T extends BaseMessage>(
   }
   if (parsedCommand.kind === 'help') {
     await replyOnce(frame, '使用帮助', WECOM_HELP_LINES);
+    return;
+  }
+  if (parsedCommand.kind === 'credit-query' && !parsedCommand.payload) {
+    await replyOnce(frame, '授信用法', WECOM_CREDIT_USAGE_LINES);
     return;
   }
   if (parsedCommand.kind === 'risk-measurement') {
@@ -607,8 +655,14 @@ async function handleMessage<T extends BaseMessage>(
     return;
   }
 
-  if (command === '/workspace') {
-    await replyWorkspaceSelection(frame, key);
+  const workspaceCommand = /^\/workspace(?:\s+([\s\S]*))?$/iu.exec(text.trim());
+  if (workspaceCommand) {
+    const selectedId = workspaceCommand[1]?.trim();
+    if (selectedId) {
+      await applyWorkspaceSelection(frame, key, selectedId);
+    } else {
+      await replyWorkspaceSelection(frame, key);
+    }
     return;
   }
 
@@ -666,16 +720,28 @@ async function handleMessage<T extends BaseMessage>(
   }
 
   if (command === '/stop') {
+    requestRiskIntentStop(key);
     const active = activeRuns.get(key);
     if (!active) {
       const starting = startingRuns.has(key) || conversationQueue.has(key);
+      const riskIntentStopping = riskIntentStopRequests.has(key);
       await replyControl(
         frame,
         key,
         starting ? '⏳ Codex 正在启动' : 'ℹ️ 当前没有运行任务',
-        [starting ? '任务完成启动后可再次停止。' : '可以直接发送新问题。'],
+        [
+          starting
+            ? riskIntentStopping
+              ? '停止请求已记录，风险意图任务启动后将立即终止。'
+              : '任务完成启动后可再次停止。'
+            : '可以直接发送新问题。',
+        ],
         starting ? 'running' : 'idle',
-        starting ? '任务正在启动' : '当前为空闲状态',
+        starting
+          ? riskIntentStopping
+            ? '风险任务正在启动，停止请求已记录'
+            : '任务正在启动'
+          : '当前为空闲状态',
       );
       return;
     }
@@ -720,6 +786,7 @@ async function handleMessage<T extends BaseMessage>(
     });
   const stream = new WeComStreamReply(client, frame, generateReqId('stream'));
   const controlTaskId = createTaskId();
+  registerControlCard(controlTaskId, key);
   let controlCardAttached = false;
   let markStreamReady!: () => void;
   let markStreamFailed!: (err: unknown) => void;
@@ -772,7 +839,7 @@ async function handleMessage<T extends BaseMessage>(
   try {
     const initialContent = truncateUtf8(
       !submission.queued && !useRiskFastPath && !riskAccessDenied
-        ? renderStream(freshRunState(), currentThreadId(key))
+        ? renderStream(freshRunState(), currentThreadId(key), scopedWorkspace)
         : initialNotice,
       streamMaxBytes,
     );
@@ -782,7 +849,7 @@ async function handleMessage<T extends BaseMessage>(
         buildWeComControlCard({
           taskId: controlTaskId,
           status: 'running',
-          workspace,
+          workspace: scopedWorkspace,
           sandbox,
           threadId: currentThreadId(key),
           prompt: text || `处理 ${mediaInputs.length} 个附件`,
@@ -807,7 +874,7 @@ async function handleMessage<T extends BaseMessage>(
       buildQueueCardView({
         taskId: createQueueTaskId(),
         status: 'queued',
-        workspace,
+        workspace: scopedWorkspace,
         position: submission.position,
         ahead: submission.position - 1,
       }),
@@ -880,6 +947,19 @@ async function executeConversationMessage(
               status: 'error',
               eyebrow: 'RISK · WECOM',
             }),
+          );
+          return;
+        }
+        const creditCommand = parseWeComCommand(text);
+        if (useRiskFastPath && creditCommand.kind === 'credit-query') {
+          await executeCreditCommand(
+            creditCommand.payload, riskClient, streamMaxBytes,
+            async (content) => { await stream.finish(content); },
+            async (content) => {
+              await client.sendMessage(messageTarget(body), {
+                msgtype: 'markdown', markdown: { content },
+              });
+            },
           );
           return;
         }
@@ -968,25 +1048,40 @@ async function executeConversationMessage(
               await finishRiskIntentState(body, key, stream, normalized);
               return;
             }
-            const revised = await analyzeRiskDraft(
-              pendingIntent.originalText,
-              pendingIntent.draft,
-              text,
-            );
-            const market = /一级/.test(text)
-              ? 'primary'
-              : /二级/.test(text)
-                ? 'secondary'
-                : pendingIntent.draft.market;
-            const normalized = await normalizeRiskDraft(
-              pendingIntent.originalText,
-              { ...revised, market },
-              riskClient,
-            );
-            riskIntents.set(key, normalized);
-            await finishRiskIntentState(body, key, stream, normalized);
-            return;
+            try {
+              const revised = await analyzeRiskDraft(
+                key,
+                pendingIntent.originalText,
+                pendingIntent.draft,
+                text,
+              );
+              const market = /一级/.test(text)
+                ? 'primary'
+                : /二级/.test(text)
+                  ? 'secondary'
+                  : pendingIntent.draft.market;
+              const normalized = await normalizeRiskDraft(
+                pendingIntent.originalText,
+                pendingIntent.draft.transactions
+                  ? mergeRiskIntentDraft(pendingIntent.draft, revised, text)
+                  : { ...revised, market },
+                riskClient,
+              );
+              riskIntents.set(key, normalized);
+              await finishRiskIntentState(body, key, stream, normalized);
+              return;
+            } catch (error) {
+              riskIntents.set(key, pendingIntent);
+              if (error instanceof RiskIntentClarificationError) {
+                await stream.finish(renderWeComNotice('请明确修改内容', error.missing, {
+                  status: 'warning', eyebrow: 'RISK · WECOM',
+                }));
+                return;
+              }
+              throw error;
+            }
           }
+
           if (pendingIntent?.stage === 'confirm' && isRiskIntentConfirmation(text)) {
             riskIntents.delete(key);
             riskSelectionTasks.clearConversation(key);
@@ -1074,6 +1169,10 @@ async function executeConversationMessage(
       }),
     );
   } catch (err) {
+    if (err instanceof RiskIntentInterruptedError) {
+      await finishRiskIntentStopped(stream);
+      return;
+    }
     if (!(err instanceof WeComRunCapacityError)) throw err;
     const capacity = runGate.snapshot();
     log.warn('wecom-run', 'capacity', {
@@ -1102,60 +1201,129 @@ function isRiskIntentConfirmation(text: string): boolean {
   return /^(?:确认|是|是的|对|对的|好|好的|可以|行|ok|yes|y|1)$/i.test(text.trim());
 }
 
+function isWorkspaceScope(value: string): boolean {
+  return /^(?:group|single):workspace-v1:/u.test(value);
+}
+
+function requestRiskIntentStop(key: string): void {
+  if (riskIntentRunsStarting.has(key)) riskIntentStopRequests.add(key);
+}
+
+class RiskIntentInterruptedError extends Error {
+  constructor() {
+    super('risk intent run interrupted');
+    this.name = 'RiskIntentInterruptedError';
+  }
+}
+
+async function finishRiskIntentStopped(stream: WeComStreamReply): Promise<void> {
+  await stream.finish(
+    renderWeComNotice('风险查询已停止', ['未执行投资限额测算。'], {
+      status: 'warning',
+      eyebrow: 'RISK · WECOM',
+    }),
+  ).catch(() => {});
+}
+
 async function analyzeRiskDraft(
+  key: string,
   originalText: string,
   previous?: RiskAiDraft,
   correction?: string,
 ): Promise<RiskAiDraft> {
   const startedAt = Date.now();
   let firstOutputReported = false;
-  const run = await startWeComAgentRun(runExecutor, {
-    runId: randomUUID(),
-    prompt: buildRiskIntentPrompt(originalText, previous, correction),
-    cwd: workspace,
-    model: riskIntentModel,
-    sandbox: 'read-only',
-  }, `risk-intent:${randomUUID()}`, runGate.currentPermit());
+  riskIntentRunsStarting.add(key);
+  let run: AgentRun | undefined;
   let output = '';
   try {
-    for await (const event of run.events) {
-      if (
-        !firstOutputReported &&
-        ((event.type === 'text' && Boolean(event.delta)) ||
-          (event.type === 'final_text' && Boolean(event.content)))
-      ) {
-        firstOutputReported = true;
-        const ttftMs = Date.now() - startedAt;
-        reportMetric('wecom_risk_intent_ttft_ms', ttftMs, { model: riskIntentModel });
-        log.info('wecom-risk-intent', 'first-output', { model: riskIntentModel, ttftMs });
-      }
-      if (event.type === 'text' && event.delta) output += event.delta;
-      if (event.type === 'final_text' && event.content) output = event.content;
-      if (event.type === 'error') throw new Error(event.message);
-    }
-    await run.waitForExit(1500).catch(() => false);
-    const draft = parseRiskIntentOutputPartial(
-      output,
-      correction ? `${originalText} ${correction}` : originalText,
-    );
-    const durationMs = Date.now() - startedAt;
-    reportMetric('wecom_risk_intent_ms', durationMs, { model: riskIntentModel, outcome: 'ok' });
-    log.info('wecom-risk-intent', 'completed', {
+    run = await startWeComAgentRun(riskIntentExecutor, {
+      runId: randomUUID(),
+      prompt: buildRiskIntentPrompt(originalText, previous, correction),
+      cwd: riskIntentWorkspace,
       model: riskIntentModel,
-      durationMs,
-      outcome: 'ok',
+      reasoningEffort: 'low',
+      sandbox: 'read-only',
+    }, `risk-intent:${randomUUID()}`, runGate.currentPermit());
+    if (riskIntentStopRequests.has(key)) {
+      await run.stop().catch(() => {});
+      throw new RiskIntentInterruptedError();
+    }
+    const active: ActiveRunRecord = {
+      run,
+      state: freshRunState(),
+      prompt: originalText,
+      taskId: createRiskTaskId(),
+    };
+    return await withActiveRun(activeRuns, key, active, async () => {
+      for await (const event of run!.events) {
+        if (active.state.terminal === 'interrupted' || riskIntentStopRequests.has(key)) {
+          throw new RiskIntentInterruptedError();
+        }
+        if (event.type === 'usage') {
+          const usage = { inputTokens: event.inputTokens, cachedInputTokens: event.cachedInputTokens,
+            outputTokens: event.outputTokens, reasoningOutputTokens: event.reasoningOutputTokens };
+          for (const [field, value] of Object.entries(usage)) {
+            if (value !== undefined) reportMetric(`wecom_risk_intent_${field}`, value, { model: riskIntentModel });
+          }
+          log.info('wecom-risk-intent', 'usage', { model: riskIntentModel, ...usage });
+          continue;
+        }
+        if (event.type === 'done') {
+          if (event.terminationReason === 'interrupted') throw new RiskIntentInterruptedError();
+          if (event.terminationReason !== 'normal') {
+            throw new Error(`risk intent terminated: ${event.terminationReason}`);
+          }
+          continue;
+        }
+        if (event.type === 'error') {
+          if (event.terminationReason === 'interrupted') throw new RiskIntentInterruptedError();
+          throw new Error(event.message);
+        }
+        if (
+          !firstOutputReported &&
+          ((event.type === 'text' && Boolean(event.delta)) ||
+            (event.type === 'final_text' && Boolean(event.content)))
+        ) {
+          firstOutputReported = true;
+          const ttftMs = Date.now() - startedAt;
+          reportMetric('wecom_risk_intent_ttft_ms', ttftMs, { model: riskIntentModel });
+          log.info('wecom-risk-intent', 'first-output', { model: riskIntentModel, ttftMs });
+        }
+        if (event.type === 'text' && event.delta) output += event.delta;
+        if (event.type === 'final_text' && event.content) output = event.content;
+      }
+      await run!.waitForExit(1500).catch(() => false);
+      if (active.state.terminal === 'interrupted' || riskIntentStopRequests.has(key)) {
+        throw new RiskIntentInterruptedError();
+      }
+      const draft = parseRiskIntentOutputPartial(
+        output,
+        correction ? `${originalText} ${correction}` : originalText,
+      );
+      const durationMs = Date.now() - startedAt;
+      reportMetric('wecom_risk_intent_ms', durationMs, { model: riskIntentModel, outcome: 'ok' });
+      log.info('wecom-risk-intent', 'completed', {
+        model: riskIntentModel,
+        durationMs,
+        outcome: 'ok',
+      });
+      return draft;
     });
-    return draft;
   } catch (error) {
     const durationMs = Date.now() - startedAt;
-    reportMetric('wecom_risk_intent_ms', durationMs, { model: riskIntentModel, outcome: 'failed' });
+    const outcome = error instanceof RiskIntentInterruptedError ? 'interrupted' : 'failed';
+    reportMetric('wecom_risk_intent_ms', durationMs, { model: riskIntentModel, outcome });
     log.info('wecom-risk-intent', 'completed', {
       model: riskIntentModel,
       durationMs,
-      outcome: 'failed',
+      outcome,
     });
-    await run.stop().catch(() => {});
+    await run?.stop().catch(() => {});
     throw error;
+  } finally {
+    riskIntentRunsStarting.delete(key);
+    riskIntentStopRequests.delete(key);
   }
 }
 
@@ -1185,13 +1353,17 @@ async function startRiskIntentFlow(
         renderWeComNotice('正在理解交易意图', ['正在提取账户、操作、标的和交易规模。']),
         streamMaxBytes,
       ));
-      return analyzeRiskDraft(text);
+      return analyzeRiskDraft(key, text);
     });
     log.info('wecom-risk-prepare', 'completed', { durationMs: Date.now() - startedAt, path: usedAi ? 'ai' : 'direct' });
     reportMetric('wecom_risk_prepare_ms', Date.now() - startedAt, { path: usedAi ? 'ai' : 'direct' });
     riskIntents.set(key, normalized);
     await finishRiskIntentState(body, key, stream, normalized);
   } catch (error) {
+    if (error instanceof RiskIntentInterruptedError) {
+      await finishRiskIntentStopped(stream);
+      return;
+    }
     if (error instanceof RiskIntentClarificationError) {
       await stream.finish(
         renderWeComNotice('需要补充交易信息', [`缺少：${error.missing.join('、')}`], {
@@ -1219,6 +1391,8 @@ async function revisePendingRiskConfirmation(
   pending: Extract<RiskIntentState, { stage: 'confirm' }>,
 ): Promise<void> {
   if (!riskClient) return;
+  riskSelectionTasks.clearConversation(key);
+  riskIntents.clearTasksForConversation(key);
   try {
     await stream.update(
       truncateUtf8(
@@ -1228,7 +1402,7 @@ async function revisePendingRiskConfirmation(
     );
     const direct = applySimpleRiskCorrection(pending, correction);
     const normalized = direct ?? await (async () => {
-      const revised = await analyzeRiskDraft(pending.originalText, pending.draft, correction);
+      const revised = await analyzeRiskDraft(key, pending.originalText, pending.draft, correction);
       const merged = mergeRiskIntentDraft(pending.draft, revised, correction);
       return normalizeRiskDraft(`${pending.originalText} ${correction}`, merged, riskClient);
     })();
@@ -1236,6 +1410,11 @@ async function revisePendingRiskConfirmation(
     riskIntents.set(key, normalized);
     await finishRiskIntentState(body, key, stream, normalized);
   } catch (error) {
+    if (error instanceof RiskIntentInterruptedError) {
+      riskIntents.set(key, pending);
+      await finishRiskIntentStopped(stream);
+      return;
+    }
     riskIntents.set(key, pending);
     const detail = error instanceof RiskIntentClarificationError
       ? `仍需补充：${error.missing.join('、')}`
@@ -1265,23 +1444,44 @@ async function finishRiskIntentState(
     return;
   }
   const selection = buildIntentSelection(state, Date.now() + 5 * 60_000);
-  const title =
-    state.stage === 'account'
-      ? '请选择准确账户'
-      : state.stage === 'security'
-        ? '请选择准确证券'
-        : '请确认交易意图';
-  await stream.finish(
-    truncateUtf8(
-      renderWeComNotice(title, [
-        selection.subTitle,
-        state.stage === 'confirm'
-          ? '确认完成前不会执行投资限额测算。'
-          : '可选择最符合的一项，也可以直接输入准确名称或代码。',
-      ]),
-      streamMaxBytes,
-    ),
-  );
+  if (state.stage === 'confirm' && state.draft.transactions) {
+    // Send all details before registering a confirmable card; no UTF-8 truncation of legs.
+    const details = confirmationSummary(state);
+    const chunks: string[] = [];
+    let chunk = '';
+    const budget = Math.max(256, streamMaxBytes - 512);
+    for (const line of details.split(/(?<=\n)/u)) {
+      if (chunk && Buffer.byteLength(chunk + line, 'utf8') > budget) {
+        chunks.push(chunk);
+        chunk = '';
+      }
+      for (const character of line) {
+        if (Buffer.byteLength(chunk + character, 'utf8') > budget) {
+          chunks.push(chunk);
+          chunk = '';
+        }
+        chunk += character;
+      }
+    }
+    if (chunk) chunks.push(chunk);
+    await stream.finish(renderWeComNotice('请确认全部交易', [
+      `共${state.draft.transactions.length}笔，请核对下方全部明细后确认合并测算。`,
+    ]));
+    for (const detail of chunks) await sendRiskMarkdown(body, detail);
+    selection.subTitle = `账户：${state.product}；共${state.draft.transactions.length}笔。请核对上方全部交易明细。`;
+  } else {
+    await stream.finish(
+      truncateUtf8(
+        renderWeComNotice(selection.title, [
+          selection.subTitle,
+          state.stage === 'confirm'
+            ? '确认完成前不会执行投资限额测算。'
+            : '可选择最符合的一项，也可以直接输入准确名称或代码。',
+        ]),
+        streamMaxBytes,
+      ),
+    );
+  }
   scheduleRiskSelectionCard(body, key, selection, state);
 }
 
@@ -1305,11 +1505,12 @@ async function handleRiskIntentChoice(
             draft: state.draft,
             field: 'account',
           }
-        : await normalizeSecurity(state.originalText, state.draft, value, riskClient);
+        : await normalizeSecurity(state.originalText, { ...state.draft, accountQuery: value }, value, riskClient);
   } else if (state.stage === 'security') {
     if (value === '__other_security__') {
       next = {
         stage: 'freeform',
+        transactionIndex: state.transactionIndex,
         originalText: state.originalText,
         draft: state.draft,
         field: 'security',
@@ -1321,25 +1522,7 @@ async function handleRiskIntentChoice(
         code: string;
         label: string;
       };
-      const action = state.draft.action;
-      const amountText = state.draft.amountText;
-      next =
-        action && amountText
-          ? {
-              stage: 'confirm',
-              originalText: state.originalText,
-              draft: { ...state.draft, action, amountText },
-              product: state.product,
-              security,
-            }
-          : {
-              stage: 'freeform',
-              originalText: state.originalText,
-              draft: state.draft,
-              field: 'amount',
-              product: state.product,
-              security,
-            };
+      next = await selectRiskIntentSecurity(state, security, riskClient);
     }
   } else if (state.stage === 'confirm') {
     if (value === '__confirm__') {
@@ -1411,7 +1594,9 @@ async function handleRiskIntentChoice(
 function riskIntentInputPrompt(
   state: Extract<RiskIntentState, { stage: 'freeform' }>,
 ): string {
-  return state.field === 'account'
+  const prefix = state.transactionIndex === undefined ? '' : `第${state.transactionIndex + 1}笔：`;
+  if (state.draft.transactions && state.field === 'other') return `${prefix}请指定交易序号和修改内容，例如“第2笔金额改为3000万”。`;
+  return prefix + (state.field === 'account'
     ? '请直接输入准确的账户名称或关键词。'
     : state.field === 'security'
       ? '请直接输入准确的证券名称或代码。'
@@ -1419,7 +1604,7 @@ function riskIntentInputPrompt(
         ? '请直接输入正确的金额或数量（含单位）。'
         : state.field === 'market'
           ? '请直接输入“一级”或“二级”。'
-          : '请直接输入需要修改或补充的内容。';
+          : '请直接输入需要修改或补充的内容。');
 }
 
 async function runCodexPrompt(
@@ -1449,7 +1634,7 @@ async function runCodexPrompt(
   ];
   const requestedAttachments = requestedReceivedArtifacts(displayPrompt, received);
   let state = freshRunState();
-  let lastSent = renderStream(state, threadId);
+  let lastSent = renderStream(state, threadId, workspace);
   let lastFlushAt = Date.now();
   let firstOutputReported = false;
 
@@ -1490,7 +1675,7 @@ async function runCodexPrompt(
       message: weComUserErrorMarkdown('agent-startup'),
       terminationReason: 'failed',
     });
-    await stream.finish(renderStream(state, threadId)).catch(() => {});
+    await stream.finish(renderStream(state, threadId, workspace)).catch(() => {});
     await deliverErrorCard(frame, 'agent-startup');
     log.fail('wecom-run', err, { step: 'start', kind: failureKind(err) });
     reportMetric('wecom_run_failures', 1, { kind: failureKind(err), step: 'start' });
@@ -1556,7 +1741,7 @@ async function runCodexPrompt(
         active.state = state;
         active.threadId = threadId;
 
-        const rendered = renderStream(state, threadId);
+        const rendered = renderStream(state, threadId, workspace);
         const now = Date.now();
         const terminal = state.terminal !== 'running';
         if (rendered !== lastSent && (terminal || now - lastFlushAt >= streamFlushIntervalMs)) {
@@ -1589,7 +1774,7 @@ async function runCodexPrompt(
       });
 
       receivedArtifacts.remember(artifactScope(threadId), received);
-      const finalText = renderStream(state, threadId);
+      const finalText = renderStream(state, threadId, workspace);
       await streamUpdates.finish(finalText);
       if (state.terminal === 'done') {
         await sendGeneratedArtifacts(frame, state, received, sessionBinding.cwdRealpath, requestedAttachments);
@@ -1624,7 +1809,7 @@ async function runCodexPrompt(
           `Failed to persist WeCom thread: ${persistErr instanceof Error ? persistErr.message : String(persistErr)}`,
         );
       });
-      await streamUpdates.finish(renderStream(state, threadId)).catch(() => {});
+      await streamUpdates.finish(renderStream(state, threadId, workspace)).catch(() => {});
       await deliverErrorCard(frame, 'execution');
       log.fail('wecom-run', err, { step: 'run', kind: failureKind(err) });
       reportMetric('wecom_run_failures', 1, { kind: failureKind(err), step: 'run' });
@@ -1648,7 +1833,7 @@ async function runCodexPrompt(
 async function handleEnterChat(frame: EnterChatFrame): Promise<void> {
   const body = frame.body;
   if (!body) return;
-  const key = conversationKey(body);
+  const key = sessionStore.captureScope(conversationKey(body));
   await handleEnterChatEvent(frame, {
     homeCard: renderWeComCard(buildHomeCardView(homeCardOptions(key))),
     replyWelcome: (eventFrame, reply) => client.replyWelcome(eventFrame, reply),
@@ -1675,7 +1860,9 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
   const body = frame.body;
   if (!body) return;
 
-  const key = conversationKey(body);
+  // Resolve the scope at callback ingress. Registries use the captured key, so
+  // a card created before a workspace switch cannot operate on the new scope.
+  const key = sessionStore.captureScope(conversationKey(body));
   const { eventKey: rawAction, taskId, selectedId } = templateCardEventDetails(body.event);
   if (!taskId) {
     await deliverErrorCard(frame, 'callback-invalid');
@@ -1723,6 +1910,7 @@ async function handleHomeCardEvent(
   const active = activeRuns.get(key);
   const starting = startingRuns.has(key) || conversationQueue.has(key);
   if (rawAction === 'stop') {
+    requestRiskIntentStop(key);
     await updateHomeCard(frame, key, taskId);
     if (active) {
       active.state = markInterrupted(active.state);
@@ -1757,11 +1945,19 @@ async function handleLegacyControlCardEvent(
   taskId: string,
   rawAction: string | undefined,
 ): Promise<void> {
+  const cardScope = controlCardScopes.get(taskId);
+  if (!cardScope || cardScope.expiresAt <= Date.now() || cardScope.key !== key) {
+    controlCardScopes.delete(taskId);
+    await updateInvalidCallback(frame, taskId);
+    return;
+  }
   const workspace = sessionStore.workspaceFor(key);
   const action = normalizeCardAction(rawAction);
   const active = activeRuns.get(key);
   const starting = startingRuns.has(key) || conversationQueue.has(key);
   if (action === 'stop') {
+    requestRiskIntentStop(key);
+    const riskIntentStopping = riskIntentStopRequests.has(key);
     await client.updateTemplateCard(
       frame,
       buildWeComControlCard({
@@ -1771,7 +1967,13 @@ async function handleLegacyControlCardEvent(
         sandbox,
         threadId: currentThreadId(key),
         prompt: active?.prompt,
-        notice: active ? '停止请求已发送' : starting ? '任务正在启动' : '当前没有运行任务',
+        notice: active
+          ? '停止请求已发送'
+          : starting
+            ? riskIntentStopping
+              ? '风险任务正在启动，停止请求已记录'
+              : '任务正在启动'
+            : '当前没有运行任务',
       }),
     );
     if (active) {
@@ -1955,14 +2157,65 @@ function homeCardOptions(key: string, taskId = createNavigationTaskId('menu')) {
 async function replyWorkspaceSelection(frame: WsFrame, key: string): Promise<void> {
   const workspace = sessionStore.workspaceFor(key);
   const taskId = createNavigationTaskId('workspace');
-  const options: WeComWorkspaceOption[] = [
-    { id: 'current', label: `${path.basename(workspace)}（当前，需重启生效）` },
-  ];
+  const current = path.resolve(workspace);
+  const options: WeComWorkspaceOption[] = configuredWorkspaces.map((entry) => ({
+    id: entry.id,
+    label: `${entry.name}${path.resolve(entry.cwd) === current ? '（当前）' : ''}`,
+  }));
   registerNavigationTask(taskId, 'workspace', key, options.map((item) => [item.id, item.label]));
   await client.replyTemplateCard(
     frame,
     renderWeComCard(buildWorkspaceSelectionCardView({ taskId, workspaces: options })),
   );
+}
+
+function workspaceById(id: string): WeComWorkspace | undefined {
+  return configuredWorkspaces.find((entry) => entry.id === id);
+}
+
+async function switchWorkspace(
+  key: string,
+  selectedId: string,
+): Promise<{ key: string; workspace: WeComWorkspace } | undefined> {
+  const entry = workspaceById(selectedId);
+  if (!entry) return undefined;
+  const chatKey = sessionStore.conversationScope(key);
+  const targetKey = sessionStore.captureScope(chatKey, entry.cwd);
+  await sessionStore.bindWorkspace(chatKey, entry.cwd);
+  // Keep the response bound to the requested target even if another group
+  // member changes the current workspace while the persistence write is in flight.
+  return { key: targetKey, workspace: entry };
+}
+
+async function applyWorkspaceSelection(
+  frame: WsFrame,
+  key: string,
+  selectedId: string,
+): Promise<void> {
+  const entry = workspaceById(selectedId);
+  if (!entry) {
+    await replyOnce(frame, '无法切换 Workspace', [
+      `未找到 \`${selectedId}\`。可用 ID：${configuredWorkspaces.map((item) => item.id).join('、')}`,
+    ]);
+    return;
+  }
+  try {
+    const switched = await switchWorkspace(key, selectedId);
+    if (!switched) throw new Error('Workspace selection disappeared');
+    await replyControl(
+      frame,
+      switched.key,
+      '✅ 已切换 Workspace',
+      [`当前工作区：\`${entry.name}\``, '后续新消息立即使用该工作区；正在运行或排队的任务继续使用原工作区。'],
+      isConversationBusy(switched.key) ? 'running' : 'idle',
+      `已切换到 ${entry.name}`,
+    );
+  } catch (err) {
+    log.fail('wecom-workspace', err, { step: 'switch' });
+    await replyOnce(frame, '无法确认 Workspace 切换结果', [
+      '请发送 `/workspace` 查看当前工作区后再继续。',
+    ]);
+  }
 }
 
 async function replyModelSelection(frame: WsFrame, key: string): Promise<void> {
@@ -1996,49 +2249,25 @@ async function replySessionSelection(frame: WsFrame, key: string): Promise<void>
   }
   const workspace = sessionStore.workspaceFor(key);
   const taskId = createNavigationTaskId('session');
-  try {
-    const history = await operationRunner.run(
-      'codex-history',
-      () =>
-        listCodexThreadHistory({
-          binary: process.env.CODEX_BINARY?.trim() || 'codex',
-          cwd: workspace,
-          limit: 10,
-          profileStateDir: stateDir,
-          inheritCodexHome: true,
-          timeoutMs: 5_000,
-        }),
-      { idempotent: true, maxAttempts: 2, timeoutMs: 6_000 },
-    );
-    const sessions: WeComSessionOption[] = history.map((entry) => ({
-      id: entry.threadId,
-      label: entry.name || entry.preview || '(空会话)',
-      workspace: path.basename(entry.cwd),
-      ...(entry.updatedAtMs > 0 ? { hint: formatRelTime(entry.updatedAtMs) } : {}),
-    }));
-    if (sessions.length === 0) {
-      await replyNoticeCard(frame, {
-        taskId,
-        title: '🧵 没有可恢复的会话',
-        description: `工作区 ${path.basename(workspace)} 暂无 Codex 历史 thread。`,
-      });
-      return;
-    }
-    registerNavigationTask(taskId, 'session', key, sessions.map((item) => [item.id, item.label]));
-    await client.replyTemplateCard(
-      frame,
-      renderWeComCard(buildSessionSelectionCardView({ taskId, sessions })),
-    );
-  } catch (err) {
-    log.warn('wecom-session', 'history-unavailable', {
-      message: redactDiagnosticText(err instanceof Error ? err.message : String(err)),
-    });
+  const sessions: WeComSessionOption[] = sessionStore.sessionsFor(key).map((entry) => ({
+    id: entry.threadId,
+    label: `Codex 会话 ${entry.threadId.slice(0, 8)}`,
+    workspace: path.basename(workspace),
+    ...(entry.updatedAt > 0 ? { hint: formatRelTime(entry.updatedAt) } : {}),
+  }));
+  if (sessions.length === 0) {
     await replyNoticeCard(frame, {
       taskId,
-      title: '🧵 暂时无法读取历史会话',
-      description: 'Codex 历史服务暂不可用，请稍后重试。',
+      title: '🧵 没有可恢复的会话',
+      description: `工作区 ${path.basename(workspace)} 暂无当前聊天可恢复的 Codex 会话。`,
     });
+    return;
   }
+  registerNavigationTask(taskId, 'session', key, sessions.map((item) => [item.id, item.label]));
+  await client.replyTemplateCard(
+    frame,
+    renderWeComCard(buildSessionSelectionCardView({ taskId, sessions })),
+  );
 }
 
 async function handleNavigationCardEvent(
@@ -2095,16 +2324,42 @@ async function handleNavigationCardEvent(
     return;
   }
   const label = selection.label;
+  if (purpose === 'workspace') {
+    try {
+      const switched = await switchWorkspace(key, selection.selectedId);
+      if (!switched) {
+        await updateInvalidCallback(frame, taskId);
+        return;
+      }
+      await replyNavigationResult(
+        frame,
+        switched.key,
+        taskId,
+        `已切换到 Workspace：${switched.workspace.name}。后续新消息立即使用该工作区；正在运行或排队的任务继续使用原工作区。`,
+        'success',
+        '✅ Workspace 已切换',
+      );
+    } catch (err) {
+      log.fail('wecom-workspace', err, { step: 'card-switch' });
+      await updateInvalidCallback(frame, taskId);
+    }
+    return;
+  }
   if (purpose === 'model') setConversationModel(conversationAgentPreferences, key, selectedId);
   if (purpose === 'reasoning') {
     setConversationReasoningEffort(conversationAgentPreferences, key, selectedId);
   }
-  if (purpose === 'session') await sessionStore.setThread(key, selectedId);
+  if (purpose === 'session') {
+    const allowed = sessionStore.sessionsFor(key).some((entry) => entry.threadId === selectedId);
+    if (!allowed) {
+      await updateInvalidCallback(frame, taskId);
+      return;
+    }
+    await sessionStore.setThread(key, selectedId);
+  }
 
   const message =
-    purpose === 'workspace'
-      ? 'WeCom workspace 在进程启动时固定；请重启并设置 WECOM_WORKSPACE 后生效。'
-      : purpose === 'session'
+    purpose === 'session'
         ? `已恢复会话：${label}`
         : `已应用${purpose === 'model' ? '模型' : '推理强度'}：${label}（当前会话后续新任务生效）`;
   await replyNavigationResult(
@@ -2112,8 +2367,8 @@ async function handleNavigationCardEvent(
     key,
     taskId,
     message,
-    purpose === 'workspace' ? 'warning' : 'success',
-    purpose === 'workspace' ? '⚠️ Workspace 需要重启' : '✅ 操作已处理',
+    'success',
+    '✅ 操作已处理',
   );
 }
 
@@ -2214,6 +2469,21 @@ function registerHomeCard(taskId: string, key: string): void {
     conversationKey: key,
     expiresAt: Date.now() + navigationCardTtlMs,
   });
+}
+
+function registerControlCard(taskId: string, key: string): void {
+  controlCardScopes.set(taskId, {
+    key,
+    expiresAt: Date.now() + navigationCardTtlMs,
+  });
+  if (controlCardScopes.size <= 2_000) return;
+  const now = Date.now();
+  for (const [id, card] of controlCardScopes) {
+    if (card.expiresAt <= now) controlCardScopes.delete(id);
+  }
+  while (controlCardScopes.size > 2_000) {
+    controlCardScopes.delete(controlCardScopes.keys().next().value!);
+  }
 }
 
 function modelSelectionOptions(key: string) {
@@ -2534,10 +2804,12 @@ async function replyControl(
   const content = truncateUtf8(renderWeComNotice(title, lines), streamMaxBytes);
   const stream = new WeComStreamReply(client, frame, streamId);
   if (status !== 'reset') await stream.finish(content);
+  const taskId = createTaskId();
+  registerControlCard(taskId, key);
   await deliverControlCard(
     frame,
     buildWeComControlCard({
-      taskId: createTaskId(),
+      taskId,
       status,
       workspace,
       sandbox,
@@ -2697,10 +2969,10 @@ function agentOutputText(state: RunState): string {
   return [streamed, state.finalText ?? ''].filter(Boolean).join('\n\n');
 }
 
-function renderStream(state: RunState, threadId: string | undefined): string {
+function renderStream(state: RunState, threadId: string | undefined, workspacePath: string): string {
   return truncateUtf8(
     renderWeComMarkdown(state, {
-      workspace,
+      workspace: workspacePath,
       sandbox,
       threadId,
     }),

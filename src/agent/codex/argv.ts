@@ -2,6 +2,9 @@ import type { SandboxMode } from '../../config/profile-schema';
 
 export interface BuildCodexArgsInput {
   cwd: string;
+  /** Minimal, non-agentic transaction extraction. */
+  purpose?: 'risk-intent';
+  instructionsFile?: string;
   sandbox: SandboxMode;
   threadId?: string;
   images?: readonly string[];
@@ -22,7 +25,29 @@ export function buildCodexArgs(input: BuildCodexArgsInput): string[] {
     throw new Error(`unsafe sandbox mode: ${input.sandbox}`);
   }
 
+  const extractionFlags = input.purpose === 'risk-intent'
+    ? [
+        'project_doc_max_bytes=0',
+        'skills.include_instructions=false',
+        'features.skill_search=false',
+        'orchestrator.skills.enabled=false',
+        'orchestrator.mcp.enabled=false',
+        'features.apps=false',
+        'features.remote_plugin=false',
+        'features.shell_tool=false',
+        'features.shell_snapshot=false',
+        'features.browser_use=false',
+        'features.computer_use=false',
+        'features.image_generation=false',
+        'agents.enabled=false',
+        'web_search="disabled"',
+      ].flatMap(value => ['-c', value])
+    : [];
   const globalFlags = [
+    ...extractionFlags,
+    ...(input.purpose === 'risk-intent' && input.instructionsFile
+      ? ['-c', `model_instructions_file=${JSON.stringify(input.instructionsFile)}`]
+      : []),
     '--sandbox',
     input.sandbox,
     ...(input.model ? ['--model', input.model] : []),

@@ -1,0 +1,21 @@
+{
+  "artifactHash": "40e196ce3872a0a616b195646a6561dbeaad204e5a8be95ed21ebc50e0403fed",
+  "currentRiskIntentModel": "gpt-5.5",
+  "currentModelVerifiedAt": "2026-09-08T08:50:01.746508+00:00",
+  "health": {
+    "schemaVersion": 1,
+    "pid": 84775,
+    "startedAt": "2026-09-08T08:49:13.581Z",
+    "updatedAt": "2026-09-08T08:49:43.636Z",
+    "phase": "connected",
+    "connected": true,
+    "activeRuns": 0,
+    "startingRuns": 0,
+    "riskFastPath": {
+      "enabled": true,
+      "serviceDirConfigured": true,
+      "pythonConfigured": true
+    }
+  },
+  "candidatePlistHash": "fa6070bc6dbf9ad56702a02e4dc6d1eb8f6eb737da55f8a45ee56ff9a0013cb9"
+}

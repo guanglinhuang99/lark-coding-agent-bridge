@@ -8,6 +8,7 @@ import { bridgeIdentityKey, sessionBindingKey, canonicalWorkspace, type BridgeId
 import { WeComConversationBindings } from '../../../src/wecom/conversation-bindings';
 import { acquireStateDirectoryLock } from '../../../src/bridge/state-lock';
 import { writeFileAtomic } from '../../../src/platform/atomic-write';
+import { conversationKey } from '../../../src/wecom/runtime';
 
 const dirs: string[] = [];
 afterEach(async () => { for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true }); });
@@ -117,6 +118,49 @@ describe('shared conversation identity and migration', () => {
 });
 
 describe('WeCom binding facade', () => {
+  it('shares a group selection, isolates private chats and pins queued scopes across switches and restarts', async () => {
+    const dir = await temp(), other = join(dir, 'review'); await mkdir(other);
+    const file = join(dir, 'sessions.json');
+    const opts = { identity: wecom, workspace: dir, policyFingerprint: 'policy' };
+    const store = new WeComConversationBindings(file, opts); await store.load();
+    const groupA = conversationKey({ chattype: 'group', chatid: 'room', from: { userid: 'alice' } });
+    const groupB = conversationKey({ chattype: 'group', chatid: 'room', from: { userid: 'bob' } });
+    const alice = conversationKey({ chattype: 'single', from: { userid: 'alice' } });
+    const bob = conversationKey({ chattype: 'single', from: { userid: 'bob' } });
+    expect(groupA).toBe(groupB);
+    const queued = store.captureScope(groupA);
+    expect(store.captureScope(queued)).toBe(queued);
+    await store.setThread(queued, 'group-original');
+    await store.setThread(alice, 'alice-original');
+    await store.setThread(bob, 'bob-original');
+    await store.bindWorkspace(groupB, other);
+    const switched = store.captureScope(groupA);
+    expect(switched).not.toBe(queued);
+    await expect(store.setThread(switched, 'wrong-directory', store.bindingFor(queued))).rejects.toThrow('Session scope mismatch');
+    expect(store.threadId(switched)).toBeUndefined();
+    expect(store.workspaceFor(queued)).toBe(canonicalWorkspace(dir));
+    expect(store.threadId(queued)).toBe('group-original');
+    await store.setThread(switched, 'group-review');
+    await store.setThread(queued, 'late-original');
+    expect(store.threadId(groupB)).toBe('group-review');
+    expect(store.threadId(alice)).toBe('alice-original');
+    expect(store.threadId(bob)).toBe('bob-original');
+    expect(store.sessionsFor(switched).map(entry => entry.threadId)).toEqual(['group-review']);
+    expect(store.sessionsFor(bob).map(entry => entry.threadId)).toEqual(['bob-original']);
+    await store.bindWorkspace(alice, other);
+    expect(store.threadId(alice)).toBeUndefined();
+    expect(store.threadId(bob)).toBe('bob-original');
+    await store.clear(switched);
+    expect(store.threadId(switched)).toBeUndefined();
+    expect(store.sessionsFor(switched)).toEqual([expect.objectContaining({ threadId: 'group-review', status: 'archived' })]);
+    expect(store.threadId(queued)).toBe('late-original');
+    const restarted = new WeComConversationBindings(file, opts); await restarted.load();
+    expect(restarted.workspaceFor(groupB)).toBe(canonicalWorkspace(other));
+    expect(restarted.workspaceFor(alice)).toBe(canonicalWorkspace(other));
+    expect(restarted.workspaceFor(bob)).toBe(dir);
+    await restarted.bindWorkspace(groupA, dir);
+    expect(restarted.threadId(groupB)).toBe('late-original');
+  });
   it('archives unverified legacy threads and resumes only a verified workspace/policy binding', async () => {
     const dir = await temp(); const file = join(dir, 'sessions.json');
     await writeFile(file, JSON.stringify({ chat: { threadId: 'unverified', updatedAt: new Date().toISOString() } }));

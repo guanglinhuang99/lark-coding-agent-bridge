@@ -1,0 +1,12 @@
+{
+  "serviceLabel": "ai.wecom-channel-bridge.riskbot-codex",
+  "launchctlExitCode": 0,
+  "service": {
+    "state": "active",
+    "program": "/opt/homebrew/Cellar/node@24/24.19.0/bin/node",
+    "working directory": "/Users/guanglin/Sync/wecom-bot",
+    "pid": "55401"
+  },
+  "harnessPythonChildren": [],
+  "botRestartPerformed": false
+}

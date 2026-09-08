@@ -1,0 +1,168 @@
+{
+  "kind": "real-client-query-and-preapproved-local-calculation",
+  "versions": {
+    "before": "f00d635b36536dccac7ebeb73235e7dcf584d49b",
+    "after": "6d28a6a673b3d400f3d30e15018b5a5621d545cf"
+  },
+  "dataVersion": {
+    "scope_version": "2784",
+    "limit_version": "2783",
+    "release_id": "money-rule-alignment-20260902T155318",
+    "scope_rows": 251,
+    "limit_rows": 1373
+  },
+  "node": "v24.19.0",
+  "python": "/Users/guanglin/Documents/trae_projects/icube/bin/python",
+  "service": "/Users/guanglin/Sync/risk-service",
+  "workers": 4,
+  "timeoutMs": 180000,
+  "startupTimeoutMs": 30000,
+  "failure": "Business result mismatch or query failure: intent_case_2 pair 1; samples retained",
+  "observability": "backendRequests counts client call invocations, not database executions. Missing stages=null (unobserved). No platform transport is exercised. Direct calculation cases do not exercise intent or confirmation. Optional intent cases exercise source confirmation registries and real AI only when authorized; lifecycle is tested separately.",
+  "scenarios": {
+    "intent_case_0": {
+      "businessConsistent": true,
+      "status": "sampled",
+      "before": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 26626.293625,
+        "p95": 26626.293625,
+        "backendRequests": 3
+      },
+      "after": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 17244.4225,
+        "p95": 17244.4225,
+        "backendRequests": 2
+      },
+      "absoluteReductionMs": 9381.871124999998,
+      "reductionPercent": 35.2353626724493
+    },
+    "intent_case_1": {
+      "businessConsistent": true,
+      "status": "sampled",
+      "before": {
+        "n": 30,
+        "success": 30,
+        "failures": 0,
+        "successRate": 1,
+        "median": 11264.693895499993,
+        "p95": 13822.229625000007,
+        "backendRequests": 90
+      },
+      "after": {
+        "n": 30,
+        "success": 30,
+        "failures": 0,
+        "successRate": 1,
+        "median": 2537.5228955000093,
+        "p95": 2769.2415420000034,
+        "backendRequests": 30
+      },
+      "absoluteReductionMs": 8727.170999999984,
+      "reductionPercent": 77.47366311912216
+    },
+    "intent_case_2": {
+      "businessConsistent": false,
+      "status": "failed",
+      "before": {
+        "n": 2,
+        "success": 1,
+        "failures": 1,
+        "successRate": 0.5,
+        "median": 12298.06116599997,
+        "p95": 12298.06116599997,
+        "backendRequests": 3
+      },
+      "after": {
+        "n": 2,
+        "success": 1,
+        "failures": 1,
+        "successRate": 0.5,
+        "median": 15049.90845799999,
+        "p95": 15049.90845799999,
+        "backendRequests": 1
+      },
+      "absoluteReductionMs": -2751.8472920000204,
+      "reductionPercent": -22.376269355432687
+    },
+    "intent_case_3": {
+      "businessConsistent": false,
+      "status": "not-run",
+      "before": {
+        "n": 0,
+        "success": 0,
+        "failures": 0,
+        "successRate": null,
+        "median": null,
+        "p95": null,
+        "backendRequests": 0
+      },
+      "after": {
+        "n": 0,
+        "success": 0,
+        "failures": 0,
+        "successRate": null,
+        "median": null,
+        "p95": null,
+        "backendRequests": 0
+      },
+      "absoluteReductionMs": null,
+      "reductionPercent": null
+    },
+    "intent_case_4": {
+      "businessConsistent": false,
+      "status": "not-run",
+      "before": {
+        "n": 0,
+        "success": 0,
+        "failures": 0,
+        "successRate": null,
+        "median": null,
+        "p95": null,
+        "backendRequests": 0
+      },
+      "after": {
+        "n": 0,
+        "success": 0,
+        "failures": 0,
+        "successRate": null,
+        "median": null,
+        "p95": null,
+        "backendRequests": 0
+      },
+      "absoluteReductionMs": null,
+      "reductionPercent": null
+    },
+    "intent_case_5": {
+      "businessConsistent": false,
+      "status": "not-run",
+      "before": {
+        "n": 0,
+        "success": 0,
+        "failures": 0,
+        "successRate": null,
+        "median": null,
+        "p95": null,
+        "backendRequests": 0
+      },
+      "after": {
+        "n": 0,
+        "success": 0,
+        "failures": 0,
+        "successRate": null,
+        "median": null,
+        "p95": null,
+        "backendRequests": 0
+      },
+      "absoluteReductionMs": null,
+      "reductionPercent": null
+    }
+  }
+}

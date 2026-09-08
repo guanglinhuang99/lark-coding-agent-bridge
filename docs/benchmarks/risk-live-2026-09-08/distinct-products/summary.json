@@ -1,0 +1,72 @@
+{
+  "kind": "real-client-read-only-query",
+  "versions": {
+    "before": "f00d635b36536dccac7ebeb73235e7dcf584d49b",
+    "after": "6d28a6a673b3d400f3d30e15018b5a5621d545cf"
+  },
+  "dataVersion": {
+    "scope_version": "2784",
+    "limit_version": "2783",
+    "release_id": "money-rule-alignment-20260902T155318",
+    "scope_rows": 251,
+    "limit_rows": 1373
+  },
+  "node": "v24.19.0",
+  "python": "/Users/guanglin/Documents/trae_projects/icube/bin/python",
+  "service": "/Users/guanglin/Sync/risk-service",
+  "workers": 4,
+  "timeoutMs": 180000,
+  "startupTimeoutMs": 30000,
+  "failure": null,
+  "observability": "backendRequests counts client call invocations, not database executions. Missing stages=null (unobserved). No AI or confirmation-chain coverage.",
+  "scenarios": {
+    "products_warmup": {
+      "businessConsistent": true,
+      "status": "sampled",
+      "before": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 9201.39525,
+        "p95": 9201.39525,
+        "backendRequests": 1
+      },
+      "after": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 8949.889333,
+        "p95": 8949.889333,
+        "backendRequests": 1
+      },
+      "absoluteReductionMs": 251.5059170000004,
+      "reductionPercent": 2.733345434758938
+    },
+    "restrictions_concurrent_distinct": {
+      "businessConsistent": true,
+      "status": "sampled",
+      "before": {
+        "n": 30,
+        "success": 30,
+        "failures": 0,
+        "successRate": 1,
+        "median": 47.001916999999594,
+        "p95": 55.49933299999975,
+        "backendRequests": 240
+      },
+      "after": {
+        "n": 30,
+        "success": 30,
+        "failures": 0,
+        "successRate": 1,
+        "median": 46.9910830000008,
+        "p95": 48.72929199999999,
+        "backendRequests": 240
+      },
+      "absoluteReductionMs": 0.010833999998794752,
+      "reductionPercent": 0.023050123676437995
+    }
+  }
+}

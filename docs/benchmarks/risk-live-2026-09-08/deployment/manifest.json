@@ -1,0 +1,55 @@
+{
+  "release": "/Users/guanglin/.lark-channel/releases/wecom-risk-20260908-40e196ce3872",
+  "artifactHash": "40e196ce3872a0a616b195646a6561dbeaad204e5a8be95ed21ebc50e0403fed",
+  "originalPlistHash": "cb6e4c35145a3849bd8e4f40f7fc4e8d30368ccf6656fdfc238d9211a31e1ab4",
+  "candidatePlistHash": "fa6070bc6dbf9ad56702a02e4dc6d1eb8f6eb737da55f8a45ee56ff9a0013cb9",
+  "originalArtifactHash": "434ec142377872e864c5298d9082cd5f2ce5015e13bb121548afa9f6c5f073a8",
+  "status": "deployed-platform-smoke-passed",
+  "source": "/private/tmp/wecom-live-20260908/deployment/validated",
+  "pythonRuntime": "/Users/guanglin/.lark-channel/releases/wecom-risk-20260908-40e196ce3872/python-runtime",
+  "health": {
+    "schemaVersion": 1,
+    "pid": 65599,
+    "startedAt": "2026-09-08T04:39:21.613Z",
+    "updatedAt": "2026-09-08T04:42:51.667Z",
+    "phase": "connected",
+    "connected": true,
+    "activeRuns": 0,
+    "startingRuns": 0,
+    "riskFastPath": {
+      "enabled": true,
+      "serviceDirConfigured": true,
+      "pythonConfigured": true
+    }
+  },
+  "verifiedAt": "2026-09-08T04:42:59.943326+00:00",
+  "tests": {
+    "filesPassed": 151,
+    "testsPassed": 1098,
+    "testsSkipped": 1,
+    "typecheck": 0,
+    "build": 0,
+    "pythonTestsPassed": 4
+  },
+  "platform": {
+    "naturalIntent": true,
+    "amountCorrectionReconfirmation": true,
+    "confirmedCalculation": true,
+    "stopLateResultSuppression": true,
+    "result": "PASS 6 before and after; no new breach",
+    "aiInputTokens": 2297,
+    "aiOutputTokens": 146,
+    "fullPlatformMatrix": "not completed"
+  },
+  "sourceFingerprint": {
+    "src/agent/codex/adapter.ts": "fc79b87dd2edbc434dd42d3670dbd4446cae4c8da7fa07c6a6b16b3e9eb4a8ae",
+    "src/agent/codex/argv.ts": "7156c2a9a1e7a9d70944bb607bdf6e4b7f4e9351920319d6c8746e99eb49ce52",
+    "src/wecom/cli.ts": "fdc85b815b3ab1439ee193e909ed906549c18e2240ba1386b32e4676b16d99a4",
+    "tests/process/codex-adapter.test.ts": "d457b9f5f68f54040b98534c3b66f072ec153b4e41ff015aff9ad039ef32c10d",
+    "tests/unit/agent/codex-argv.test.ts": "e31fe795e59e1a9e12b8129b60240aa2c11435cc787d5dc376fe65eda49d8be9",
+    "tests/unit/bridge/shared-runtime.test.ts": "6a20869c96f4583a86923bd88b90977a5704a0d6c12774106a6cd0f76ec637ce",
+    "src/agent/codex/risk-intent-instructions.ts": "46137fd85888d0b54a96c489fabcc2219c40351f17b0c865a8c9f252d84d2bef",
+    "tests/unit/agent/risk-intent-instructions.test.ts": "438640049fa0984b2f7330c24bd9c75f6ab168351660679feca2b7315ce63f5a",
+    "tests/unit/wecom/risk-intent-stop.test.ts": "0dc49dce6565f1dbef0824190c76bbf4f1dec04192d14924804fed723d0fff51"
+  }
+}

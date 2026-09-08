@@ -26,7 +26,64 @@ class FakeService:
         progress("done")
         return {"method": method}
 
+
+class FakePretradeWeb:
+    PRETRADE_RUNS_LOCK = threading.Lock()
+
+    def __init__(self):
+        self.PRETRADE_RUNS = {}
+        self.payloads = []
+
+    def start_pretrade_run(self, payload):
+        self.payloads.append(payload)
+        run_id = f"run-{len(self.payloads)}"
+        self.PRETRADE_RUNS[run_id] = {
+            "id": run_id,
+            "status": "success",
+            "progress": "测算完成",
+            "result": {"actions": payload["actions"]},
+        }
+        return {"id": run_id}
+
+
+def pretrade_service(web):
+    service = bridge.DirectRiskService.__new__(bridge.DirectRiskService)
+    service.web = web
+    return service
+
 class DispatcherTests(unittest.TestCase):
+    def test_pretrade_submits_a_batch_once(self):
+        web = FakePretradeWeb()
+        service = pretrade_service(web)
+        actions = [
+            {"type": "buy", "amount": 0.1, "security_name": "102583394.IB"},
+            {"type": "buy", "amount": 0.4, "security_name": "232580009.IB"},
+        ]
+
+        result = service._calculate_pretrade("ESG1号", actions, lambda _message: None)
+
+        self.assertEqual(len(web.payloads), 1)
+        self.assertEqual(web.payloads[0], {"product": "ESG1号", "actions": actions})
+        self.assertEqual(result["result"]["actions"], actions)
+
+    def test_pretrade_preserves_legacy_single_action_submission(self):
+        web = FakePretradeWeb()
+        service = pretrade_service(web)
+        action = {"type": "buy", "amount": 0.1, "security_name": "102583394.IB"}
+
+        service._calculate_pretrade("ESG1号", action, lambda _message: None)
+
+        self.assertEqual(web.payloads, [{"product": "ESG1号", "actions": [action]}])
+
+    def test_pretrade_rejects_empty_or_malformed_action_lists(self):
+        web = FakePretradeWeb()
+        service = pretrade_service(web)
+        for raw_action in ([], [{"type": "buy"}, "not-an-object"]):
+            with self.subTest(raw_action=raw_action):
+                with self.assertRaises(ValueError):
+                    service._calculate_pretrade("ESG1号", raw_action, lambda _message: None)
+        self.assertEqual(web.payloads, [])
+
     def test_cancel_queued_and_bound_admission(self):
         service, messages = FakeService(), []
         with patch.object(bridge, "write_message", messages.append), ThreadPoolExecutor(max_workers=1) as pool:

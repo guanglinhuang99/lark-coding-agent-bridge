@@ -45,7 +45,7 @@ function commandLabel(command: string): string {
   if (command === '/menu') return '打开工作台';
   if (command === '/status') return '查看状态';
   if (command === '/settings') return '查看设置';
-  if (command === '/workspace') return '选择工作区';
+  if (command === '/workspace' || command.startsWith('/workspace ')) return '选择工作区';
   if (command === '/model') return '选择模型';
   if (command === '/reasoning') return '选择推理强度';
   if (command === '/resume') return '恢复会话';

@@ -65,6 +65,18 @@ afterEach(() => {
 });
 
 describe('riskservice direct client', () => {
+  it('sends all credit subjects in one bridge request', async () => {
+    const requests: Record<string, unknown>[] = [];
+    installBridge((request, child) => {
+      requests.push(request);
+      child.stdout.write(`${JSON.stringify({ id: request.id, type: 'result', data: { reports: [] } })}\n`);
+    });
+    const service = client();
+    await expect(service.getCredits(['公司甲', '公司乙'])).resolves.toEqual({ reports: [] });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ method: 'get_credits', args: { entities: ['公司甲', '公司乙'] } });
+    await service.close();
+  });
   it('reads structured content from the persistent local process', async () => {
     installBridge((request, child) => {
       child.stdout.write(
@@ -124,6 +136,37 @@ describe('riskservice direct client', () => {
     expect(onStage).toHaveBeenCalledWith(
       expect.objectContaining({ stage: 'direct', outcome: 'success' }),
     );
+    await service.close();
+  });
+
+  it('submits multiple pretrade actions in one request and preserves single-action calls', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    installBridge((request, child) => {
+      if (request.method === 'calculate_pretrade') requests.push(request);
+      child.stdout.write(
+        `${JSON.stringify({
+          id: request.id,
+          type: 'result',
+          data: { status: 'success', result: {} },
+        })}\n`,
+      );
+    });
+    const service = client();
+    const actions = [
+      { type: 'buy' as const, market: 'secondary' as const, amount: 0.1, security_name: '102583394.IB' },
+      { type: 'buy' as const, market: 'secondary' as const, amount: 0.4, security_name: '232580009.IB' },
+    ];
+
+    await service.calculatePretrade('产品A', actions);
+    await service.calculatePretrade('产品A', actions[0]!);
+
+    expect(requests).toHaveLength(2);
+    expect(requests[0]).toMatchObject({
+      args: { product: '产品A', action: actions },
+    });
+    expect(requests[1]).toMatchObject({
+      args: { product: '产品A', action: actions[0] },
+    });
     await service.close();
   });
 

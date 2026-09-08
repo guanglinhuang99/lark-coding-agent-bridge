@@ -1,5 +1,5 @@
 import type { RiskPretradeAction, RiskSecuritySuggestion, RiskService } from './client';
-import type { RiskIntentState } from './intent';
+import { confirmedRiskAmount, type RiskIntentState } from './intent';
 import { RiskServiceError } from './client';
 import {
   extractAmount,
@@ -127,28 +127,42 @@ export class WeComRiskRouter {
     onProgress?: (progress: string) => void,
   ): Promise<RiskRouteResult> {
     try {
-      if (!/^\d+(?:\.\d+)?\s*(?:亿元|万元|亿|万|元|块|股|手|张|份)?$/.test(state.draft.amountText.trim())) {
-        throw new RiskServiceError('交易规模无效', 'invalid-amount');
-      }
-      if (state.draft.days !== undefined && (!Number.isSafeInteger(state.draft.days) || state.draft.days <= 0)) {
-        throw new RiskServiceError('期限无效', 'invalid-days');
-      }
-      const amount = extractAmount(state.draft.amountText);
-      if (!amount || (amount.amount ?? amount.quantity ?? 0) <= 0) {
-        throw new RiskServiceError('交易规模无效', 'invalid-amount');
-      }
-      const action = state.draft.action;
-      const needsSecurity = action === 'buy' || action === 'sell' ||
-        (action === 'subscription' && state.draft.market === 'primary');
-      if (!state.product || (needsSecurity && !state.security?.code)) {
-        throw new RiskServiceError('交易信息尚未核验', 'unresolved-transaction');
-      }
-      const parsed: Extract<RiskIntent, { kind: 'pretrade_calc' }> = {
-        kind: 'pretrade_calc', product: state.product, productCandidates: [state.product],
-        action, market: state.draft.market, amount: amount.amount, quantity: amount.quantity,
-        amountNote: amount.note, days: state.draft.days, missing: [],
-      };
-      return await this.runCalculation(parsed, state.security, onProgress);
+      const transactions = state.draft.transactions ?? [{ ...state.draft, resolvedSecurity: state.security }];
+      if (!state.product || !transactions.length) throw new RiskServiceError('交易信息尚未核验', 'unresolved-transaction');
+      // Validate every leg before submitting anything: a batch is one scenario.
+      const notes: string[] = [];
+      const actions: RiskPretradeAction[] = transactions.map((draft, index) => {
+        const amount = confirmedRiskAmount(draft.amountText ?? '');
+        if (!amount) throw new RiskServiceError(`第${index + 1}笔交易规模无效`, 'invalid-amount');
+        if (draft.days !== undefined && (!Number.isSafeInteger(draft.days) || draft.days <= 0)) {
+          throw new RiskServiceError('期限无效', 'invalid-days');
+        }
+        const type = draft.action;
+        if (!type || !['buy', 'sell', 'subscription', 'redemption', 'repo', 'reverse_repo'].includes(type)) {
+          throw new RiskServiceError('交易信息尚未核验', 'unresolved-transaction');
+        }
+        const needsSecurity = type === 'buy' || type === 'sell' || (type === 'subscription' && draft.market === 'primary');
+        if (needsSecurity && !draft.resolvedSecurity?.code) {
+          throw new RiskServiceError('交易信息尚未核验', 'unresolved-transaction');
+        }
+        const action: RiskPretradeAction = { type, market: draft.market };
+        if (needsSecurity) action.security_name = draft.resolvedSecurity!.code;
+        if (type === 'repo' || type === 'reverse_repo') {
+          if (amount.quantity !== undefined) throw new RiskServiceError('回购需要金额', 'invalid-amount');
+          action.amount = amount.amount;
+          if (draft.days !== undefined) action.days = draft.days;
+        } else if (amount.quantity !== undefined) {
+          if (type === 'buy' || type === 'sell') action.quantity = amount.quantity;
+          else action.shares = amount.quantity;
+        } else action.amount = amount.amount;
+        notes.push(`${state.draft.transactions ? `第${index + 1}笔：` : ''}${amount.note}`);
+        return action;
+      });
+      await onProgress?.('正在提交投前测算…');
+      const result = await this.service.calculatePretrade(
+        state.product, state.draft.transactions ? actions : actions[0]!, onProgress,
+      );
+      return handled('pretrade_calc', formatCalculation(result, notes.join('；'), actions.length));
     } catch (error) {
       return handled('risk-error', formatRiskError(error));
     }

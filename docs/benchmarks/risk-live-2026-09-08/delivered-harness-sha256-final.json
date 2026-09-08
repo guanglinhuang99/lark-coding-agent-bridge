@@ -1,0 +1,16 @@
+{
+  "utc": "2026-09-08T02:40:20.218261+00:00",
+  "files": {
+    "harness/risk-live-benchmark.example.json": "179e80826f2194878803c44dbcf016629cba0fc13b4a804fda4011df9306341e",
+    "harness/risk-live-benchmark.md": "3cf41145274c4fcd39fde14a6f9ac636132856335a10baed7da583ae5408bd2e",
+    "harness/risk-live-benchmark.mjs": "684d956f6fafe48c61decac4ccc6a4421c73e19835fe149bc7ad2137d551ba3a",
+    "harness/risk-live-intent-chain.mjs": "9498f524a7749a527c5479119792cbd795a799e8d27b296722f080b192049e5c",
+    "harness/risk-live-lifecycle.md": "8a78774c9c6bf1d179ee1688c44b3572fc35fd461cb7b72f199b262feb4b9614",
+    "harness/risk-live-lifecycle.mjs": "892f8cbe2002b9ef5e76e3c6bdc3a4ccaee87c9f2617a2bcb0d6155568102a36",
+    "harness/risk-live-strict-chain.md": "0bf73803db851af46ca3c0aee1f20fb735e9710ebe7c116982ff9ff9e5e2e7f1",
+    "harness/risk-live-strict-chain.mjs": "c0951b955b4872e66fe4e4251d6150c3465c5ca5342810134db9fc7ffff48aa4",
+    "harness/summarize-stopped.py": "a456a03dc947c8d7f40e0f7f641caf2199581fbe4ba6c6c280137fa33c278980",
+    "harness/validate-live-evidence.py": "7a9d290f42803aed944c6d76bf276dfef1b53bced0bb25ae06a45123d7979a95"
+  },
+  "note": "Final delivered harness includes corrections after initial runs; original raw runs are retained. Successful final lifecycle run is lifecycle-live-4; candidate strict chain is strict-chain-live-1."
+}

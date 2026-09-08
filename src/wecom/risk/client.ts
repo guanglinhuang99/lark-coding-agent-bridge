@@ -29,7 +29,7 @@ export interface RiskService {
   getCredit(entity: string): Promise<Record<string, unknown>>;
   calculatePretrade(
     product: string,
-    action: RiskPretradeAction,
+    action: RiskPretradeAction | RiskPretradeAction[],
     onProgress?: (progress: string) => void,
   ): Promise<Record<string, unknown>>;
 }
@@ -117,9 +117,13 @@ export class RiskDirectClient implements RiskService {
     return this.call('get_credit', { entity }, undefined, 180_000);
   }
 
+  getCredits(entities: string[]): Promise<Record<string, unknown>> {
+    return this.call('get_credits', { entities }, undefined, 180_000);
+  }
+
   async calculatePretrade(
     product: string,
-    action: RiskPretradeAction,
+    action: RiskPretradeAction | RiskPretradeAction[],
     onProgress?: (progress: string) => void,
   ): Promise<Record<string, unknown>> {
     const startedAt = Date.now();

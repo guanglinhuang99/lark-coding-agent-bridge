@@ -1,0 +1,26 @@
+{
+  "syntaxExitCodes": {
+    "risk-live-ai-guards.mjs": 0,
+    "risk-live-benchmark.mjs": 0,
+    "risk-live-confirmation-rejection.mjs": 0,
+    "risk-live-intent-chain.mjs": 0,
+    "risk-live-lifecycle.mjs": 0,
+    "risk-live-strict-chain.mjs": 0
+  },
+  "sha256": {
+    "risk-live-ai-guards.md": "04c8506f17813fe105dd746087d226fa6cdf4d5cf1b95b92b411a6ed235c99d1",
+    "risk-live-ai-guards.mjs": "a36b1a15642bd68a2372c340c9d438bff5a74243fdbe36032aeb8932b9aeeb6d",
+    "risk-live-benchmark.example.json": "179e80826f2194878803c44dbcf016629cba0fc13b4a804fda4011df9306341e",
+    "risk-live-benchmark.md": "3cf41145274c4fcd39fde14a6f9ac636132856335a10baed7da583ae5408bd2e",
+    "risk-live-benchmark.mjs": "4f7a98af965e8273c20914591b01a037eef9e31a2eebf9b1af79b8e1b4d32b4c",
+    "risk-live-confirmation-rejection.md": "ede74ddb5bb3242ca44dc6a1ff4b4bdef8ae31011f92fe3bc2f573c2c14df56f",
+    "risk-live-confirmation-rejection.mjs": "3210d9760e867aabd1101f1e0aa8affc30311ca2dee2e56990356a71354b095c",
+    "risk-live-intent-chain.mjs": "56dd0b6f31cb54eb0ff14c22f2c1d3a4e17f8848019f8b6e9fb02a86f96326ad",
+    "risk-live-lifecycle.md": "8a78774c9c6bf1d179ee1688c44b3572fc35fd461cb7b72f199b262feb4b9614",
+    "risk-live-lifecycle.mjs": "892f8cbe2002b9ef5e76e3c6bdc3a4ccaee87c9f2617a2bcb0d6155568102a36",
+    "risk-live-strict-chain.md": "0bf73803db851af46ca3c0aee1f20fb735e9710ebe7c116982ff9ff9e5e2e7f1",
+    "risk-live-strict-chain.mjs": "c0951b955b4872e66fe4e4251d6150c3465c5ca5342810134db9fc7ffff48aa4",
+    "summarize-stopped.py": "a456a03dc947c8d7f40e0f7f641caf2199581fbe4ba6c6c280137fa33c278980",
+    "validate-live-evidence.py": "7a9d290f42803aed944c6d76bf276dfef1b53bced0bb25ae06a45123d7979a95"
+  }
+}

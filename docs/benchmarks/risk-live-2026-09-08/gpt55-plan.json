@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.5",
+  "authorization": "User explicitly requested gpt5.5 and continuation",
+  "scenarios": {
+    "intent_case_0": {
+      "name": "standard_warmup",
+      "pairs": 1
+    },
+    "intent_case_1": {
+      "name": "natural_language",
+      "pairs": 30
+    },
+    "intent_case_2": {
+      "name": "amount_correction",
+      "pairs": 30
+    },
+    "intent_case_3": {
+      "name": "tenor_correction",
+      "pairs": 30
+    },
+    "intent_case_4": {
+      "name": "compound_correction",
+      "pairs": 30
+    }
+  },
+  "preflightPairsPerScenario": 1,
+  "mixWithSpark": false,
+  "platformBotModelChanged": false
+}

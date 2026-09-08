@@ -1,0 +1,54 @@
+{
+  "observedTurns": [
+    {
+      "version": "before",
+      "sessionFileHash": "5c6d686f168223662c804e5ad629ff41df5a7d3d2954613cbd256a5e5812ab00",
+      "model": "gpt-5.3-codex-spark",
+      "effort": "low",
+      "cwdIsolated": true
+    },
+    {
+      "version": "before",
+      "sessionFileHash": "f165610c9200bd3c1a7f54672e663e8634f1a64f3458f17ed51095a33459aedb",
+      "model": "gpt-5.3-codex-spark",
+      "effort": "low",
+      "cwdIsolated": true
+    },
+    {
+      "version": "before",
+      "sessionFileHash": "f168eebf1f866cbbfd59a258384fcc6b811ad5aa93d945d3e813254c81d75db8",
+      "model": "gpt-5.3-codex-spark",
+      "effort": "low",
+      "cwdIsolated": true
+    },
+    {
+      "version": "before",
+      "sessionFileHash": "5cea4fe122513563937b7943d864ba227a0078b04baf19d1cea53092f4711c2b",
+      "model": "gpt-5.3-codex-spark",
+      "effort": "low",
+      "cwdIsolated": true
+    },
+    {
+      "version": "before",
+      "sessionFileHash": "8a6909e8bb9cee72207e344197cc84803bd34de3247191afc16039e59b387982",
+      "model": "gpt-5.3-codex-spark",
+      "effort": "low",
+      "cwdIsolated": true
+    },
+    {
+      "version": "after",
+      "sessionFileHash": "755812138851d80d7cced706b2c3929b247ed68a725e600983a0138a73b83da0",
+      "model": "gpt-5.3-codex-spark",
+      "effort": "low",
+      "cwdIsolated": true
+    },
+    {
+      "version": "after",
+      "sessionFileHash": "ec65bbfbd748e56e757d7ae62d5f5c0ad58dfa8210b641fdcc2387bb8ef8caef",
+      "model": "gpt-5.3-codex-spark",
+      "effort": "low",
+      "cwdIsolated": true
+    }
+  ],
+  "note": "Only model, effort and isolated cwd extracted; no raw prompt/output/session copied."
+}

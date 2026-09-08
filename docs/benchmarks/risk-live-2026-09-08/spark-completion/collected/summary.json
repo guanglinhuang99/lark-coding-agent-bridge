@@ -1,0 +1,152 @@
+{
+  "kind": "real-client-query-and-preapproved-local-calculation",
+  "versions": {
+    "before": "f00d635b36536dccac7ebeb73235e7dcf584d49b",
+    "after": "6d28a6a673b3d400f3d30e15018b5a5621d545cf"
+  },
+  "dataVersion": {
+    "scope_version": "2784",
+    "limit_version": "2783",
+    "release_id": "money-rule-alignment-20260902T155318",
+    "scope_rows": 251,
+    "limit_rows": 1373
+  },
+  "node": "v24.19.0",
+  "python": "/Users/guanglin/.lark-channel/releases/wecom-risk-20260908-40e196ce3872/python-runtime/bin/python",
+  "service": "/Users/guanglin/Sync/risk-service",
+  "workers": 4,
+  "timeoutMs": 180000,
+  "startupTimeoutMs": 30000,
+  "failure": "Business result mismatch or query failure: intent_case_0 pair 22; samples retained",
+  "collection": {
+    "enabled": true,
+    "targetUsablePairs": 30,
+    "maxAttempts": 40,
+    "policy": "continue only when every failed row is normalized-input-mismatch; stop for all other failures or mismatches"
+  },
+  "observability": "backendRequests counts client call invocations, not database executions. Missing stages=null (unobserved). No platform transport is exercised. Direct calculation cases do not exercise intent or confirmation. Optional intent cases exercise source confirmation registries and real AI only when authorized; lifecycle is tested separately.",
+  "scenarios": {
+    "intent_case_0": {
+      "attempts": 23,
+      "targetUsablePairs": 30,
+      "usablePairs": 22,
+      "failures": 1,
+      "failureCategories": {
+        "ai-run-error": 2
+      },
+      "businessConsistent": false,
+      "usablePairConsistency": true,
+      "status": "failed",
+      "before": {
+        "n": 23,
+        "success": 22,
+        "failures": 1,
+        "successRate": 0.9565217391304348,
+        "median": 10991.422396000009,
+        "p95": 16176.966165999998,
+        "backendRequests": 66
+      },
+      "after": {
+        "n": 23,
+        "success": 22,
+        "failures": 1,
+        "successRate": 0.9565217391304348,
+        "median": 10632.561041500012,
+        "p95": 16089.30120799999,
+        "backendRequests": 23
+      },
+      "absoluteReductionMs": 358.8613544999971,
+      "reductionPercent": 3.2649218779053912
+    },
+    "intent_case_1": {
+      "attempts": 0,
+      "targetUsablePairs": 30,
+      "usablePairs": 0,
+      "failures": 0,
+      "failureCategories": {},
+      "businessConsistent": false,
+      "usablePairConsistency": false,
+      "status": "not-run",
+      "before": {
+        "n": 0,
+        "success": 0,
+        "failures": 0,
+        "successRate": null,
+        "median": null,
+        "p95": null,
+        "backendRequests": 0
+      },
+      "after": {
+        "n": 0,
+        "success": 0,
+        "failures": 0,
+        "successRate": null,
+        "median": null,
+        "p95": null,
+        "backendRequests": 0
+      },
+      "absoluteReductionMs": null,
+      "reductionPercent": null
+    },
+    "intent_case_2": {
+      "attempts": 0,
+      "targetUsablePairs": 30,
+      "usablePairs": 0,
+      "failures": 0,
+      "failureCategories": {},
+      "businessConsistent": false,
+      "usablePairConsistency": false,
+      "status": "not-run",
+      "before": {
+        "n": 0,
+        "success": 0,
+        "failures": 0,
+        "successRate": null,
+        "median": null,
+        "p95": null,
+        "backendRequests": 0
+      },
+      "after": {
+        "n": 0,
+        "success": 0,
+        "failures": 0,
+        "successRate": null,
+        "median": null,
+        "p95": null,
+        "backendRequests": 0
+      },
+      "absoluteReductionMs": null,
+      "reductionPercent": null
+    },
+    "intent_case_3": {
+      "attempts": 0,
+      "targetUsablePairs": 30,
+      "usablePairs": 0,
+      "failures": 0,
+      "failureCategories": {},
+      "businessConsistent": false,
+      "usablePairConsistency": false,
+      "status": "not-run",
+      "before": {
+        "n": 0,
+        "success": 0,
+        "failures": 0,
+        "successRate": null,
+        "median": null,
+        "p95": null,
+        "backendRequests": 0
+      },
+      "after": {
+        "n": 0,
+        "success": 0,
+        "failures": 0,
+        "successRate": null,
+        "median": null,
+        "p95": null,
+        "backendRequests": 0
+      },
+      "absoluteReductionMs": null,
+      "reductionPercent": null
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "kind": "real-risk-lifecycle",
+  "afterCommit": "6d28a6a673b3d400f3d30e15018b5a5621d545cf",
+  "status": "failed",
+  "realLifecycleComplete": false,
+  "counts": {
+    "scenarios": 1,
+    "pass": 0,
+    "blocked": 0,
+    "failed": 1
+  },
+  "scenarios": {
+    "harness": {
+      "scenario": "harness",
+      "evidence": "harness",
+      "status": "failed",
+      "errorCategory": "ReferenceError",
+      "message": "Cannot access 'ObservedBridge' before initialization"
+    }
+  },
+  "evidenceBoundary": {
+    "realBackend": "Only records marked real-backend use the actual Python risk-service and fixed after bridge. Their wrapper observes DirectRiskService.call entry/exit and does not count SQL statements.",
+    "sourceContract": "progress-contract is source-level lifecycle evidence and must not be reported as real backend or WeCom transport acceptance.",
+    "platform": "No WeCom connection, bot message, card callback, or business ledger write is performed.",
+    "releaseGate": "A blocked or partial result is not an上线条件 pass; retain the missing evidence and rerun in an idle CPU window with the same fixed runtime configuration."
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "kind": "real-client-query-and-preapproved-local-calculation",
+  "versions": {
+    "before": "f00d635b36536dccac7ebeb73235e7dcf584d49b",
+    "after": "6d28a6a673b3d400f3d30e15018b5a5621d545cf"
+  },
+  "dataVersion": {
+    "scope_version": "2784",
+    "limit_version": "2783",
+    "release_id": "money-rule-alignment-20260902T155318",
+    "scope_rows": 251,
+    "limit_rows": 1373
+  },
+  "node": "v24.19.0",
+  "python": "/Users/guanglin/Documents/trae_projects/icube/bin/python",
+  "service": "/Users/guanglin/Sync/risk-service",
+  "workers": 4,
+  "timeoutMs": 180000,
+  "startupTimeoutMs": 30000,
+  "failure": null,
+  "observability": "backendRequests counts client call invocations, not database executions. Missing stages=null (unobserved). No platform transport is exercised. Direct calculation cases do not exercise intent or confirmation. Optional intent cases exercise source confirmation registries and real AI only when authorized; lifecycle is tested separately.",
+  "scenarios": {
+    "intent_case_0": {
+      "businessConsistent": true,
+      "status": "sampled",
+      "before": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 46744.527292,
+        "p95": 46744.527292,
+        "backendRequests": 5
+      },
+      "after": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 45098.10075,
+        "p95": 45098.10075,
+        "backendRequests": 3
+      },
+      "absoluteReductionMs": 1646.426542000001,
+      "reductionPercent": 3.5221803222337367
+    },
+    "intent_case_1": {
+      "businessConsistent": true,
+      "status": "sampled",
+      "before": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 22591.375916999998,
+        "p95": 22591.375916999998,
+        "backendRequests": 4
+      },
+      "after": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 11460.044333999991,
+        "p95": 11460.044333999991,
+        "backendRequests": 1
+      },
+      "absoluteReductionMs": 11131.331583000007,
+      "reductionPercent": 49.272481781969226
+    }
+  }
+}

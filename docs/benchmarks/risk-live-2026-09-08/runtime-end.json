@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "azpy": "1.9.0",
+    "pandas": "3.0.2",
+    "pins": "0.9.1",
+    "openpyxl": "3.1.5"
+  },
+  "backend_python_sha256_end": "9f0134f81a256e1ca2a5c4576974fcf93317f211634d0008cad964d6f84d245c"
+}

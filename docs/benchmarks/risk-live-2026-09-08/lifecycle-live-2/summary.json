@@ -1,0 +1,423 @@
+{
+  "kind": "real-risk-lifecycle",
+  "afterCommit": "6d28a6a673b3d400f3d30e15018b5a5621d545cf",
+  "status": "pass",
+  "realLifecycleComplete": true,
+  "counts": {
+    "scenarios": 5,
+    "pass": 5,
+    "blocked": 0,
+    "failed": 0
+  },
+  "scenarios": {
+    "fast-serial": {
+      "scenario": "fast-serial",
+      "evidence": "real-bridge",
+      "status": "pass",
+      "elapsedMs": 266.965375,
+      "requests": [
+        {
+          "index": 0,
+          "id": "c1467cde-262a-4839-9743-e98a73989f49",
+          "ok": true,
+          "elapsedMs": 0.3923340000000053,
+          "error": null
+        },
+        {
+          "index": 1,
+          "id": "6b7a0c20-26ca-4155-888b-883b1db02436",
+          "ok": true,
+          "elapsedMs": 0.31062500000007276,
+          "error": null
+        },
+        {
+          "index": 2,
+          "id": "b4a29981-1173-44fd-9e98-9e6155c71a78",
+          "ok": true,
+          "elapsedMs": 0.17254100000002381,
+          "error": null
+        },
+        {
+          "index": 3,
+          "id": "28dc6317-f26d-470e-97f9-b0e82225106c",
+          "ok": true,
+          "elapsedMs": 0.2080829999999878,
+          "error": null
+        },
+        {
+          "index": 4,
+          "id": "8e503f09-06f3-416f-b4da-98db21cd063a",
+          "ok": true,
+          "elapsedMs": 0.14020900000002712,
+          "error": null
+        },
+        {
+          "index": 5,
+          "id": "e57b0c85-f678-45d1-934b-0d29c6a161cf",
+          "ok": true,
+          "elapsedMs": 0.11712499999998727,
+          "error": null
+        },
+        {
+          "index": 6,
+          "id": "34a00aa9-3c6f-4067-806d-fa8a61d65e74",
+          "ok": true,
+          "elapsedMs": 0.09524999999996453,
+          "error": null
+        },
+        {
+          "index": 7,
+          "id": "5ff3abce-9af1-4b3c-a149-c150d137fe9b",
+          "ok": true,
+          "elapsedMs": 0.10016700000005585,
+          "error": null
+        }
+      ],
+      "backendObservation": {
+        "starts": [
+          {
+            "label": "fast-serial",
+            "at": 970.497125,
+            "event": "start",
+            "method": "ping",
+            "args_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "thread": 6139801600,
+            "monotonic": 520868.751189375,
+            "duration_ms": 0.03
+          },
+          {
+            "label": "fast-serial",
+            "at": 970.861583,
+            "event": "start",
+            "method": "ping",
+            "args_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "thread": 6139801600,
+            "monotonic": 520868.751606541,
+            "duration_ms": 0.011
+          },
+          {
+            "label": "fast-serial",
+            "at": 971.170417,
+            "event": "start",
+            "method": "ping",
+            "args_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "thread": 6139801600,
+            "monotonic": 520868.751928583,
+            "duration_ms": 0.007
+          },
+          {
+            "label": "fast-serial",
+            "at": 971.370917,
+            "event": "start",
+            "method": "ping",
+            "args_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "thread": 6139801600,
+            "monotonic": 520868.752127083,
+            "duration_ms": 0.006
+          },
+          {
+            "label": "fast-serial",
+            "at": 971.5865,
+            "event": "start",
+            "method": "ping",
+            "args_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "thread": 6139801600,
+            "monotonic": 520868.752355833,
+            "duration_ms": 0.004
+          },
+          {
+            "label": "fast-serial",
+            "at": 971.738208,
+            "event": "start",
+            "method": "ping",
+            "args_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "thread": 6139801600,
+            "monotonic": 520868.752512458,
+            "duration_ms": 0.003
+          },
+          {
+            "label": "fast-serial",
+            "at": 971.870458,
+            "event": "start",
+            "method": "ping",
+            "args_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "thread": 6139801600,
+            "monotonic": 520868.752647833,
+            "duration_ms": 0.002
+          },
+          {
+            "label": "fast-serial",
+            "at": 971.97725,
+            "event": "start",
+            "method": "ping",
+            "args_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "thread": 6139801600,
+            "monotonic": 520868.752753791,
+            "duration_ms": 0.004
+          }
+        ],
+        "ends": [
+          {
+            "label": "fast-serial",
+            "at": 970.607208,
+            "event": "end",
+            "method": "ping",
+            "args_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "thread": 6139801600,
+            "monotonic": 520868.7512225,
+            "outcome": "success",
+            "duration_ms": 0.063
+          },
+          {
+            "label": "fast-serial",
+            "at": 970.94325,
+            "event": "end",
+            "method": "ping",
+            "args_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "thread": 6139801600,
+            "monotonic": 520868.751625041,
+            "outcome": "success",
+            "duration_ms": 0.029
+          },
+          {
+            "label": "fast-serial",
+            "at": 971.212792,
+            "event": "end",
+            "method": "ping",
+            "args_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "thread": 6139801600,
+            "monotonic": 520868.751946875,
+            "outcome": "success",
+            "duration_ms": 0.026
+          },
+          {
+            "label": "fast-serial",
+            "at": 971.442583,
+            "event": "end",
+            "method": "ping",
+            "args_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "thread": 6139801600,
+            "monotonic": 520868.752139083,
+            "outcome": "success",
+            "duration_ms": 0.018
+          },
+          {
+            "label": "fast-serial",
+            "at": 971.629417,
+            "event": "end",
+            "method": "ping",
+            "args_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "thread": 6139801600,
+            "monotonic": 520868.752365708,
+            "outcome": "success",
+            "duration_ms": 0.013
+          },
+          {
+            "label": "fast-serial",
+            "at": 971.770042,
+            "event": "end",
+            "method": "ping",
+            "args_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "thread": 6139801600,
+            "monotonic": 520868.752520625,
+            "outcome": "success",
+            "duration_ms": 0.011
+          },
+          {
+            "label": "fast-serial",
+            "at": 971.897375,
+            "event": "end",
+            "method": "ping",
+            "args_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "thread": 6139801600,
+            "monotonic": 520868.752655291,
+            "outcome": "success",
+            "duration_ms": 0.01
+          },
+          {
+            "label": "fast-serial",
+            "at": 972.003,
+            "event": "end",
+            "method": "ping",
+            "args_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "thread": 6139801600,
+            "monotonic": 520868.752763166,
+            "outcome": "success",
+            "duration_ms": 0.013
+          }
+        ]
+      },
+      "assertions": {
+        "allEightPingRepliesSucceeded": true,
+        "allEightCallsEnteredFixedBridge": true,
+        "allEightCallsReturnedFromFixedBridge": true,
+        "serialReplyOrderPreserved": true
+      },
+      "limitation": "ping is a fixed-bridge health method and does not query Pins or SQL. This checks that a completed fast Future does not prevent the next request from being admitted; it is separate from risk-service business-query evidence."
+    },
+    "queue": {
+      "scenario": "queue",
+      "evidence": "real-backend",
+      "status": "pass",
+      "startedAt": "2026-09-08T02:14:53.374Z",
+      "elapsedMs": 8666.251792000001,
+      "queryHashes": {
+        "expired": "f989359812cd03e6",
+        "cancelled": "b65b8f0919866fc4"
+      },
+      "timings": {
+        "blockerMs": 8391.128791000001,
+        "queueWaitUntilBlockerEndMs": 8390.943291000001,
+        "cancelToBlockerEndMs": 8390.896208,
+        "replacementPingMs": 0.2685829999991256
+      },
+      "backendObservation": {
+        "blocker": {
+          "start": 1249.859917,
+          "end": 9640.988708
+        },
+        "expiredSearchStarts": [],
+        "cancelledSearchStarts": []
+      },
+      "protocol": {
+        "expired": {
+          "id": "6cf283f5-ffa2-4964-9b62-3b9073688f9d",
+          "outcome": "error",
+          "error": {
+            "name": "BridgeProtocolError",
+            "code": "direct-error",
+            "category": "direct-error"
+          }
+        },
+        "cancelled": {
+          "id": "ceb55486-1deb-4c2b-80ac-fa1cabe0894b",
+          "messages": 0
+        },
+        "replacement": {
+          "id": "9d5a7513-0d5d-4977-9a06-25f233e59c25",
+          "outcome": "result"
+        }
+      },
+      "assertions": {
+        "blockerEnteredRealBackend": true,
+        "blockerSucceeded": true,
+        "blockerStillRunningWhenQueuedWorkExpired": true,
+        "expiredRequestReturnedQueueExpiryError": true,
+        "expiredRequestNeverEnteredRealBackend": true,
+        "cancelledRequestNeverEnteredRealBackend": true,
+        "cancelledRequestProducedNoProtocolOutput": true,
+        "replacementPingSucceeded": true
+      },
+      "limitation": "DirectRiskService.call entry is observed; SQL/database execution count is not observed. A blocked result means the real blocker was too fast or the backend could not complete, not that the queue guarantee passed."
+    },
+    "timeout-running-slot": {
+      "scenario": "timeout-running-slot",
+      "evidence": "real-backend",
+      "status": "pass",
+      "elapsedMs": 4922.769959000001,
+      "queryHashes": {
+        "timed": "f989359812cd03e6",
+        "followup": "b65b8f0919866fc4"
+      },
+      "timings": {
+        "clientTimeoutMs": 536.360834000001,
+        "backendAfterTimeoutMs": 2219.3254159999997,
+        "followupWaitMs": 4386.241833
+      },
+      "protocol": {
+        "timedRequestId": "e74561b8-242d-40f9-8740-34e486edfd64",
+        "sent": [
+          {
+            "method": "search_securities",
+            "id": "e74561b8-242d-40f9-8740-34e486edfd64",
+            "argsHash": "a271a79c186ff01caafd0b64d5c1c9bc6345a42a03574c7f09efe72e9ac31642"
+          },
+          {
+            "method": "cancel",
+            "id": "e74561b8-242d-40f9-8740-34e486edfd64",
+            "argsHash": null
+          },
+          {
+            "method": "search_securities",
+            "id": "4e14fb00-5fe9-4d02-98ad-f91d2b4ecd04",
+            "argsHash": "4f5a149416860f4703360a226d928261ccaec7c401d42d2adc9c54ac48ce7253"
+          }
+        ],
+        "lateMessagesForTimedRequest": []
+      },
+      "backendObservation": {
+        "timed": {
+          "start": 9932.486583,
+          "end": 12402.416958
+        },
+        "followup": {
+          "start": 12402.893542
+        }
+      },
+      "assertions": {
+        "requestEnteredRealBackend": true,
+        "clientTimedOut": true,
+        "clientSentCancel": true,
+        "backendEndedAfterClientTimeout": true,
+        "noResultWasDeliveredToTimedOutCall": true,
+        "followupStartedAfterTimedOutBackendEnded": true,
+        "followupSucceeded": true,
+        "firstEndWasNotAlreadyBeforeTimeout": true
+      },
+      "limitation": "The bridge has no cooperative backend cancellation API. A pass proves the running call held the single bridge worker until its real backend call returned and that the timed-out client did not accept a late protocol message; it does not prove the database query was interrupted."
+    },
+    "client-close": {
+      "scenario": "client-close",
+      "evidence": "real-backend",
+      "status": "pass",
+      "elapsedMs": 558.3471249999984,
+      "queryHashes": {
+        "closedListProducts": "44136fa355b3678a",
+        "restartPing": "44136fa355b3678a"
+      },
+      "timings": {
+        "pendingBeforeCloseMs": 0.17645900000024994,
+        "restartMs": 255.49654200000077
+      },
+      "protocol": {
+        "closedRequestId": "5c8718c0-44b6-4d06-8c20-1b2e31121f9a",
+        "messagesAfterClose": []
+      },
+      "backendObservation": {
+        "closed": {
+          "start": 14880.656708,
+          "end": null
+        }
+      },
+      "assertions": {
+        "requestEnteredRealBackend": true,
+        "pendingRejectedByClose": true,
+        "bridgeChildExited": true,
+        "noProtocolTerminalAcceptedAfterClose": true,
+        "freshClientRestarted": true
+      },
+      "limitation": "close() terminates this harness-owned bridge child. The fixed bridge does not expose whether the underlying risk-service call finished after process termination; this scenario proves client fencing and restart isolation only."
+    },
+    "progress-contract": {
+      "scenario": "progress-contract",
+      "evidence": "source-contract",
+      "status": "pass",
+      "assertions": {
+        "inFlightProgressDrainedBeforeTerminal": true,
+        "lateProgressAfterFinishWasIgnored": true,
+        "terminalWasAppendedAfterRelayFinished": true
+      },
+      "delivered": [
+        "正在读取真实风险进度",
+        "终态：客户端关闭"
+      ],
+      "limitation": "This uses the fixed after RiskProgressRelay with a controlled sender promise. It is not real backend progress or WeCom transport evidence; run a separately authorized real calculation/transport test before claiming platform progress acceptance."
+    }
+  },
+  "evidenceBoundary": {
+    "realBackend": "Only records marked real-backend use the actual Python risk-service and fixed after bridge. Their wrapper observes DirectRiskService.call entry/exit and does not count SQL statements.",
+    "sourceContract": "progress-contract is source-level lifecycle evidence and must not be reported as real backend or WeCom transport acceptance.",
+    "platform": "No WeCom connection, bot message, card callback, or business ledger write is performed.",
+    "releaseGate": "A blocked or partial result is not an上线条件 pass; retain the missing evidence and rerun in an idle CPU window with the same fixed runtime configuration."
+  }
+}

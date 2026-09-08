@@ -9,6 +9,6 @@ export function resolveWeComModelConfig(
 ): WeComModelConfig {
   const codexModel = env.WECOM_CODEX_MODEL?.trim() || 'gpt-5.6-luna';
   const codexReasoningEffort = env.WECOM_CODEX_REASONING_EFFORT?.trim() || 'max';
-  const riskIntentModel = env.WECOM_RISK_INTENT_MODEL?.trim() || 'gpt-5.3-codex-spark';
+  const riskIntentModel = env.WECOM_RISK_INTENT_MODEL?.trim() || 'gpt-5.6-luna';
   return { codexModel, codexReasoningEffort, riskIntentModel };
 }

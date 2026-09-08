@@ -1,0 +1,17 @@
+{"ts": "2026-09-08T16:05:53.043+08:00", "phase": "ws", "event": "authenticated", "sandbox": "read-only"}
+{"ts": "2026-09-08T16:07:46.043+08:00", "phase": "wecom-risk-call", "event": "completed", "method": "list_products", "durationMs": 76107, "outcome": "error"}
+{"ts": "2026-09-08T16:13:22.916+08:00", "phase": "wecom-risk-call", "event": "completed", "method": "list_products", "durationMs": 4738, "outcome": "success"}
+{"ts": "2026-09-08T16:13:23.158+08:00", "phase": "agent", "event": "spawn", "model": "gpt-5.3-codex-spark", "promptChars": 438}
+{"ts": "2026-09-08T16:13:31.217+08:00", "phase": "wecom-risk-intent", "event": "completed", "durationMs": 8094, "outcome": "ok", "model": "gpt-5.3-codex-spark"}
+{"ts": "2026-09-08T16:13:39.695+08:00", "phase": "wecom-risk-call", "event": "completed", "method": "search_securities", "durationMs": 8476, "outcome": "success"}
+{"ts": "2026-09-08T16:13:39.695+08:00", "phase": "wecom-risk-prepare", "event": "completed", "durationMs": 21517}
+{"ts": "2026-09-08T16:15:44.937+08:00", "phase": "wecom-risk-call", "event": "completed", "method": "calculate_pretrade", "durationMs": 19868, "outcome": "success"}
+{"ts": "2026-09-08T16:16:23.265+08:00", "phase": "wecom-risk-call", "event": "completed", "method": "list_products", "durationMs": 0, "outcome": "cache"}
+{"ts": "2026-09-08T16:16:23.272+08:00", "phase": "wecom-risk-prepare", "event": "completed", "durationMs": 7}
+{"ts": "2026-09-08T16:18:03.638+08:00", "phase": "agent", "event": "spawn", "model": "gpt-5.3-codex-spark", "promptChars": 573}
+{"ts": "2026-09-08T16:18:12.511+08:00", "phase": "wecom-risk-intent", "event": "completed", "durationMs": 8904, "outcome": "ok", "model": "gpt-5.3-codex-spark"}
+{"ts": "2026-09-08T16:18:12.512+08:00", "phase": "wecom-risk-call", "event": "completed", "method": "list_products", "durationMs": 0, "outcome": "cache"}
+{"ts": "2026-09-08T16:19:15.250+08:00", "phase": "wecom-risk-call", "event": "completed", "method": "calculate_pretrade", "durationMs": 12817, "outcome": "success"}
+{"ts": "2026-09-08T16:19:46.335+08:00", "phase": "wecom-risk-call", "event": "completed", "method": "list_products", "durationMs": 0, "outcome": "cache"}
+{"ts": "2026-09-08T16:19:48.792+08:00", "phase": "wecom-risk-call", "event": "completed", "method": "search_securities", "durationMs": 2453, "outcome": "success"}
+{"ts": "2026-09-08T16:19:48.793+08:00", "phase": "wecom-risk-prepare", "event": "completed", "durationMs": 2458}

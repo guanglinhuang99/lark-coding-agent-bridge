@@ -16,12 +16,13 @@ function handler(name: string, dependencies: Record<string, unknown>) {
 }
 function harness() {
   const history = vi.fn().mockResolvedValue([{ threadId: 'thread-alpha-secret', name: 'private prompt', cwd: '/private-workspace', updatedAtMs: 1 }]);
+  const sessionsFor = vi.fn().mockReturnValue([{ threadId: 'thread-alpha-secret', updatedAt: 1, status: 'active' }]);
   const register = vi.fn();
   const reply = vi.fn().mockResolvedValue(undefined);
   const notice = vi.fn().mockResolvedValue(undefined);
   const workspaceFor = vi.fn().mockReturnValue('/private-workspace');
   const dependencies = {
-    sessionStore: { workspaceFor }, createNavigationTaskId: () => 'session_test',
+    sessionStore: { workspaceFor, sessionsFor }, createNavigationTaskId: () => 'session_test',
     operationRunner: { run: (_name: string, fn: () => unknown) => fn() }, listCodexThreadHistory: history,
     process: { env: {} }, stateDir: '/fake-state', path: { basename: () => 'private-workspace' },
     formatRelTime: () => '3m ago', registerNavigationTask: register,
@@ -29,7 +30,7 @@ function harness() {
     buildSessionSelectionCardView, renderWeComCard,
     log: { warn: vi.fn() }, redactDiagnosticText: (s: string) => s,
   };
-  return { run: handler('replySessionSelection', dependencies), history, register, reply, notice, workspaceFor };
+  return { run: handler('replySessionSelection', dependencies), history, sessionsFor, register, reply, notice, workspaceFor };
 }
 describe('WeCom CLI resume privacy', () => {
   it('restores the registered full ID in private chat and rejects a fingerprint', async () => {
@@ -41,7 +42,7 @@ describe('WeCom CLI resume privacy', () => {
     const run = handler('handleNavigationCardEvent', {
       navigationCards: registry, navigationActionForPurpose: () => 'session.resume',
       updateInvalidCallback: invalid, isConversationBusy: () => false,
-      sessionStore: { setThread }, replyNavigationResult: vi.fn().mockResolvedValue(undefined),
+      sessionStore: { setThread, sessionsFor: () => [{ threadId: 'thread-alpha-secret' }] }, replyNavigationResult: vi.fn().mockResolvedValue(undefined),
     });
     await run({}, 'single:u', 'session_private', 'session', 'session.resume', '#a1b2c3');
     expect(invalid).toHaveBeenCalledOnce();
@@ -74,10 +75,26 @@ describe('WeCom CLI resume privacy', () => {
   it('preserves private-chat candidates and full callback IDs', async () => {
     const h = harness();
     await h.run({ body: { chattype: 'single' } }, 'single:u');
-    expect(h.history).toHaveBeenCalledOnce();
-    expect(h.register).toHaveBeenCalledWith('session_test', 'session', 'single:u', [['thread-alpha-secret', 'private prompt']]);
+    expect(h.history).not.toHaveBeenCalled();
+    expect(h.sessionsFor).toHaveBeenCalledWith('single:u');
+    expect(h.register).toHaveBeenCalledWith('session_test', 'session', 'single:u', [['thread-alpha-secret', 'Codex 会话 thread-a']]);
     expect(h.reply.mock.calls[0]?.[1].button_selection.option_list[0].id).toBe('thread-alpha-secret');
     expect(h.notice).not.toHaveBeenCalled();
+  });
+  it('rejects a registered candidate whose ownership no longer matches the current scope', async () => {
+    const registry = new WeComNavigationCardRegistry();
+    registry.register({ taskId: 'session_stale', purpose: 'session', conversationKey: 'single:u',
+      optionLabels: new Map([['someone-elses-thread', 'old entry']]), expiresAt: Date.now() + 60_000 });
+    const setThread = vi.fn();
+    const invalid = vi.fn();
+    const run = handler('handleNavigationCardEvent', {
+      navigationCards: registry, navigationActionForPurpose: () => 'session.resume',
+      updateInvalidCallback: invalid, isConversationBusy: () => false,
+      sessionStore: { setThread, sessionsFor: () => [{ threadId: 'own-thread' }] },
+    });
+    await run({}, 'single:u', 'session_stale', 'session', 'session.resume', 'someone-elses-thread');
+    expect(invalid).toHaveBeenCalledOnce();
+    expect(setThread).not.toHaveBeenCalled();
   });
   it('rejects an old group session callback before resolving or consuming it', async () => {
     const invalid = vi.fn().mockResolvedValue(undefined);

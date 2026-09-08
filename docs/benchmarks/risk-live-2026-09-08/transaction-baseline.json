@@ -1,0 +1,10 @@
+{
+  "caseId": "esg-bond-baseline",
+  "date": "2026-09-07",
+  "baselineHash": "991dd6721c16b381316ee84d8229329ff89cdeed6110d980ba7a92c37d58a684",
+  "netAssets": null,
+  "holdingsCount": null,
+  "excludedNonBusinessPaths": [
+    "$.timings"
+  ]
+}

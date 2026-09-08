@@ -1,0 +1,42 @@
+{
+  "results": [
+    {
+      "directory": "calculation-standard-live",
+      "rows": 60,
+      "pairedGroups": 30,
+      "failures": 0,
+      "validation": "pass"
+    },
+    {
+      "directory": "calculation-matrix-live",
+      "rows": 16,
+      "pairedGroups": 8,
+      "failures": 0,
+      "validation": "pass"
+    },
+    {
+      "directory": "distinct-securities-live",
+      "rows": 60,
+      "pairedGroups": 30,
+      "failures": 0,
+      "validation": "pass"
+    },
+    {
+      "directory": "calculation-cold-live",
+      "rows": 6,
+      "pairedGroups": 3,
+      "failures": 0,
+      "validation": "pass"
+    }
+  ],
+  "checks": [
+    "fixed commits",
+    "AB/BA order",
+    "business hashes",
+    "N and failures",
+    "median",
+    "nearest-rank P95",
+    "request counts",
+    "reduction formula"
+  ]
+}

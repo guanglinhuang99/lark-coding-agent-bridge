@@ -1,0 +1,1 @@
+{"scenario":"harness","evidence":"harness","status":"failed","errorCategory":"ReferenceError","message":"Cannot access 'ObservedBridge' before initialization"}

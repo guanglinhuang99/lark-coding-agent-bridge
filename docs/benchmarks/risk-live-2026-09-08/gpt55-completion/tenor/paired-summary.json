@@ -1,0 +1,57 @@
+{
+  "kind": "read-only-collected-pair-summary",
+  "sourceDirectory": "/private/tmp/wecom-live-20260908/gpt55-tenor-live",
+  "versions": {
+    "before": [
+      "f00d635b36536dccac7ebeb73235e7dcf584d49b"
+    ],
+    "after": [
+      "6d28a6a673b3d400f3d30e15018b5a5621d545cf"
+    ]
+  },
+  "rows": 60,
+  "scenarios": {
+    "intent_case_0": {
+      "attempts": 30,
+      "usablePairs": 30,
+      "failures": 0,
+      "failureCategories": {},
+      "allAttempts": {
+        "before": {
+          "n": 30,
+          "observedRows": 30,
+          "success": 30,
+          "failures": 0,
+          "missingRows": 0,
+          "duplicateRows": 0,
+          "successRate": 1,
+          "failureCategories": {}
+        },
+        "after": {
+          "n": 30,
+          "observedRows": 30,
+          "success": 30,
+          "failures": 0,
+          "missingRows": 0,
+          "duplicateRows": 0,
+          "successRate": 1,
+          "failureCategories": {}
+        }
+      },
+      "completeConsistentPairs": {
+        "before": {
+          "n": 30,
+          "medianMs": 21494.835999999996,
+          "p95Ms": 30850.551540999993
+        },
+        "after": {
+          "n": 30,
+          "medianMs": 2602.736686999997,
+          "p95Ms": 7579.241500000004
+        }
+      },
+      "absoluteReductionMs": 18892.099313,
+      "reductionPercent": 87.89133963618053
+    }
+  }
+}

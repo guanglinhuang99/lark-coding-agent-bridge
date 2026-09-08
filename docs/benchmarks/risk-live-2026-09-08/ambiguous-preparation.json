@@ -1,0 +1,6 @@
+{
+  "purpose": "fixture preparation using actual master data, not AI benchmark",
+  "stage": "security",
+  "candidateCount": 9,
+  "selectedCodeHash": "ef603b1799c8253d8391e9a9e251a9a2eb8a765fd91bc0a0fb24c9c18bc6adff"
+}

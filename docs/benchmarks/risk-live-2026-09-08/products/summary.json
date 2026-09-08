@@ -1,0 +1,112 @@
+{
+  "kind": "real-client-read-only-query",
+  "versions": {
+    "before": "f00d635b36536dccac7ebeb73235e7dcf584d49b",
+    "after": "6d28a6a673b3d400f3d30e15018b5a5621d545cf"
+  },
+  "dataVersion": {
+    "scope_version": "2784",
+    "limit_version": "2783",
+    "release_id": "money-rule-alignment-20260902T155318",
+    "scope_rows": 251,
+    "limit_rows": 1373
+  },
+  "node": "v24.19.0",
+  "python": "/Users/guanglin/Documents/trae_projects/icube/bin/python",
+  "service": "/Users/guanglin/Sync/risk-service",
+  "workers": 4,
+  "timeoutMs": 180000,
+  "startupTimeoutMs": 30000,
+  "failure": null,
+  "observability": "backendRequests counts client call invocations, not database executions. Missing stages=null (unobserved). No AI or confirmation-chain coverage.",
+  "scenarios": {
+    "products_first_process": {
+      "before": {
+        "n": 3,
+        "success": 3,
+        "failures": 0,
+        "successRate": 1,
+        "median": 8814.045000000006,
+        "p95": 8988.920917,
+        "backendRequests": 3
+      },
+      "after": {
+        "n": 3,
+        "success": 3,
+        "failures": 0,
+        "successRate": 1,
+        "median": 8828.783917,
+        "p95": 10718.483083,
+        "backendRequests": 3
+      },
+      "absoluteReductionMs": -14.738916999995126,
+      "reductionPercent": -0.16722080497655334
+    },
+    "products_warmup": {
+      "before": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 8815.145542000006,
+        "p95": 8815.145542000006,
+        "backendRequests": 1
+      },
+      "after": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 8808.796040999994,
+        "p95": 8808.796040999994,
+        "backendRequests": 1
+      },
+      "absoluteReductionMs": 6.349501000011514,
+      "reductionPercent": 0.07202945169492159
+    },
+    "products_repeat": {
+      "before": {
+        "n": 30,
+        "success": 30,
+        "failures": 0,
+        "successRate": 1,
+        "median": 0.2983754999950179,
+        "p95": 0.4420410000020638,
+        "backendRequests": 30
+      },
+      "after": {
+        "n": 30,
+        "success": 30,
+        "failures": 0,
+        "successRate": 1,
+        "median": 0.058896000002278015,
+        "p95": 0.09287500000209548,
+        "backendRequests": 0
+      },
+      "absoluteReductionMs": 0.23947949999273987,
+      "reductionPercent": 80.26111393084841
+    },
+    "products_concurrent_same_miss": {
+      "before": {
+        "n": 30,
+        "success": 30,
+        "failures": 0,
+        "successRate": 1,
+        "median": 1.4110209999998915,
+        "p95": 1.737334000004921,
+        "backendRequests": 240
+      },
+      "after": {
+        "n": 30,
+        "success": 30,
+        "failures": 0,
+        "successRate": 1,
+        "median": 0.5659580000065034,
+        "p95": 0.8544170000095619,
+        "backendRequests": 30
+      },
+      "absoluteReductionMs": 0.8450629999933881,
+      "reductionPercent": 59.89017881331695
+    }
+  }
+}
