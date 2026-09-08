@@ -189,3 +189,65 @@ describe('riskservice direct client', () => {
     await service.close();
   });
 });
+
+describe('shared lookup cache and admission', () => {
+  it('coalesces concurrent lookups, isolates cached values, and refreshes after expiry', async () => {
+    const requests: string[] = [];
+    let now = 1000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    installBridge((request, child) => {
+      requests.push(String(request.method));
+      child.stdout.write(JSON.stringify({ id: request.id, type: 'result', data: { products: ['产品A'] } }) + '\n');
+    });
+    const service = new RiskDirectClient({
+      pythonPath: '/test/python', serviceDir: '/test/service', stateDir: '/test/state',
+      bridgePath: '/test/bridge', productCacheTtlMs: 100,
+    });
+    try {
+      const [a, b] = await Promise.all([service.listProducts(), service.listProducts()]);
+      a.push('mutation');
+      expect(b).toEqual(['产品A']);
+      expect(await service.listProducts()).toEqual(['产品A']);
+      expect(requests).toHaveLength(1);
+      now += 101;
+      await service.listProducts();
+      expect(requests).toHaveLength(2);
+    } finally { clock.mockRestore(); await service.close(); }
+  });
+  it('does not retain failed lookups or share different security queries', async () => {
+    const requests: string[] = []; let fail = true;
+    installBridge((request, child) => {
+      requests.push(String((request.args as Record<string, unknown>).query));
+      child.stdout.write(JSON.stringify(fail
+        ? { id: request.id, type: 'error', error: 'temporary' }
+        : { id: request.id, type: 'result', data: { suggestions: [{ name: '国债', code: '100115.SZ' }] } }) + '\n');
+    });
+    const service = client();
+    await expect(service.searchSecurities('a')).rejects.toThrow();
+    fail = false;
+    await service.searchSecurities('a'); await service.searchSecurities('a'); await service.searchSecurities('b');
+    expect(requests).toEqual(['a', 'a', 'b']);
+    await service.close();
+  });
+  it('sends cancellation for timed-out requests without killing the process', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const child = installBridge(request => { requests.push(request); });
+    const service = client({ timeoutMs: 5 });
+    await expect(service.getHoldings('产品A')).rejects.toMatchObject({ code: 'direct-timeout' });
+    expect(requests[1]).toMatchObject({ id: requests[0]!.id, method: 'cancel' });
+    expect(child.kill).not.toHaveBeenCalled();
+    await service.close();
+  });
+  it('bounds pending requests and rejects outstanding work when closed', async () => {
+    installBridge(() => {});
+    const service = new RiskDirectClient({
+      pythonPath: '/test/python', serviceDir: '/test/service', stateDir: '/test/state',
+      bridgePath: '/test/bridge', maxPendingCalls: 1,
+    });
+    const first = service.getHoldings('产品A').catch(error => error);
+    await new Promise(resolve => setImmediate(resolve));
+    await expect(service.getHoldings('产品B')).rejects.toMatchObject({ code: 'direct-capacity' });
+    await service.close();
+    expect(await first).toMatchObject({ code: 'direct-process' });
+  });
+});

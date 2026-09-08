@@ -152,7 +152,8 @@ import {
   applyDirectRiskIntentInput,
   buildIntentSelection,
   buildRiskIntentPrompt,
-  canonicalCommand,
+  resolveInitialRiskIntent,
+  applySimpleRiskCorrection,
   isPretradeIntentCandidate,
   isRiskIntentCorrection,
   mergeRiskIntentDraft,
@@ -379,6 +380,12 @@ const riskClient = riskDirectEnabled
       timeoutMs: riskTimeoutMs,
       startupTimeoutMs: riskStartupTimeoutMs,
       workers: riskDirectWorkers,
+      productCacheTtlMs: riskProductCacheTtlMs,
+      onCall: ({ method, durationMs, outcome }) => {
+        log.info('wecom-risk-call', 'completed', { method, durationMs, outcome });
+        reportMetric('wecom_risk_call_ms', durationMs, { method, outcome });
+        reportMetric('wecom_risk_call_total', 1, { method, outcome });
+      },
       onStage: ({ stage, durationMs, outcome }) => {
         reportMetric('wecom_risk_stage_ms', durationMs, { stage, outcome });
         log.info('wecom-risk-stage', 'completed', { stage, durationMs, outcome });
@@ -990,7 +997,7 @@ async function executeConversationMessage(
                 streamMaxBytes,
               ),
             );
-            await executeRiskCardSelection(body, key, canonicalCommand(pendingIntent), true, {
+            await executeRiskCardSelection(body, key, pendingIntent, true, {
               kind: 'stream',
               stream,
             });
@@ -1019,12 +1026,12 @@ async function executeConversationMessage(
               );
             },
             (err) => log.fail('wecom-risk-progress', err, { step: 'message' }),
-            { includeStageCount: true },
+            { includeStageCount: true, coalesce: true },
           );
           const result = await riskRouter.handle(key, text, (progress) => {
             progressRelay.push(progress);
           });
-          await progressRelay.flush();
+          await progressRelay.finish();
           if (result.handled) {
             reportMetric('wecom_risk_fastpath_total', 1, { intent: result.intent });
             reportMetric('wecom_risk_fastpath_ms', Date.now() - startedAt, {
@@ -1163,23 +1170,25 @@ async function startRiskIntentFlow(
   riskIntents.clearTasksForConversation(key);
   await stream.update(
     truncateUtf8(
-      renderWeComNotice('🧠 正在理解交易意图', [
+      renderWeComNotice('正在核对交易信息', [
         '正在提取账户、操作、标的和交易规模。',
       ]),
       streamMaxBytes,
     ),
   );
   try {
-    const draft = await analyzeRiskDraft(text);
-    await stream.update(
-      truncateUtf8(
-        renderWeComNotice('🔎 正在核对交易信息', [
-          '正在核对账户和证券名称/代码。',
-        ]),
+    const startedAt = Date.now();
+    let usedAi = false;
+    const normalized = await resolveInitialRiskIntent(text, riskClient, async () => {
+      usedAi = true;
+      await stream.update(truncateUtf8(
+        renderWeComNotice('正在理解交易意图', ['正在提取账户、操作、标的和交易规模。']),
         streamMaxBytes,
-      ),
-    );
-    const normalized = await normalizeRiskDraft(text, draft, riskClient);
+      ));
+      return analyzeRiskDraft(text);
+    });
+    log.info('wecom-risk-prepare', 'completed', { durationMs: Date.now() - startedAt, path: usedAi ? 'ai' : 'direct' });
+    reportMetric('wecom_risk_prepare_ms', Date.now() - startedAt, { path: usedAi ? 'ai' : 'direct' });
     riskIntents.set(key, normalized);
     await finishRiskIntentState(body, key, stream, normalized);
   } catch (error) {
@@ -1213,17 +1222,17 @@ async function revisePendingRiskConfirmation(
   try {
     await stream.update(
       truncateUtf8(
-        renderWeComNotice('🧠 正在应用交易修正', ['正在保留未修改字段并重新核对交易信息。']),
+        renderWeComNotice('正在核对交易修正', ['正在保留未修改字段并重新核对交易信息。']),
         streamMaxBytes,
       ),
     );
-    const revised = await analyzeRiskDraft(pending.originalText, pending.draft, correction);
-    const merged = mergeRiskIntentDraft(pending.draft, revised, correction);
-    const normalized = await normalizeRiskDraft(
-      `${pending.originalText} ${correction}`,
-      merged,
-      riskClient,
-    );
+    const direct = applySimpleRiskCorrection(pending, correction);
+    const normalized = direct ?? await (async () => {
+      const revised = await analyzeRiskDraft(pending.originalText, pending.draft, correction);
+      const merged = mergeRiskIntentDraft(pending.draft, revised, correction);
+      return normalizeRiskDraft(`${pending.originalText} ${correction}`, merged, riskClient);
+    })();
+    reportMetric('wecom_risk_correction_total', 1, { path: direct ? 'direct' : 'ai' });
     riskIntents.set(key, normalized);
     await finishRiskIntentState(body, key, stream, normalized);
   } catch (error) {
@@ -1348,7 +1357,7 @@ async function handleRiskIntentChoice(
           ),
         (error) => log.fail('wecom-risk-card', error, { step: 'confirmation-status' }),
       );
-      await executeRiskCardSelection(body, key, canonicalCommand(state), false, {
+      await executeRiskCardSelection(body, key, state, false, {
         kind: 'card',
       });
       return;
@@ -2352,7 +2361,7 @@ async function handleRiskSelectionCardEvent(
 async function executeRiskCardSelection(
   body: ConversationBody,
   key: string,
-  selectedKey: string,
+  selectedKey: string | Extract<RiskIntentState, { stage: 'confirm' }>,
   withinConversationRun = false,
   progressTarget?:
     | { kind: 'card' }
@@ -2378,13 +2387,18 @@ async function executeRiskCardSelection(
                 renderWeComNotice('⏳ 风险限额查询中', [progress]),
               ),
         (err) => log.fail('wecom-risk-progress', err, { step: 'card-selection' }),
-        { includeStageCount: true },
+        { includeStageCount: true, coalesce: true },
       );
-      const result = await riskRouter.handle(key, selectedKey, (progress) => {
+      const onProgress = (progress: string) => {
         if (progress.startsWith('已确认：')) return;
         progressRelay.push(progress);
-      });
-      await progressRelay.flush();
+      };
+      const startedAt = Date.now();
+      const result = typeof selectedKey === 'string'
+        ? await riskRouter.handle(key, selectedKey, onProgress)
+        : await riskRouter.executeConfirmed(selectedKey, onProgress);
+      reportMetric('wecom_risk_confirmed_ms', Date.now() - startedAt);
+      await progressRelay.finish();
       if (result.handled) {
         if (progressTarget?.kind === 'stream') {
           await progressTarget.stream.finish(

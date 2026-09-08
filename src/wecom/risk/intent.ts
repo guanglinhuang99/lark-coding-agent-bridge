@@ -30,6 +30,74 @@ export type RiskIntentState =
   | { stage: 'confirm'; originalText: string; draft: CompleteRiskAiDraft; product: string; security?: RiskSecuritySuggestion }
   | { stage: 'freeform'; originalText: string; draft: RiskAiDraft; field: 'account' | 'security' | 'amount' | 'market' | 'other'; product?: string; security?: RiskSecuritySuggestion };
 
+
+/** Strict command grammar: free prose, multiple actions and omitted fields use AI. */
+export function parseDirectRiskDraft(text: string, products: readonly string[]): RiskAiDraft | undefined {
+  const match = /^(.+?)\s+(?:(一级(?:市场)?|二级(?:市场)?)\s+)?(买入|买|卖出|卖|申购|认购|赎回|正回购|回购|逆回购)\s+(\d+(?:\.\d+)?(?:亿元|万元|亿|万|元|块|股|手|张|份)?)(?:\s+(\S+))?(?:\s+(\d+)天)?$/.exec(text.trim());
+  if (!match) return undefined;
+  const [, account, market, verb, amountText, tail, extraDays] = match;
+  const product = matchProductCandidates(account!, products);
+  if (product.fuzzy || product.products.length !== 1) return undefined;
+  const selected = product.products[0]!;
+  const normalized = (value: string) => value.normalize('NFKC').replace(/\s/g, '').toLowerCase();
+  const aliases = [selected, selected.replace(/资产管理产品$/, ''), selected.replace(/^安联/, '').replace(/资产管理产品$/, '')];
+  if (!aliases.some(alias => normalized(alias) === normalized(account!))) return undefined;
+  const action = findAction(verb!);
+  const amount = extractAmount(amountText!);
+  if (!action || !amount || (amount.amount ?? amount.quantity ?? 0) <= 0) return undefined;
+  const primary = market?.startsWith('一级') ?? false;
+  const securityNeeded = action === 'buy' || action === 'sell' || (primary && action === 'subscription');
+  let securityQuery: string | undefined;
+  let days: number | undefined;
+  if (securityNeeded) {
+    // Codes are unambiguous syntax, but still resolve through master data.
+    if (!tail || !/^[0-9]{6,12}\.(?:SH|SZ|IB)$/i.test(tail) || extraDays) return undefined;
+    securityQuery = tail.toUpperCase();
+  } else if (action === 'repo' || action === 'reverse_repo') {
+    if (amount.quantity !== undefined || extraDays || (tail && !/^[1-9]\d*天$/.test(tail))) return undefined;
+    days = tail ? Number(tail.slice(0, -1)) : undefined;
+  } else if (tail || extraDays) return undefined;
+  return {
+    accountQuery: product.products[0]!, action, amountText: amountText!,
+    market: primary ? 'primary' : 'secondary',
+    ...(securityQuery ? { securityQuery } : {}),
+    ...(days !== undefined ? { days } : {}),
+  };
+}
+
+/** Shared by the real message entry and the benchmark; always returns a confirmation state. */
+export async function resolveInitialRiskIntent(
+  text: string,
+  service: RiskService,
+  analyze: () => Promise<RiskAiDraft>,
+): Promise<RiskIntentState> {
+  // Product lookup is shared with normalization and other queries by the client.
+  const products = await service.listProducts();
+  const direct = parseDirectRiskDraft(text, products);
+  const draft = direct ?? await analyze();
+  return normalizeRiskDraft(text, draft, service, products);
+}
+
+/** Only a fully matched, single-field edit may bypass AI and master-data lookup. */
+export function applySimpleRiskCorrection(
+  state: Extract<RiskIntentState, { stage: 'confirm' }>,
+  text: string,
+): RiskIntentState | undefined {
+  const value = text.trim();
+  const amountMatch = /^(?:金额|规模|数量)\s*(?:改成|改为|调整为|设为)\s*(\d+(?:\.\d+)?(?:亿元|万元|亿|万|元|块|股|手|张|份)?)\s*[。！!]?$/u.exec(value);
+  if (amountMatch) {
+    const amount = extractAmount(amountMatch[1]!);
+    if (!amount || (amount.amount ?? amount.quantity ?? 0) <= 0) return undefined;
+    if ((state.draft.action === 'repo' || state.draft.action === 'reverse_repo') && amount.quantity !== undefined) return undefined;
+    return { ...state, draft: { ...state.draft, amountText: amountMatch[1]! } };
+  }
+  const daysMatch = /^(?:期限|天数)\s*(?:改成|改为|调整为|设为)\s*([1-9]\d*)天\s*[。！!]?$/u.exec(value);
+  if (daysMatch && (state.draft.action === 'repo' || state.draft.action === 'reverse_repo')) {
+    return { ...state, draft: { ...state.draft, days: Number(daysMatch[1]) } };
+  }
+  return undefined;
+}
+
 export function isPretradeIntentCandidate(text: string): boolean {
   if (/能不能买|是否能买|可以买吗|可不可以买|禁投|关联方证券/.test(text)) return false;
   if (!findAction(text)) return false;
@@ -174,8 +242,8 @@ export class RiskIntentClarificationError extends Error {
   }
 }
 
-export async function normalizeRiskDraft(originalText: string, draft: RiskAiDraft, service: RiskService): Promise<RiskIntentState> {
-  const products = await service.listProducts();
+export async function normalizeRiskDraft(originalText: string, draft: RiskAiDraft, service: RiskService, knownProducts?: string[]): Promise<RiskIntentState> {
+  const products = knownProducts ?? await service.listProducts();
   const productMatch = matchProductCandidates(draft.accountQuery, products);
   const matched = productMatch.products;
   if (productMatch.fuzzy || matched.length !== 1) {

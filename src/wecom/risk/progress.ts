@@ -1,5 +1,7 @@
 export class RiskProgressRelay {
   private lastMessage: string | undefined;
+  private closed = false;
+  private sequence = 0;
   private pending: Promise<void> = Promise.resolve();
   private combinedInvestmentChecksStarted = false;
   private readonly emittedStages = new Set<RiskProgressStage>();
@@ -7,10 +9,11 @@ export class RiskProgressRelay {
   constructor(
     private readonly send: (message: string) => Promise<unknown>,
     private readonly onError: (error: unknown) => void = () => {},
-    private readonly options: { includeStageCount?: boolean } = {},
+    private readonly options: { includeStageCount?: boolean; coalesce?: boolean } = {},
   ) {}
 
   push(message: string): void {
+    if (this.closed) return;
     let normalized = message.trim();
     if (normalized.startsWith('正在检查买入证券的禁投和关联方')) {
       this.combinedInvestmentChecksStarted = true;
@@ -30,13 +33,21 @@ export class RiskProgressRelay {
       this.emittedStages.add(stage);
       visibleMessage = `当前阶段：${normalized}\n已完成 ${this.emittedStages.size}/4`;
     }
+    const sequence = ++this.sequence;
     this.pending = this.pending.then(async () => {
+      if (this.closed || (this.options.coalesce && sequence !== this.sequence)) return;
       try {
         await this.send(visibleMessage);
       } catch (error) {
         this.onError(error);
       }
     });
+  }
+
+  /** Drop unsent progress, but drain the in-flight send before delivering the result. */
+  async finish(): Promise<void> {
+    this.closed = true;
+    await this.pending;
   }
 
   async flush(): Promise<void> {

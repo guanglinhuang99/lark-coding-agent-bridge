@@ -1,0 +1,468 @@
+{
+  "label": "before",
+  "optimized": false,
+  "recordedAt": "2026-09-07T15:11:55.224Z",
+  "kind": "controlled integration benchmark; fake Python transport and fake AI; no live database or platform",
+  "delaysMs": {
+    "products": 10,
+    "securities": 20,
+    "calculation": 30,
+    "ai": 40
+  },
+  "samplesPerScenario": 10,
+  "summary": [
+    {
+      "scenario": "first",
+      "medianMs": 139.01202050000018,
+      "p95Ms": 151.3331659999999,
+      "counts": {
+        "ai": 1,
+        "list_products": 2,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "warm",
+      "medianMs": 127.51483350000012,
+      "p95Ms": 132.97150000000056,
+      "counts": {
+        "ai": 1,
+        "list_products": 1,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "amount-correction",
+      "medianMs": 138.71208300000035,
+      "p95Ms": 139.28779200000008,
+      "counts": {
+        "ai": 1,
+        "list_products": 2,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "concurrent-products",
+      "medianMs": 11.772375000000011,
+      "p95Ms": 12.33929099999932,
+      "counts": {
+        "list_products": 8
+      }
+    }
+  ],
+  "rows": [
+    {
+      "scenario": "first",
+      "sample": 0,
+      "durationMs": 151.3331659999999,
+      "counts": {
+        "ai": 1,
+        "list_products": 2,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "first",
+      "sample": 1,
+      "durationMs": 139.64824999999996,
+      "counts": {
+        "ai": 1,
+        "list_products": 2,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "first",
+      "sample": 2,
+      "durationMs": 138.92087500000002,
+      "counts": {
+        "ai": 1,
+        "list_products": 2,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "first",
+      "sample": 3,
+      "durationMs": 136.84408400000007,
+      "counts": {
+        "ai": 1,
+        "list_products": 2,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "first",
+      "sample": 4,
+      "durationMs": 139.6611670000002,
+      "counts": {
+        "ai": 1,
+        "list_products": 2,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "first",
+      "sample": 5,
+      "durationMs": 138.22312499999975,
+      "counts": {
+        "ai": 1,
+        "list_products": 2,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "first",
+      "sample": 6,
+      "durationMs": 139.10316600000033,
+      "counts": {
+        "ai": 1,
+        "list_products": 2,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "first",
+      "sample": 7,
+      "durationMs": 138.90687499999967,
+      "counts": {
+        "ai": 1,
+        "list_products": 2,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "first",
+      "sample": 8,
+      "durationMs": 139.75750000000016,
+      "counts": {
+        "ai": 1,
+        "list_products": 2,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "first",
+      "sample": 9,
+      "durationMs": 138.62012500000037,
+      "counts": {
+        "ai": 1,
+        "list_products": 2,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "warm",
+      "sample": 0,
+      "durationMs": 127.52620900000011,
+      "counts": {
+        "ai": 1,
+        "list_products": 1,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "warm",
+      "sample": 1,
+      "durationMs": 128.16483400000016,
+      "counts": {
+        "ai": 1,
+        "list_products": 1,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "warm",
+      "sample": 2,
+      "durationMs": 128.87029100000018,
+      "counts": {
+        "ai": 1,
+        "list_products": 1,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "warm",
+      "sample": 3,
+      "durationMs": 126.77791699999989,
+      "counts": {
+        "ai": 1,
+        "list_products": 1,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "warm",
+      "sample": 4,
+      "durationMs": 127.50345800000014,
+      "counts": {
+        "ai": 1,
+        "list_products": 1,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "warm",
+      "sample": 5,
+      "durationMs": 127.10579099999995,
+      "counts": {
+        "ai": 1,
+        "list_products": 1,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "warm",
+      "sample": 6,
+      "durationMs": 127.83087499999965,
+      "counts": {
+        "ai": 1,
+        "list_products": 1,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "warm",
+      "sample": 7,
+      "durationMs": 126.62299999999959,
+      "counts": {
+        "ai": 1,
+        "list_products": 1,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "warm",
+      "sample": 8,
+      "durationMs": 132.97150000000056,
+      "counts": {
+        "ai": 1,
+        "list_products": 1,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "warm",
+      "sample": 9,
+      "durationMs": 126.85125000000062,
+      "counts": {
+        "ai": 1,
+        "list_products": 1,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "amount-correction",
+      "sample": 0,
+      "durationMs": 139.28779200000008,
+      "counts": {
+        "ai": 1,
+        "list_products": 2,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "amount-correction",
+      "sample": 1,
+      "durationMs": 139.22633399999995,
+      "counts": {
+        "ai": 1,
+        "list_products": 2,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "amount-correction",
+      "sample": 2,
+      "durationMs": 138.1282080000001,
+      "counts": {
+        "ai": 1,
+        "list_products": 2,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "amount-correction",
+      "sample": 3,
+      "durationMs": 139.11516699999993,
+      "counts": {
+        "ai": 1,
+        "list_products": 2,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "amount-correction",
+      "sample": 4,
+      "durationMs": 136.99625000000015,
+      "counts": {
+        "ai": 1,
+        "list_products": 2,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "amount-correction",
+      "sample": 5,
+      "durationMs": 138.91583300000002,
+      "counts": {
+        "ai": 1,
+        "list_products": 2,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "amount-correction",
+      "sample": 6,
+      "durationMs": 138.50833300000068,
+      "counts": {
+        "ai": 1,
+        "list_products": 2,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "amount-correction",
+      "sample": 7,
+      "durationMs": 139.08083400000032,
+      "counts": {
+        "ai": 1,
+        "list_products": 2,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "amount-correction",
+      "sample": 8,
+      "durationMs": 138.17662500000006,
+      "counts": {
+        "ai": 1,
+        "list_products": 2,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "amount-correction",
+      "sample": 9,
+      "durationMs": 136.35416700000042,
+      "counts": {
+        "ai": 1,
+        "list_products": 2,
+        "search_securities": 2,
+        "calculate_pretrade": 1
+      }
+    },
+    {
+      "scenario": "concurrent-products",
+      "sample": 0,
+      "durationMs": 11.525832999999693,
+      "counts": {
+        "list_products": 8
+      }
+    },
+    {
+      "scenario": "concurrent-products",
+      "sample": 1,
+      "durationMs": 11.689542000000074,
+      "counts": {
+        "list_products": 8
+      }
+    },
+    {
+      "scenario": "concurrent-products",
+      "sample": 2,
+      "durationMs": 11.916457999999693,
+      "counts": {
+        "list_products": 8
+      }
+    },
+    {
+      "scenario": "concurrent-products",
+      "sample": 3,
+      "durationMs": 12.33929099999932,
+      "counts": {
+        "list_products": 8
+      }
+    },
+    {
+      "scenario": "concurrent-products",
+      "sample": 4,
+      "durationMs": 11.014458999999988,
+      "counts": {
+        "list_products": 8
+      }
+    },
+    {
+      "scenario": "concurrent-products",
+      "sample": 5,
+      "durationMs": 11.63420799999949,
+      "counts": {
+        "list_products": 8
+      }
+    },
+    {
+      "scenario": "concurrent-products",
+      "sample": 6,
+      "durationMs": 11.887625000000298,
+      "counts": {
+        "list_products": 8
+      }
+    },
+    {
+      "scenario": "concurrent-products",
+      "sample": 7,
+      "durationMs": 11.02350000000024,
+      "counts": {
+        "list_products": 8
+      }
+    },
+    {
+      "scenario": "concurrent-products",
+      "sample": 8,
+      "durationMs": 11.855207999999948,
+      "counts": {
+        "list_products": 8
+      }
+    },
+    {
+      "scenario": "concurrent-products",
+      "sample": 9,
+      "durationMs": 11.876041000000441,
+      "counts": {
+        "list_products": 8
+      }
+    }
+  ]
+}

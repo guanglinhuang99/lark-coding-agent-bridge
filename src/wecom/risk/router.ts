@@ -1,4 +1,5 @@
 import type { RiskPretradeAction, RiskSecuritySuggestion, RiskService } from './client';
+import type { RiskIntentState } from './intent';
 import { RiskServiceError } from './client';
 import {
   extractAmount,
@@ -117,6 +118,39 @@ export class WeComRiskRouter {
         intent: 'risk-error',
         markdown: formatRiskError(error),
       };
+    }
+  }
+
+  /** Called only with the server-side state consumed by a validated confirmation. */
+  async executeConfirmed(
+    state: Extract<RiskIntentState, { stage: 'confirm' }>,
+    onProgress?: (progress: string) => void,
+  ): Promise<RiskRouteResult> {
+    try {
+      if (!/^\d+(?:\.\d+)?\s*(?:亿元|万元|亿|万|元|块|股|手|张|份)?$/.test(state.draft.amountText.trim())) {
+        throw new RiskServiceError('交易规模无效', 'invalid-amount');
+      }
+      if (state.draft.days !== undefined && (!Number.isSafeInteger(state.draft.days) || state.draft.days <= 0)) {
+        throw new RiskServiceError('期限无效', 'invalid-days');
+      }
+      const amount = extractAmount(state.draft.amountText);
+      if (!amount || (amount.amount ?? amount.quantity ?? 0) <= 0) {
+        throw new RiskServiceError('交易规模无效', 'invalid-amount');
+      }
+      const action = state.draft.action;
+      const needsSecurity = action === 'buy' || action === 'sell' ||
+        (action === 'subscription' && state.draft.market === 'primary');
+      if (!state.product || (needsSecurity && !state.security?.code)) {
+        throw new RiskServiceError('交易信息尚未核验', 'unresolved-transaction');
+      }
+      const parsed: Extract<RiskIntent, { kind: 'pretrade_calc' }> = {
+        kind: 'pretrade_calc', product: state.product, productCandidates: [state.product],
+        action, market: state.draft.market, amount: amount.amount, quantity: amount.quantity,
+        amountNote: amount.note, days: state.draft.days, missing: [],
+      };
+      return await this.runCalculation(parsed, state.security, onProgress);
+    } catch (error) {
+      return handled('risk-error', formatRiskError(error));
     }
   }
 
@@ -457,6 +491,10 @@ export class WeComRiskRouter {
       if (intent.quantity !== undefined) action.quantity = intent.quantity;
       else action.amount = intent.amount;
       action.security_name = security?.code || security?.name || intent.securityQuery;
+    } else if (intent.action === 'subscription' && intent.market === 'primary') {
+      if (intent.quantity !== undefined) action.shares = intent.quantity;
+      else action.amount = intent.amount;
+      action.security_name = security?.code || security?.name;
     } else if (intent.action === 'repo' || intent.action === 'reverse_repo') {
       action.amount = intent.amount;
       if (intent.days !== undefined) action.days = intent.days;

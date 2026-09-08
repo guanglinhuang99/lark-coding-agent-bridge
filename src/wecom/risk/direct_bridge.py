@@ -228,9 +228,15 @@ class DirectRiskService:
         raise TimeoutError("risk-service 本地测算超过180秒")
 
 
-def handle_request(service: DirectRiskService, request: dict[str, Any]) -> None:
+def handle_request(service: DirectRiskService, request: dict[str, Any],
+                   cancelled: threading.Event | None = None,
+                   deadline: float | None = None) -> None:
     request_id = str(request.get("id") or "")
     try:
+        if cancelled is not None and cancelled.is_set():
+            return
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError("请求在队列中已过期")
         method = str(request.get("method") or "")
         args = request.get("args")
         if not isinstance(args, dict):
@@ -242,16 +248,73 @@ def handle_request(service: DirectRiskService, request: dict[str, Any]) -> None:
                 "id": request_id,
                 "type": "progress",
                 "message": message,
-            }),
+            }) if cancelled is None or not cancelled.is_set() else None,
         )
-        write_message({"id": request_id, "type": "result", "data": result})
+        if cancelled is None or not cancelled.is_set():
+            write_message({"id": request_id, "type": "result", "data": result})
     except Exception as exc:
+        if cancelled is not None and cancelled.is_set():
+            return
         traceback.print_exc(file=sys.stderr)
         write_message({
             "id": request_id,
             "type": "error",
             "error": f"{type(exc).__name__}: {exc}",
         })
+
+
+class RequestDispatcher:
+    """Bound admission and cancel queued requests without killing shared workers.
+
+    A running risk-service call has no cooperative cancellation API. It keeps
+    its slot until completion, and its late progress/result is suppressed.
+    """
+    def __init__(self, service: DirectRiskService, executor: ThreadPoolExecutor,
+                 max_pending: int = 32) -> None:
+        self.service = service
+        self.executor = executor
+        self.slots = threading.BoundedSemaphore(max_pending)
+        self.lock = threading.RLock()
+        self.requests: dict[str, tuple[threading.Event, Any]] = {}
+
+    def submit(self, request: dict[str, Any]) -> None:
+        request_id = str(request.get("id") or "")
+        if not request_id:
+            write_message({"type": "error", "error": "请求缺少id"})
+            return
+        if request.get("method") == "cancel":
+            with self.lock:
+                pending = self.requests.get(request_id)
+                if pending:
+                    pending[0].set()
+                    pending[1].cancel()
+            return
+        with self.lock:
+            if request_id in self.requests:
+                write_message({"id": request_id, "type": "error", "error": "重复请求id"})
+                return
+            if not self.slots.acquire(blocking=False):
+                write_message({"id": request_id, "type": "error",
+                               "error": "risk-service 当前任务较多", "code": "direct-capacity"})
+                return
+            cancelled = threading.Event()
+            try:
+                timeout_ms = float(request.get("timeout_ms") or 180_000)
+                if not 0 < timeout_ms <= 180_000:
+                    timeout_ms = 180_000
+                deadline = time.monotonic() + timeout_ms / 1000
+                future = self.executor.submit(handle_request, self.service, request, cancelled, deadline)
+            except Exception as exc:
+                self.slots.release()
+                write_message({"id": request_id, "type": "error", "error": str(exc)})
+                return
+            self.requests[request_id] = (cancelled, future)
+
+            def completed(_future: Any) -> None:
+                with self.lock:
+                    self.requests.pop(request_id, None)
+                    self.slots.release()
+            future.add_done_callback(completed)
 
 
 def main() -> int:
@@ -263,6 +326,7 @@ def main() -> int:
     service = DirectRiskService(args.service_dir, args.state_dir)
     write_message({"type": "ready"})
     with ThreadPoolExecutor(max_workers=max(1, min(args.workers, 8))) as executor:
+        dispatcher = RequestDispatcher(service, executor)
         for line in sys.stdin:
             try:
                 request = json.loads(line)
@@ -271,7 +335,7 @@ def main() -> int:
             except Exception as exc:
                 write_message({"type": "error", "error": f"输入无效：{exc}"})
                 continue
-            executor.submit(handle_request, service, request)
+            dispatcher.submit(request)
     return 0
 
 

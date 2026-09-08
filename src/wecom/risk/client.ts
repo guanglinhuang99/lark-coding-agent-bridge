@@ -44,6 +44,10 @@ export interface RiskDirectClientOptions {
   workers?: number;
   onStage?: (event: RiskStageEvent) => void;
   onDiagnostic?: (line: string) => void;
+  productCacheTtlMs?: number;
+  securityCacheTtlMs?: number;
+  maxPendingCalls?: number;
+  onCall?: (event: { method: string; durationMs: number; outcome: 'success' | 'error' | 'cache' | 'joined' }) => void;
 }
 
 export interface RiskStageEvent {
@@ -70,6 +74,9 @@ export class RiskDirectClient implements RiskService {
   private startReject?: (reason: unknown) => void;
   private closing = false;
   private readonly pending = new Map<string, PendingCall>();
+  private readonly cache = new Map<string, { expiresAt: number; value: Record<string, unknown> }>();
+  private readonly lookups = new Map<string, Promise<Record<string, unknown>>>();
+  private cacheEpoch = 0;
 
   constructor(private readonly options: RiskDirectClientOptions) {
     this.timeoutMs = options.timeoutMs ?? 180_000;
@@ -77,13 +84,13 @@ export class RiskDirectClient implements RiskService {
   }
 
   async listProducts(): Promise<string[]> {
-    const data = await this.call('list_products', {});
+    const data = await this.lookup('list_products', {}, this.options.productCacheTtlMs ?? 3_600_000);
     const products = Array.isArray(data.products) ? data.products : [];
     return products.map(productName).filter((item): item is string => Boolean(item));
   }
 
   async searchSecurities(query: string): Promise<RiskSecuritySuggestion[]> {
-    const data = await this.call('search_securities', { query });
+    const data = await this.lookup('search_securities', { query: query.trim() }, this.options.securityCacheTtlMs ?? 30_000);
     const suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
     return suggestions
       .map(securitySuggestion)
@@ -131,6 +138,12 @@ export class RiskDirectClient implements RiskService {
 
   async close(): Promise<void> {
     this.closing = true;
+    this.clearLookupCache();
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new RiskServiceError('risk-service 已关闭', 'direct-process'));
+    }
+    this.pending.clear();
     this.lines?.close();
     this.lines = undefined;
     const child = this.child;
@@ -161,13 +174,61 @@ export class RiskDirectClient implements RiskService {
     }
   }
 
+  clearLookupCache(): void {
+    this.cacheEpoch++;
+    this.cache.clear();
+    this.lookups.clear();
+  }
+
+  private metric(method: string, startedAt: number, outcome: 'success' | 'error' | 'cache' | 'joined'): void {
+    try { this.options.onCall?.({ method, durationMs: Date.now() - startedAt, outcome }); }
+    catch { /* Diagnostics cannot affect a query. */ }
+  }
+
+  private async lookup(method: string, args: Record<string, unknown>, ttlMs: number): Promise<Record<string, unknown>> {
+    const key = JSON.stringify([method, args]);
+    const cached = this.cache.get(key);
+    if (cached && cached.expiresAt > Date.now()) {
+      this.metric(method, Date.now(), 'cache');
+      return structuredClone(cached.value);
+    }
+    this.cache.delete(key);
+    const existing = this.lookups.get(key);
+    if (existing) {
+      this.metric(method, Date.now(), 'joined');
+      return structuredClone(await existing);
+    }
+    if (this.lookups.size >= (this.options.maxPendingCalls ?? 32)) {
+      throw new RiskServiceError('risk-service 当前查询较多', 'direct-capacity');
+    }
+    const epoch = this.cacheEpoch;
+    const promise = this.call(method, args);
+    this.lookups.set(key, promise);
+    try {
+      const value = await promise;
+      const rows = method === 'list_products' ? value.products : value.suggestions;
+      // Do not retain misses/errors; live checks and calculations are never cached.
+      if (epoch === this.cacheEpoch && ttlMs > 0 && Array.isArray(rows) && rows.length > 0) {
+        if (this.cache.size >= 256) this.cache.delete(this.cache.keys().next().value!);
+        this.cache.set(key, { expiresAt: Date.now() + ttlMs, value: structuredClone(value) });
+      }
+      return structuredClone(value);
+    } finally {
+      if (this.lookups.get(key) === promise) this.lookups.delete(key);
+    }
+  }
+
   private async call(
     method: string,
     args: Record<string, unknown>,
     onProgress?: (message: string) => void,
     timeoutMs = this.timeoutMs,
   ): Promise<Record<string, unknown>> {
+    const startedAt = Date.now();
     await this.ensureStarted();
+    if (this.pending.size >= (this.options.maxPendingCalls ?? 32)) {
+      throw new RiskServiceError('risk-service 当前任务较多', 'direct-capacity');
+    }
     const child = this.child;
     if (!child?.stdin.writable) {
       throw new RiskServiceError('risk-service 本地进程不可用', 'direct-process');
@@ -176,11 +237,18 @@ export class RiskDirectClient implements RiskService {
     return await new Promise<Record<string, unknown>>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
+        // Cancel queued work; running backend operations drain without killing peers.
+        if (child.stdin.writable) child.stdin.write(JSON.stringify({ id, method: 'cancel' }) + '\n', () => {});
+        this.metric(method, startedAt, 'error');
         reject(new RiskServiceError('risk-service 本地调用超时', 'direct-timeout'));
       }, timeoutMs);
       timer.unref();
-      this.pending.set(id, { resolve, reject, onProgress, timer });
-      child.stdin.write(`${JSON.stringify({ id, method, args })}\n`, (error) => {
+      this.pending.set(id, {
+        resolve: value => { this.metric(method, startedAt, 'success'); resolve(value); },
+        reject: error => { this.metric(method, startedAt, 'error'); reject(error); },
+        onProgress, timer,
+      });
+      child.stdin.write(`${JSON.stringify({ id, method, args, timeout_ms: timeoutMs })}\n`, (error) => {
         if (!error) return;
         const pending = this.pending.get(id);
         if (!pending) return;
@@ -283,6 +351,7 @@ export class RiskDirectClient implements RiskService {
   }
 
   private handleExit(error: unknown): void {
+    this.clearLookupCache();
     const failure =
       error instanceof RiskServiceError
         ? error
