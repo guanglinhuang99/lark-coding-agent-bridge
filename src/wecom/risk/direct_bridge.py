@@ -17,6 +17,7 @@ import sys
 import threading
 import time
 import traceback
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
@@ -266,7 +267,15 @@ class DirectRiskService:
         if method == "get_restrictions":
             return self._product_restrictions(str(args.get("product") or ""))
         if method == "get_credit":
-            return self.credit_query.build_credit_report(str(args.get("entity") or ""))
+            requested = str(args.get("entity") or "")
+            entity, security = self._resolve_credit_entity(requested)
+            report = self.credit_query.build_credit_report(entity)
+            if security is not None:
+                report["requested_entity"] = requested
+                report["security_name"] = security["security_name"]
+                report["security_code"] = security["security_code"]
+                report["matched_queries"] = [requested]
+            return report
         if method == "get_credits":
             return self.credit_query.build_credit_reports(args.get("entities"))
         if method == "calculate_pretrade":
@@ -276,6 +285,46 @@ class DirectRiskService:
                 progress,
             )
         raise ValueError(f"不支持的直接调用方法：{method}")
+
+    @staticmethod
+    def _credit_match_key(value: Any) -> str:
+        return "".join(unicodedata.normalize("NFKC", str(value or "")).split()).casefold()
+
+    def _resolve_credit_entity(self, requested: str) -> tuple[str, dict[str, str] | None]:
+        """Resolve an exact JYDB security name/code to its issuer."""
+        query_key = self._credit_match_key(requested)
+        if not query_key:
+            return requested, None
+        try:
+            payload = self.web.pretrade_security_suggestions_payload(requested)
+        except Exception:
+            # JYDB lookup must not make an ordinary entity query unavailable.
+            return requested, None
+        suggestions = payload.get("suggestions") if isinstance(payload, dict) else None
+        exact: list[dict[str, str]] = []
+        for raw in suggestions if isinstance(suggestions, list) else []:
+            if not isinstance(raw, dict):
+                continue
+            code = str(raw.get("security_code") or "").strip()
+            name = str(raw.get("security_name") or "").strip()
+            code_key = self._credit_match_key(code)
+            base_code_key = self._credit_match_key(code.partition(".")[0])
+            if query_key not in {self._credit_match_key(name), code_key, base_code_key}:
+                continue
+            exact.append({
+                "security_code": code,
+                "security_name": name,
+                "issuer_name": str(raw.get("issuer_name") or "").strip(),
+            })
+        if not exact:
+            return requested, None
+        issuers = {item["issuer_name"] for item in exact if item["issuer_name"]}
+        if not issuers:
+            raise ValueError(f"JYDB未返回证券“{requested}”的发行人")
+        if len(issuers) != 1:
+            raise ValueError(f"证券“{requested}”匹配到多个发行人，请使用证券代码查询")
+        selected = next(item for item in exact if item["issuer_name"] in issuers)
+        return selected["issuer_name"], selected
 
     def _container(self) -> Any:
         with self._related_lock:

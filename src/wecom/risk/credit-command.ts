@@ -6,7 +6,7 @@ export function parseCreditQueries(payload: string): string[] {
   return [...new Set(payload.split(/[,，、;；\r\n]+/u).map((item) => item.trim()).filter(Boolean))];
 }
 
-const columns = '| 授信主体 | 集团内授信 | 集团内已用 | 集团内剩余 | 三方授信 | 三方已用 | 三方剩余 |';
+const columns = '| 授信主体 | 三方授信 | 三方已用 | 三方剩余 | 集团内授信 | 集团内已用 | 集团内剩余 |';
 const separator = '| --- | ---: | ---: | ---: | ---: | ---: | ---: |';
 const record = (value: unknown): RecordValue =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? value as RecordValue : {};
@@ -42,7 +42,7 @@ export function formatCreditPages(data: RecordValue, maxBytes: number): string[]
   for (const report of reports) {
     const name = cell(report.entity);
     const values: string[] = [];
-    for (const [key, title] of [['group_internal', '集团内'], ['third_party', '三方']] as const) {
+    for (const [key, title] of [['third_party', '三方'], ['group_internal', '集团内']] as const) {
       const item = record(report[key]);
       values.push(money(item.credit_limit_yuan, '未配置'), money(item.used_credit_yuan), money(item.remaining_credit_yuan));
       const limit = numeric(item.credit_limit_yuan);

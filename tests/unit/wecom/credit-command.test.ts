@@ -22,7 +22,7 @@ describe('/授信', () => {
     const rows = pages[0]!.split('\n').filter((line) => line.startsWith('| 公司'));
     expect(rows).toHaveLength(2);
     expect(rows.every((line) => line.split('|').length === 9)).toBe(true);
-    expect(rows[0]).toBe('| 公司甲 | 10.00 | 12.00 | 0.00 | 未配置 | 0.00 | — |');
+    expect(rows[0]).toBe('| 公司甲 | 未配置 | 0.00 | — | 10.00 | 12.00 | 0.00 |');
     expect(pages[0]).toContain('2026-09-08 · 单位：万元');
     expect(pages[0]).toContain('超额占用：公司甲 · 集团内 · 2.00 万元');
   });
@@ -79,7 +79,7 @@ describe('/授信', () => {
     const finish = vi.fn(async (_value: string) => {});
     const send = vi.fn(async (_value: string) => {});
     await executeCreditCommand('、', undefined, 4000, finish, send);
-    expect(finish.mock.calls[0]![0]).toContain('/授信 <公司名称>');
+    expect(finish.mock.calls[0]![0]).toContain('/授信 <公司或证券名称>');
     await executeCreditCommand('甲', undefined, 4000, finish, send);
     expect(finish.mock.calls[1]![0]).toContain('服务暂不可用');
     await executeCreditCommand('甲', {

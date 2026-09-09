@@ -14,7 +14,7 @@ export const WECOM_RISK_USAGE_LINES = [
 export const WECOM_HELP_LINES = [
   '可用命令：',
   '`/测算 <交易或查询文本>`：开始风险限额测算或查询。',
-  '`/授信 <公司名称>`：查询集团内和三方授信，多个名称用顿号或逗号分隔。',
+  '`/授信 <公司或证券名称>`：查询发行人的三方和集团内授信，多个名称用顿号或逗号分隔。',
   '`/menu`：打开会话控制台。',
   '`/workspace`：查看当前聊天可用的工作区；`/workspace <ID>`：立即切换。',
   '`/doctor`：检查 WeCom、Codex、Workspace、Risk Service 和任务状态。',
@@ -29,8 +29,8 @@ export const WECOM_COMMAND_HINT =
   '快捷：/workspace · /doctor · /runs · /resume · /model · /reasoning · /settings · /测算 · /授信';
 
 export const WECOM_CREDIT_USAGE_LINES = [
-  '请使用：`/授信 <公司名称>`',
-  '例如：`/授信 宁德时代、赣锋锂业、天齐`',
+  '请使用：`/授信 <公司或证券名称>`',
+  '例如：`/授信 中信银行股份有限公司` 或 `/授信 25中信银行二级资本债01BC`',
   '支持模糊名称；多个名称用逗号、顿号、分号或换行分隔。金额单位为万元，持仓取最新可用日期。',
 ] as const;
 
