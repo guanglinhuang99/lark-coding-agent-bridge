@@ -2671,11 +2671,14 @@ async function executeRiskCardSelection(
       await progressRelay.finish();
       if (result.handled) {
         if (progressTarget?.kind === 'stream') {
+          const failed = result.intent === 'risk-error';
           await progressTarget.stream.finish(
             truncateUtf8(
-              renderWeComNotice('风险限额测算完成', [
-                '业务结果已生成，请查看下方结果。',
-              ]),
+              renderWeComNotice(
+                failed ? '⚠️ 风险限额测算失败' : '风险限额测算完成',
+                [failed ? '本次未执行成功，请查看下方错误说明。' : '业务结果已生成，请查看下方结果。'],
+                failed ? { status: 'error', eyebrow: 'RISK · WECOM' } : undefined,
+              ),
               streamMaxBytes,
             ),
           );

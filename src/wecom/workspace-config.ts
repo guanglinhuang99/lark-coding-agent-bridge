@@ -15,6 +15,7 @@ export async function loadWorkspaceConfig(defaultCwd: string, file?: string): Pr
   if (!file?.trim()) return entries;
   const raw: unknown = JSON.parse(await readFile(file, 'utf8'));
   if (!Array.isArray(raw)) throw new Error('Workspace config must be an array of { id, name, cwd }');
+  if (raw.length > 9) throw new Error('Workspace config supports at most 9 additional entries (10 including default)');
   const ids = new Set(['default']);
   const directories = new Set(entries.map(entry => entry.cwd));
   for (const entry of raw) {

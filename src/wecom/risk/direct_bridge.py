@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 import sqlite3
 import json
 import os
+import secrets
 import sys
 import threading
 import time
@@ -54,6 +55,10 @@ class DailyPQCache:
         path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(path) as db:
             db.execute("CREATE TABLE IF NOT EXISTS pq_reads (key TEXT PRIMARY KEY, expires_at REAL, payload TEXT)")
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS pq_inflight "
+                "(key TEXT PRIMARY KEY, owner TEXT NOT NULL, expires_at REAL NOT NULL)"
+            )
         path.chmod(0o600)
 
     @staticmethod
@@ -109,22 +114,57 @@ class DailyPQCache:
         key = hashlib.sha256(json.dumps(self.encode(
             [connection, sql, args, sorted(kwargs.items())]
         ), ensure_ascii=False).encode()).hexdigest()
-        with sqlite3.connect(self.path, timeout=180) as db:
-            db.execute("BEGIN IMMEDIATE")
-            now = self.clock()
-            db.execute("DELETE FROM pq_reads WHERE expires_at <= ?", (now,))
-            cached = db.execute("SELECT payload FROM pq_reads WHERE key=?", (key,)).fetchone()
+        owner = secrets.token_hex(16)
+        started_at = self.clock()
+        while True:
+            # Cache hits never acquire SQLite's write lock, so an unrelated slow
+            # database miss cannot stall already-cached queries.
+            with sqlite3.connect(self.path, timeout=180) as db:
+                cached = db.execute(
+                    "SELECT payload FROM pq_reads WHERE key=? AND expires_at>?",
+                    (key, self.clock()),
+                ).fetchone()
             if cached:
                 return self.decode(json.loads(cached[0]))
+
+            # Claim only this exact key. The write transaction is intentionally
+            # short; the remote database call happens after it has committed.
+            with sqlite3.connect(self.path, timeout=180) as db:
+                db.execute("BEGIN IMMEDIATE")
+                now = self.clock()
+                db.execute("DELETE FROM pq_reads WHERE expires_at <= ?", (now,))
+                cached = db.execute("SELECT payload FROM pq_reads WHERE key=?", (key,)).fetchone()
+                if cached:
+                    return self.decode(json.loads(cached[0]))
+                db.execute("DELETE FROM pq_inflight WHERE expires_at <= ?", (now,))
+                claimed = db.execute(
+                    "INSERT OR IGNORE INTO pq_inflight VALUES (?, ?, ?)",
+                    (key, owner, now + 190),
+                ).rowcount == 1
+            if claimed:
+                break
+            time.sleep(0.05)
+
+        try:
             rows = self.read(connection, sql, *args, **kwargs)
             payload = json.dumps(self.encode(rows), ensure_ascii=False)
             # Expire at midnight of the day this read began, even if the
             # database response arrives after midnight.
-            local_now = datetime.fromtimestamp(now, ZoneInfo("Asia/Shanghai"))
+            local_now = datetime.fromtimestamp(started_at, ZoneInfo("Asia/Shanghai"))
             midnight = datetime.combine(local_now.date() + timedelta(days=1),
                                         datetime.min.time(), tzinfo=ZoneInfo("Asia/Shanghai"))
-            db.execute("INSERT INTO pq_reads VALUES (?, ?, ?)", (key, midnight.timestamp(), payload))
+            with sqlite3.connect(self.path, timeout=180) as db:
+                db.execute("BEGIN IMMEDIATE")
+                db.execute(
+                    "INSERT OR REPLACE INTO pq_reads VALUES (?, ?, ?)",
+                    (key, midnight.timestamp(), payload),
+                )
+                db.execute("DELETE FROM pq_inflight WHERE key=? AND owner=?", (key, owner))
             return self.decode(json.loads(payload))
+        except Exception:
+            with sqlite3.connect(self.path, timeout=180) as db:
+                db.execute("DELETE FROM pq_inflight WHERE key=? AND owner=?", (key, owner))
+            raise
 
 
 class DirectRiskService:

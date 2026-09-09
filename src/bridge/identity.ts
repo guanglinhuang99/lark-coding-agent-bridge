@@ -39,6 +39,15 @@ export function sessionBindingKey(identity: BridgeIdentity, session: SessionBind
   ]);
 }
 
+export function sessionHistoryKey(
+  identity: BridgeIdentity,
+  session: SessionBindingIdentity,
+  sessionId: string,
+): string {
+  if (!nonempty(sessionId)) throw new Error('Invalid session history identity');
+  return JSON.stringify([sessionBindingKey(identity, session), 'history', sessionId]);
+}
+
 export function canonicalWorkspace(cwd: string): string {
   const resolved = realpathSync(cwd);
   if (!statSync(resolved).isDirectory()) throw new Error('Workspace is not a directory');

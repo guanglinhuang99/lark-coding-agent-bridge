@@ -2,6 +2,7 @@
 import importlib.util
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
+import threading
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -60,6 +61,35 @@ class DailyCacheTests(unittest.TestCase):
         self.now += 1
         self.cache('pqread', 'SELECT * FROM PTF')
         self.assertEqual(self.read.call_count, 4)
+
+    def test_unrelated_slow_miss_does_not_block_warm_hit_or_other_cold_query(self):
+        entered = threading.Event()
+        release = threading.Event()
+        other_entered = threading.Event()
+        calls = []
+
+        def read(_connection, sql, *args, **kwargs):
+            calls.append(sql)
+            if sql == 'slow':
+                entered.set()
+                release.wait(3)
+            if sql == 'other':
+                other_entered.set()
+            return [{'sql': sql}]
+
+        cache = bridge.DailyPQCache(self.path, read, lambda: self.now)
+        self.assertEqual(cache('pqread', 'warm'), [{'sql': 'warm'}])
+        with ThreadPoolExecutor(3) as pool:
+            slow = pool.submit(cache, 'pqread', 'slow')
+            self.assertTrue(entered.wait(1))
+            warm = pool.submit(cache, 'pqread', 'warm')
+            other = pool.submit(cache, 'pqread', 'other')
+            self.assertEqual(warm.result(timeout=1), [{'sql': 'warm'}])
+            self.assertTrue(other_entered.wait(1))
+            release.set()
+            self.assertEqual(slow.result(timeout=1), [{'sql': 'slow'}])
+            self.assertEqual(other.result(timeout=1), [{'sql': 'other'}])
+        self.assertEqual(calls.count('warm'), 1)
 
     def test_dataframe_roundtrip(self):
         try:

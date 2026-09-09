@@ -23,7 +23,8 @@ it('keeps the existing workspace as default and loads named local directories', 
 it('rejects ambiguous IDs, arbitrary relative paths, invalid and inaccessible directories', async () => {
   const { dir, other, file } = await setup();
   for (const raw of [
-    {}, [{ id: 'default', name: '重复', cwd: other }],
+    {}, Array.from({ length: 10 }, (_, index) => ({ id: `w${index}`, name: `W${index}`, cwd: `/tmp/w${index}` })),
+    [{ id: 'default', name: '重复', cwd: other }],
     [{ id: 'a', name: 'A', cwd: other }, { id: 'a', name: 'B', cwd: other }],
     [{ id: 'a', name: 'A', cwd: other }, { id: 'b', name: 'B', cwd: other }],
     [{ id: 'a', name: 'A', cwd: dir }],

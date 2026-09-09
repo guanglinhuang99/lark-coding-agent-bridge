@@ -661,7 +661,18 @@ function riskHelp(prefix: string): string {
 }
 
 function formatRiskError(error: unknown): string {
-  if (error instanceof RiskServiceError) return '⚠️ **风险查询失败**：暂时无法完成查询，请稍后重试。';
+  if (error instanceof RiskServiceError) {
+    if (error.code === 'invalid-amount') {
+      return '⚠️ **交易规模无效**：请重新输入正确的金额或数量（含单位）；本次未执行测算。';
+    }
+    if (error.code === 'invalid-days') {
+      return '⚠️ **期限无效**：请输入大于 0 的整数天数；本次未执行测算。';
+    }
+    if (error.code === 'unresolved-transaction') {
+      return '⚠️ **交易信息尚未核验**：请重新确认账户、证券和交易信息；本次未执行测算。';
+    }
+    return '⚠️ **风险查询失败**：暂时无法完成查询，请稍后重试。';
+  }
   const message = error instanceof Error ? error.message : String(error);
   if (/abort|timeout/i.test(message)) return '⚠️ **风险查询超时**：请稍后重试。';
   return '⚠️ **风险查询失败**：暂时无法完成查询，请稍后重试。';

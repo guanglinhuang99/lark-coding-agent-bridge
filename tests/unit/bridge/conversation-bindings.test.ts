@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ConversationState } from '../../../src/bridge/conversation-state';
 import { conversationViews } from '../../../src/bridge/conversation-views';
-import { bridgeIdentityKey, sessionBindingKey, canonicalWorkspace, type BridgeIdentity } from '../../../src/bridge/identity';
+import { bridgeIdentityKey, sessionBindingKey, sessionHistoryKey, canonicalWorkspace, type BridgeIdentity } from '../../../src/bridge/identity';
 import { WeComConversationBindings } from '../../../src/wecom/conversation-bindings';
 import { acquireStateDirectoryLock } from '../../../src/bridge/state-lock';
 import { writeFileAtomic } from '../../../src/platform/atomic-write';
@@ -58,6 +58,35 @@ describe('shared conversation identity and migration', () => {
     const reopened = new ConversationState(join(dir, 'state.json')); await reopened.load(wecom, files);
     expect(conversationViews(reopened, wecom).workspaces.listNamed()).toEqual({});
     expect(conversationViews(reopened, lark).sessionCatalog.activeFor(identity)?.threadId).toBe('known');
+  });
+
+  it('normalizes legacy archived v2 bindings into durable history keys', async () => {
+    const dir = await temp(); const file = join(dir, 'state.json');
+    const state = new ConversationState(file); await state.load(lark);
+    const views = conversationViews(state, lark);
+    views.sessionCatalog.upsertActive({ ...identity, threadId: 'old-thread', now: 100 });
+    views.sessionCatalog.archiveActive({ ...identity, now: 200 });
+    await state.flush();
+
+    const disk = JSON.parse(await readFile(file, 'utf8')) as any;
+    const context = disk.contexts[bridgeIdentityKey(lark)];
+    const archived = Object.values(context.sessions)[0] as any;
+    const historyKey = archived.key as string;
+    const bindingKey = sessionBindingKey(lark, identity);
+    delete context.sessions[historyKey];
+    archived.key = bindingKey;
+    context.sessions[bindingKey] = archived;
+    await writeFile(file, JSON.stringify(disk));
+
+    const reopened = new ConversationState(file); await reopened.load(lark);
+    const entries = conversationViews(reopened, lark).sessionCatalog.entries();
+    expect(entries).toEqual([expect.objectContaining({ threadId: 'old-thread', status: 'archived' })]);
+    expect(entries[0]?.key).toBe(sessionHistoryKey(lark, identity, 'old-thread'));
+    conversationViews(reopened, lark).sessions.setIdleTimeoutMinutes('migration-touch', 1);
+    await reopened.flush();
+    const normalized = JSON.parse(await readFile(file, 'utf8')) as any;
+    expect(normalized.contexts[bridgeIdentityKey(lark)].sessions[bindingKey]).toBeUndefined();
+    expect(normalized.contexts[bridgeIdentityKey(lark)].sessions[sessionHistoryKey(lark, identity, 'old-thread')]).toBeDefined();
   });
 
   it('rejects damaged legacy data without creating a new state or overwriting the source', async () => {
@@ -142,6 +171,7 @@ describe('WeCom binding facade', () => {
     expect(store.threadId(queued)).toBe('group-original');
     await store.setThread(switched, 'group-review');
     await store.setThread(queued, 'late-original');
+    expect(store.sessionsFor(queued).map(entry => entry.threadId)).toEqual(['late-original', 'group-original']);
     expect(store.threadId(groupB)).toBe('group-review');
     expect(store.threadId(alice)).toBe('alice-original');
     expect(store.threadId(bob)).toBe('bob-original');
@@ -160,6 +190,7 @@ describe('WeCom binding facade', () => {
     expect(restarted.workspaceFor(bob)).toBe(dir);
     await restarted.bindWorkspace(groupA, dir);
     expect(restarted.threadId(groupB)).toBe('late-original');
+    expect(restarted.sessionsFor(groupB).map(entry => entry.threadId)).toEqual(['late-original', 'group-original']);
   });
   it('archives unverified legacy threads and resumes only a verified workspace/policy binding', async () => {
     const dir = await temp(); const file = join(dir, 'sessions.json');

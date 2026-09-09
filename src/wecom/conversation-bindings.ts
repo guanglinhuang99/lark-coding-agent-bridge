@@ -1,7 +1,7 @@
 import { ConversationState, scopeRecordKey } from '../bridge/conversation-state';
 import { conversationViews } from '../bridge/conversation-views';
 import {
-  canonicalWorkspace, sessionBindingKey, type BridgeIdentity, type SessionBindingIdentity,
+  canonicalWorkspace, type BridgeIdentity, type SessionBindingIdentity,
 } from '../bridge/identity';
 import type { ThreadSessionStoreOptions } from '../bridge/thread-session-store';
 
@@ -53,9 +53,12 @@ export class WeComConversationBindings {
   sessionsFor(scope: string): Array<{ threadId: string; updatedAt: number; status: 'active' | 'archived' }> {
     const binding = this.bindingFor(scope);
     const maxAge = this.options.maxAgeMs ?? 90 * 24 * 60 * 60 * 1000;
+    const seen = new Set<string>();
     return this.views.sessionCatalog.entries()
       .filter(entry => entry.scopeId === binding.scopeId && entry.cwdRealpath === binding.cwdRealpath &&
         entry.policyFingerprint === binding.policyFingerprint && entry.threadId && this.now() - entry.updatedAt <= maxAge)
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .filter(entry => !seen.has(entry.threadId!) && Boolean(seen.add(entry.threadId!)))
       .map(entry => ({ threadId: entry.threadId!, updatedAt: entry.updatedAt, status: entry.status }));
   }
   async setThread(scope: string, threadId: string, binding = this.bindingFor(scope)): Promise<void> {
@@ -101,7 +104,7 @@ export class WeComConversationBindings {
       const entries = Object.values(bucket.sessions).sort((a, b) => b.updatedAt - a.updatedAt);
       for (const [index, entry] of entries.entries()) {
         if (entry.updatedAt < cutoff || index >= (this.options.maxEntries ?? 2000)) {
-          delete bucket.sessions[sessionBindingKey(this.options.identity, entry)]; removed++;
+          delete bucket.sessions[entry.key]; removed++;
         }
       }
       for (const [key, entry] of Object.entries(bucket.unverifiedThreads)) {
