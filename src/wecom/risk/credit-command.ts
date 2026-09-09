@@ -72,7 +72,10 @@ export function formatCreditPages(data: RecordValue, maxBytes: number): string[]
 
 export async function executeCreditCommand(
   payload: string,
-  service: { getCredits(entities: string[]): Promise<RecordValue> } | undefined,
+  service: {
+    getCredit(entity: string): Promise<RecordValue>;
+    getCredits(entities: string[]): Promise<RecordValue>;
+  } | undefined,
   maxBytes: number,
   finish: (content: string) => Promise<void>,
   send: (content: string) => Promise<void>,
@@ -92,7 +95,14 @@ export async function executeCreditCommand(
   }
   let pages: string[];
   try {
-    pages = formatCreditPages(await service.getCredits(queries), maxBytes);
+    const data = queries.length === 1
+      ? await service.getCredit(queries[0]!).then((report) => ({
+          date: report.date,
+          amount_unit: report.amount_unit,
+          reports: [report],
+        }))
+      : await service.getCredits(queries);
+    pages = formatCreditPages(data, maxBytes);
   } catch {
     await finish('授信查询失败，未将失败结果计为零。请稍后重试；名称过于宽泛时请缩小查询范围。');
     return;

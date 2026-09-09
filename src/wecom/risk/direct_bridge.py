@@ -65,11 +65,22 @@ class DailyPQCache:
     def encode(value):
         if type(value).__module__.startswith("pandas.") and type(value).__name__ in {"NAType", "NaTType"}:
             return ["pandas_null", type(value).__name__]
-        if type(value).__module__.startswith("pandas.") and type(value).__name__ == "DataFrame":
-            return ["dataframe", DailyPQCache.encode({
-                "split": value.to_dict(orient="split"),
-                "dtypes": [str(dtype) for dtype in value.dtypes],
-            })]
+        try:
+            import pandas as pd
+            if isinstance(value, pd.DataFrame):
+                return ["dataframe", DailyPQCache.encode({
+                    "split": value.to_dict(orient="split"),
+                    "dtypes": [str(dtype) for dtype in value.dtypes],
+                })]
+        except ImportError:
+            pass
+        try:
+            import polars as pl
+            if isinstance(value, pl.DataFrame):
+                payload = value.serialize(format="binary")
+                return ["polars_dataframe_binary", base64.b64encode(payload).decode("ascii")]
+        except ImportError:
+            pass
         if isinstance(value, dict):
             return ["dict", [[key, DailyPQCache.encode(item)] for key, item in value.items()]]
         if isinstance(value, (list, tuple)):
@@ -99,6 +110,15 @@ class DailyPQCache:
             for column, dtype in zip(frame.columns, data["dtypes"]):
                 frame[column] = frame[column].astype(dtype)
             return frame
+        if kind == "polars_dataframe_binary":
+            import polars as pl
+            return pl.DataFrame.deserialize(base64.b64decode(item), format="binary")
+        if kind == "polars_dataframe":
+            # Compatibility with the first release hotfix. Those cache rows did
+            # not preserve schema, so inspect every row instead of Polars' first
+            # 100 rows; production credit data has late non-null issuer columns.
+            import polars as pl
+            return pl.DataFrame(DailyPQCache.decode(item), infer_schema_length=None)
         if kind == "dict":
             return {key: DailyPQCache.decode(v) for key, v in item}
         if kind == "list":

@@ -65,6 +65,19 @@ afterEach(() => {
 });
 
 describe('riskservice direct client', () => {
+  it('sends one credit subject through the singular bridge request', async () => {
+    const requests: Record<string, unknown>[] = [];
+    installBridge((request, child) => {
+      requests.push(request);
+      child.stdout.write(`${JSON.stringify({ id: request.id, type: 'result', data: { entity: '公司甲' } })}\n`);
+    });
+    const service = client();
+    await expect(service.getCredit('公司甲')).resolves.toEqual({ entity: '公司甲' });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ method: 'get_credit', args: { entity: '公司甲' } });
+    await service.close();
+  });
+
   it('sends all credit subjects in one bridge request', async () => {
     const requests: Record<string, unknown>[] = [];
     installBridge((request, child) => {
