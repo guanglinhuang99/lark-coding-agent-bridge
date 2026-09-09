@@ -86,7 +86,8 @@ import {
   artifactDeliverySummary, type ReceivedArtifact,
 } from './egress';
 import { resolveWeComModelConfig } from './model-config';
-import { readWeComModelAllowlist, weComModelOptions } from './model-options';
+import { isRiskUserAllowedByConfig, readUseAllowedList } from './risk/access';
+import { readWeComModelAllowlist } from './model-options';
 import { handleEnterChat as handleEnterChatEvent } from './enter-chat-handler';
 import { enterChatObservation } from './enter-chat-observability';
 import { weComUserErrorMarkdown } from './user-error';
@@ -293,6 +294,14 @@ const riskAllowedUserIds = new Set(
     .map((item) => item.trim())
     .filter(Boolean),
 );
+const useAllowedList = readUseAllowedList(process.env.USE_ALLOWED_LIST);
+const riskAccessLocked = useAllowedList && riskAllowedUserIds.size === 0;
+if (riskAccessLocked) {
+  console.warn(
+    'WeCom risk access is locked: USE_ALLOWED_LIST is enabled but WECOM_RISK_ALLOWED_USERIDS is empty. ' +
+      'Configure allowed user IDs or explicitly set USE_ALLOWED_LIST=0.',
+  );
+}
 
 await mkdir(stateDir, { recursive: true });
 const releaseStateLock = await acquireStateDirectoryLock(stateDir);
@@ -2249,7 +2258,29 @@ function freshRunState(): RunState {
 }
 
 function isRiskUserAllowed(userid: string | undefined): boolean {
-  return riskAllowedUserIds.size === 0 || (Boolean(userid) && riskAllowedUserIds.has(userid ?? ''));
+  return isRiskUserAllowedByConfig(useAllowedList, riskAllowedUserIds, userid);
+}
+
+function warmRiskService(): void {
+  if (!riskClient || riskWarmup || riskAccessLocked) return;
+  const startedAt = Date.now();
+  riskWarmup = riskClient.listProducts()
+    .then((products) => {
+      const durationMs = Date.now() - startedAt;
+      log.info('wecom-risk', 'warmup-completed', { durationMs, products: products.length });
+      reportMetric('wecom_risk_warmup_ms', durationMs, { outcome: 'success' });
+    })
+    .catch((err: unknown) => {
+      const durationMs = Date.now() - startedAt;
+      log.warn('wecom-risk', 'warmup-failed', {
+        durationMs,
+        message: redactDiagnosticText(err instanceof Error ? err.message : String(err)),
+      });
+      reportMetric('wecom_risk_warmup_ms', durationMs, { outcome: 'error' });
+    })
+    .finally(() => {
+      riskWarmup = undefined;
+    });
 }
 
 function isConversationBusy(key: string): boolean {
