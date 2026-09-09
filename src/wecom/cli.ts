@@ -485,6 +485,7 @@ client.on('authenticated', () => {
   lastHealthError = undefined;
   log.info('ws', 'authenticated', { sandbox });
   void refreshHealth();
+  warmRiskService();
   console.log(`✓ WeCom bot authenticated; workspace=${workspace}; sandbox=${sandbox}`);
 });
 client.on('reconnecting', (attempt: number) => {

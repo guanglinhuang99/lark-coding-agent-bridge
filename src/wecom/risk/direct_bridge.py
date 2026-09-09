@@ -137,6 +137,7 @@ class DailyPQCache:
         ), ensure_ascii=False).encode()).hexdigest()
         owner = secrets.token_hex(16)
         started_at = self.clock()
+        poll_delay = 0.05
         while True:
             # Cache hits never acquire SQLite's write lock, so an unrelated slow
             # database miss cannot stall already-cached queries.
@@ -164,7 +165,8 @@ class DailyPQCache:
                 ).rowcount == 1
             if claimed:
                 break
-            time.sleep(0.05)
+            time.sleep(poll_delay)
+            poll_delay = min(poll_delay * 2, 0.5)
 
         try:
             rows = self.read(connection, sql, *args, **kwargs)
@@ -526,7 +528,7 @@ class DirectRiskService:
             if current.get("status") in {"success", "error"}:
                 current.pop("traceback", None)
                 return current
-            time.sleep(0.05)
+            time.sleep(0.1)
         raise TimeoutError("risk-service 本地测算超过180秒")
 
 

@@ -248,22 +248,44 @@ export async function normalizeRiskDraft(originalText: string, draft: RiskAiDraf
   );
 }
 
+const RISK_SECURITY_RESOLUTION_CONCURRENCY = 4;
+
 export async function normalizeSecurity(originalText: string, draft: RiskAiDraft, product: string, service: RiskService): Promise<RiskIntentState> {
   if (draft.transactions) {
     if (!draft.transactions.length) throw new Error('交易列表不能为空');
     const transactions = draft.transactions.map(item => ({ ...item }));
-    for (let index = 0; index < transactions.length; index++) {
-      const item = transactions[index]!;
-      const leaf = { ...item, accountQuery: draft.accountQuery };
-      const state = item.resolvedSecurity
-        ? completeOrMissing(originalText, leaf, product, item.resolvedSecurity)
-        : await normalizeSecurity(originalText, leaf, product, service);
+    const resolutions = await mapSettledConcurrent(
+      transactions,
+      RISK_SECURITY_RESOLUTION_CONCURRENCY,
+      async (item) => {
+        const leaf = { ...item, accountQuery: draft.accountQuery };
+        return item.resolvedSecurity
+          ? completeOrMissing(originalText, leaf, product, item.resolvedSecurity)
+          : normalizeSecurity(originalText, leaf, product, service);
+      },
+    );
+
+    // Keep successful lookups from later legs so an earlier clarification does
+    // not force those independent master-data queries to run again afterwards.
+    for (let index = 0; index < resolutions.length; index++) {
+      const result = resolutions[index]!;
+      if (result.status !== 'fulfilled' || result.value.stage !== 'confirm') continue;
+      const security = result.value.security;
+      if (security) transactions[index] = { ...transactions[index]!, resolvedSecurity: security };
+    }
+
+    // Preserve the prior sequential user-visible semantics: the first failing,
+    // ambiguous, or incomplete leg in transaction order is still the one shown.
+    for (let index = 0; index < resolutions.length; index++) {
+      const result = resolutions[index]!;
+      if (result.status === 'rejected') throw result.reason;
+      const state = result.value;
       if (state.stage !== 'confirm') return { ...state, draft: { ...draft, transactions }, transactionIndex: index };
+      const item = transactions[index]!;
       if (!confirmedRiskAmount(item.amountText ?? '')) return {
         stage: 'freeform', field: 'amount', originalText, product,
         draft: { ...draft, transactions }, transactionIndex: index,
       };
-      transactions[index] = { ...item, resolvedSecurity: state.security };
     }
     const first = transactions[0]!;
     return { stage: 'confirm', originalText, product,
@@ -698,4 +720,27 @@ function securityQueryValue(value: unknown): string {
   const codes = [...new Set(query.match(/\b\d{6,12}\.(?:IB|SH|SZ)\b/gi)?.map(code => code.toUpperCase()))];
   if (codes.length > 1) throw new RiskIntentClarificationError(['单笔含多个证券代码，请拆分交易']);
   return codes[0] ?? query;
+}
+
+async function mapSettledConcurrent<T, R>(
+  items: readonly T[],
+  maxConcurrent: number,
+  task: (item: T, index: number) => Promise<R> | R,
+): Promise<Array<PromiseSettledResult<R>>> {
+  const results = new Array<PromiseSettledResult<R>>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(items.length, Math.max(1, maxConcurrent));
+  const workers = Array.from({ length: workerCount }, async () => {
+    for (;;) {
+      const index = nextIndex++;
+      if (index >= items.length) return;
+      try {
+        results[index] = { status: 'fulfilled', value: await task(items[index]!, index) };
+      } catch (reason) {
+        results[index] = { status: 'rejected', reason };
+      }
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }

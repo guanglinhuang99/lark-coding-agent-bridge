@@ -208,6 +208,46 @@ describe('batch AI risk intent', () => {
     expect(service.calculatePretrade).not.toHaveBeenCalled();
   });
 
+  it('resolves independent batch securities concurrently with a four-query bound', async () => {
+    let active = 0;
+    let maxActive = 0;
+    let started = 0;
+    let releaseFirstWave!: () => void;
+    const firstWave = new Promise<void>((resolve) => { releaseFirstWave = resolve; });
+    const searchSecurities = vi.fn(async (query: string) => {
+      active += 1;
+      started += 1;
+      maxActive = Math.max(maxActive, active);
+      if (started <= 4) {
+        if (started === 4) releaseFirstWave();
+        await firstWave;
+      }
+      await Promise.resolve();
+      active -= 1;
+      return [{ name: query, code: query, label: query }];
+    });
+    const service = fakeService({ searchSecurities });
+    const transactions = Array.from({ length: 8 }, (_, index) => ({
+      action: 'buy' as const,
+      securityQuery: `${100000000 + index}.IB`,
+      amountText: '1000w',
+      market: 'secondary' as const,
+    }));
+    const state = await normalizeRiskDraft(
+      'ESG纯债1号拟投资八只信用债',
+      {
+        accountQuery: 'ESG纯债1号', action: 'buy', amountText: '1000w',
+        market: 'secondary', transactions,
+      },
+      service,
+    );
+
+    expect(state.stage).toBe('confirm');
+    expect(searchSecurities).toHaveBeenCalledTimes(8);
+    expect(maxActive).toBe(4);
+    expect(state.draft.transactions?.every((item) => Boolean(item.resolvedSecurity))).toBe(true);
+  });
+
   it('advances a selected batch security and confirms after the final leg is resolved', async () => {
     const service = fakeService();
     const state = {
