@@ -277,7 +277,7 @@ class DirectRiskService:
                 report["matched_queries"] = [requested]
             return report
         if method == "get_credits":
-            return self.credit_query.build_credit_reports(args.get("entities"))
+            return self._credit_reports(args.get("entities"))
         if method == "calculate_pretrade":
             return self._calculate_pretrade(
                 str(args.get("product") or ""),
@@ -325,6 +325,89 @@ class DirectRiskService:
             raise ValueError(f"证券“{requested}”匹配到多个发行人，请使用证券代码查询")
         selected = next(item for item in exact if item["issuer_name"] in issuers)
         return selected["issuer_name"], selected
+
+    def _credit_reports(self, entities: Any) -> dict[str, Any]:
+        if (
+            not isinstance(entities, list)
+            or not entities
+            or any(not isinstance(item, str) for item in entities)
+        ):
+            return self.credit_query.build_credit_reports(entities)
+
+        resolved: list[str | None] = [None] * len(entities)
+        resolution_errors: list[dict[str, str]] = []
+
+        def resolve(index: int, requested: str) -> tuple[int, str, str | None]:
+            try:
+                entity, _security = self._resolve_credit_entity(requested)
+                return index, entity, None
+            except ValueError as exc:
+                return index, requested, str(exc)
+
+        # Bound JYDB concurrency so a long multi-name request stays well within
+        # the bridge timeout without opening an unbounded number of connections.
+        with ThreadPoolExecutor(max_workers=min(4, len(entities))) as pool:
+            for index, entity, error in pool.map(
+                lambda item: resolve(*item),
+                enumerate(entities),
+            ):
+                if error:
+                    resolution_errors.append({
+                        "query": entities[index],
+                        "code": "security_issuer_resolution",
+                        "message": error,
+                    })
+                else:
+                    resolved[index] = entity
+
+        originals_by_entity: dict[str, list[str]] = {}
+        unique_entities: list[str] = []
+        for original, entity in zip(entities, resolved):
+            if entity is None:
+                continue
+            key = self._credit_match_key(entity)
+            originals = originals_by_entity.setdefault(key, [])
+            if original not in originals:
+                originals.append(original)
+            if entity not in unique_entities:
+                unique_entities.append(entity)
+
+        if unique_entities:
+            data = self.credit_query.build_credit_reports(unique_entities)
+        else:
+            data = {"date": "", "amount_unit": "CNY", "reports": [], "unmatched": [], "errors": []}
+
+        def original_queries(value: Any) -> list[str]:
+            key = self._credit_match_key(value)
+            return originals_by_entity.get(key, [str(value or "")])
+
+        reports = data.get("reports") if isinstance(data.get("reports"), list) else []
+        for report in reports:
+            if not isinstance(report, dict):
+                continue
+            matched = report.get("matched_queries")
+            rewritten: list[str] = []
+            for query in matched if isinstance(matched, list) else []:
+                for original in original_queries(query):
+                    if original not in rewritten:
+                        rewritten.append(original)
+            report["matched_queries"] = rewritten
+
+        unmatched = data.get("unmatched") if isinstance(data.get("unmatched"), list) else []
+        data["unmatched"] = [
+            original
+            for query in unmatched
+            for original in original_queries(query)
+        ]
+        errors = data.get("errors") if isinstance(data.get("errors"), list) else []
+        rewritten_errors: list[dict[str, Any]] = []
+        for raw in errors:
+            if not isinstance(raw, dict):
+                continue
+            originals = original_queries(raw.get("query"))
+            rewritten_errors.extend(dict(raw, query=original) for original in originals)
+        data["errors"] = rewritten_errors + resolution_errors
+        return data
 
     def _container(self) -> Any:
         with self._related_lock:
