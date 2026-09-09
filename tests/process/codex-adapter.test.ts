@@ -1,6 +1,6 @@
 import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { CodexAdapter } from '../../src/agent/codex/adapter.js';
 import { buildCodexArgs } from '../../src/agent/codex/argv.js';
@@ -125,7 +125,7 @@ describe('CodexAdapter process contract', () => {
     const instructionsArg = record.argv.find((arg) => arg.startsWith('model_instructions_file='));
     if (!instructionsArg) throw new Error('risk-intent instructions file was not passed');
     const instructionsPath = JSON.parse(instructionsArg.slice('model_instructions_file='.length)) as string;
-    expect(instructionsPath.startsWith(join(profileStateDir, 'risk-intent') + '/')).toBe(true);
+    expect(instructionsPath.startsWith(join(profileStateDir, 'risk-intent') + sep)).toBe(true);
     expect(await readFile(instructionsPath, 'utf8')).toBe(RISK_INTENT_INSTRUCTIONS);
     expect(record.argv).toEqual([
       'exec',

@@ -1,6 +1,5 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
-import { canonicalWorkspace } from '../bridge/identity';
 import { resolveWorkingDirectory } from '../policy/workspace';
 
 export interface WeComWorkspace {
@@ -11,7 +10,9 @@ export interface WeComWorkspace {
 
 /** Local operator-owned registry. Chat commands select IDs, never arbitrary paths. */
 export async function loadWorkspaceConfig(defaultCwd: string, file?: string): Promise<WeComWorkspace[]> {
-  const entries: WeComWorkspace[] = [{ id: 'default', name: '默认工作区', cwd: canonicalWorkspace(defaultCwd) }];
+  const defaultRealpath = await realpath(defaultCwd);
+  if (!(await stat(defaultRealpath)).isDirectory()) throw new Error('Workspace is not a directory');
+  const entries: WeComWorkspace[] = [{ id: 'default', name: '默认工作区', cwd: defaultRealpath }];
   if (!file?.trim()) return entries;
   const raw: unknown = JSON.parse(await readFile(file, 'utf8'));
   if (!Array.isArray(raw)) throw new Error('Workspace config must be an array of { id, name, cwd }');

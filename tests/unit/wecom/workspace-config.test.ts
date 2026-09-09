@@ -1,8 +1,7 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
-import { canonicalWorkspace } from '../../../src/bridge/identity';
 import { loadWorkspaceConfig } from '../../../src/wecom/workspace-config';
 
 const dirs: string[] = [];
@@ -15,9 +14,9 @@ async function setup() {
 
 it('keeps the existing workspace as default and loads named local directories', async () => {
   const { dir, other, file } = await setup();
-  expect(await loadWorkspaceConfig(dir)).toEqual([{ id: 'default', name: '默认工作区', cwd: canonicalWorkspace(dir) }]);
+  expect(await loadWorkspaceConfig(dir)).toEqual([{ id: 'default', name: '默认工作区', cwd: await realpath(dir) }]);
   await writeFile(file, JSON.stringify([{ id: 'review', name: ' 合同审核 ', cwd: other }]));
-  expect((await loadWorkspaceConfig(dir, file))[1]).toEqual({ id: 'review', name: '合同审核', cwd: canonicalWorkspace(other) });
+  expect((await loadWorkspaceConfig(dir, file))[1]).toEqual({ id: 'review', name: '合同审核', cwd: await realpath(other) });
 });
 
 it('rejects ambiguous IDs, arbitrary relative paths, invalid and inaccessible directories', async () => {
