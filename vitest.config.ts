@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 // Match tsup's `.html` text loader (tsup.config.ts) so `import html from
 // './generated/index.html'` returns the file's contents as a string under
@@ -17,4 +17,11 @@ export default defineConfig({
       },
     },
   ],
+  test: {
+    exclude: [
+      ...configDefaults.exclude,
+      "**/.worktrees/**",
+      "**/.pnpm-store/**",
+    ],
+  },
 });

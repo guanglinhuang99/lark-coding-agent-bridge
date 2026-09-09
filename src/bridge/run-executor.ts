@@ -198,7 +198,11 @@ export class RunExecutor {
 }
 
 class EventFanout {
-  private readonly buffer: AgentEvent[] = [];
+  private readonly buffer: Array<AgentEvent | undefined> = [];
+  private bufferOffset = 0;
+  private bufferStart = 0;
+  private readonly subscribers = new Map<number, number>();
+  private nextSubscriberId = 1;
   private readonly waiters = new Set<() => void>();
   private started = false;
   private done = false;
@@ -207,23 +211,62 @@ class EventFanout {
   constructor(private readonly source: AsyncIterable<AgentEvent>, private readonly onDone: () => Promise<void>) {}
   subscribe(): AsyncIterable<AgentEvent> {
     return { [Symbol.asyncIterator]: () => {
-      let index = 0;
-      return { next: async (): Promise<IteratorResult<AgentEvent>> => {
-        this.start();
-        for (;;) {
-          if (index < this.buffer.length) return { done: false, value: this.buffer[index++]! };
-          if (this.hasError) throw this.error;
-          if (this.done) return { done: true, value: undefined };
-          await new Promise<void>((resolve) => this.waiters.add(resolve));
-        }
-      } };
+      const subscriberId = this.nextSubscriberId++;
+      let closed = false;
+      // A subscriber joins at the current live edge. Concurrent subscribers
+      // created before the next source event still receive the same full stream,
+      // while late subscribers no longer force the fanout to retain run history.
+      this.subscribers.set(subscriberId, this.liveEnd());
+      this.start();
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        this.subscribers.delete(subscriberId);
+        this.reclaim();
+      };
+      return {
+        next: async (): Promise<IteratorResult<AgentEvent>> => {
+          for (;;) {
+            if (closed) return { done: true, value: undefined };
+            const cursor = this.subscribers.get(subscriberId);
+            if (cursor === undefined) return { done: true, value: undefined };
+            const offset = this.bufferOffset + cursor - this.bufferStart;
+            if (offset >= this.bufferOffset && offset < this.buffer.length) {
+              const value = this.buffer[offset];
+              if (value === undefined) throw new Error('EventFanout cursor reached reclaimed data');
+              this.subscribers.set(subscriberId, cursor + 1);
+              this.reclaim();
+              return { done: false, value };
+            }
+            if (this.hasError) {
+              close();
+              throw this.error;
+            }
+            if (this.done) {
+              close();
+              return { done: true, value: undefined };
+            }
+            await new Promise<void>((resolve) => this.waiters.add(resolve));
+          }
+        },
+        return: async (): Promise<IteratorResult<AgentEvent>> => {
+          close();
+          return { done: true, value: undefined };
+        },
+        throw: async (error?: unknown): Promise<IteratorResult<AgentEvent>> => {
+          close();
+          throw error;
+        },
+      };
     } };
   }
   private start(): void { if (!this.started) { this.started = true; void this.pump(); } }
   private async pump(): Promise<void> {
     try {
       for await (const event of this.source) {
-        this.buffer.push(event); this.wakeAll();
+        this.buffer.push(event);
+        this.reclaim();
+        this.wakeAll();
         if (event.type === 'done' || event.type === 'error') break;
       }
     } catch (err) { this.hasError = true; this.error = err; }
@@ -231,6 +274,32 @@ class EventFanout {
       try { await this.onDone(); }
       catch (err) { this.hasError = true; this.error = err; }
       finally { this.done = true; this.wakeAll(); }
+    }
+  }
+  private liveEnd(): number {
+    return this.bufferStart + (this.buffer.length - this.bufferOffset);
+  }
+  private reclaim(): void {
+    const nextIndex = this.liveEnd();
+    const oldestNeeded = this.subscribers.size > 0
+      ? Math.min(...this.subscribers.values())
+      : nextIndex;
+    const removeCount = oldestNeeded - this.bufferStart;
+    if (removeCount <= 0) return;
+    const nextOffset = this.bufferOffset + removeCount;
+    for (let index = this.bufferOffset; index < nextOffset; index++) this.buffer[index] = undefined;
+    this.bufferOffset = nextOffset;
+    this.bufferStart = oldestNeeded;
+    if (this.bufferOffset === this.buffer.length) {
+      this.buffer.length = 0;
+      this.bufferOffset = 0;
+      return;
+    }
+    // Compact only in batches so a slow consumer catching up does not turn
+    // front-removal into repeated O(n) array moves.
+    if (this.bufferOffset >= 1024 && this.bufferOffset * 2 >= this.buffer.length) {
+      this.buffer.splice(0, this.bufferOffset);
+      this.bufferOffset = 0;
     }
   }
   private wakeAll(): void {

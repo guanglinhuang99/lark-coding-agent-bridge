@@ -36,7 +36,8 @@
   "scripts": {
     "dev": "tsup --watch",
     "build:web": "vite build web",
-    "build": "pnpm build:web && tsup",
+    "build": "pnpm build:web && pnpm build:server",
+    "build:server": "tsup",
     "typecheck": "tsc --noEmit",
     "pretest": "pnpm build:web",
     "test": "vitest run",
@@ -44,8 +45,8 @@
     "test:integration": "vitest run tests/integration --passWithNoTests",
     "test:process": "vitest run tests/process --passWithNoTests",
     "ci": "pnpm run ci:platform",
-    "ci:local": "git diff --check && pnpm test && pnpm typecheck && pnpm build",
-    "ci:platform": "pnpm test && pnpm typecheck && pnpm build",
+    "ci:local": "git diff --check && pnpm test && pnpm typecheck && pnpm build:server",
+    "ci:platform": "pnpm test && pnpm typecheck && pnpm build:server",
     "prepare": "npm run build",
     "prepublishOnly": "pnpm typecheck && pnpm build"
   },

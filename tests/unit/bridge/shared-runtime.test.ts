@@ -110,6 +110,46 @@ describe('shared run executor', () => {
     const run = await executor.submit(input()); const results = await Promise.all([collect(run.subscribe()), collect(run.subscribe())]);
     expect(results[0]).toEqual(results[1]); expect(f.run).toHaveBeenCalledOnce(); expect(pool.snapshot().active).toBe(0);
   });
+  it('starts late subscribers at the live edge after drained events are reclaimable', async () => {
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const secondGate = new Promise<void>((resolve) => { releaseSecond = resolve; });
+    const stop = vi.fn(async () => {});
+    const waitForExit = vi.fn(async () => true);
+    const agent: AgentAdapter = {
+      id: 'codex', displayName: 'Codex', isAvailable: async () => true,
+      run: (opts) => ({
+        runId: opts.runId, stop, waitForExit,
+        events: { async *[Symbol.asyncIterator]() {
+          await firstGate;
+          yield { type: 'text', delta: 'first' } as AgentEvent;
+          await secondGate;
+          yield { type: 'text', delta: 'second' } as AgentEvent;
+          yield done;
+        } },
+      }),
+    };
+    const pool = new ProcessPool(() => 1);
+    const executor = new RunExecutor({ agent, pool, activeRuns: new ActiveRuns() });
+    const run = await executor.submit(input());
+    const first = run.subscribe()[Symbol.asyncIterator]();
+    const firstEvent = first.next();
+    releaseFirst();
+    await expect(firstEvent).resolves.toEqual({ done: false, value: { type: 'text', delta: 'first' } });
+
+    const late = run.subscribe()[Symbol.asyncIterator]();
+    const firstSecond = first.next();
+    const lateSecond = late.next();
+    releaseSecond();
+    await expect(firstSecond).resolves.toEqual({ done: false, value: { type: 'text', delta: 'second' } });
+    await expect(lateSecond).resolves.toEqual({ done: false, value: { type: 'text', delta: 'second' } });
+    await expect(first.next()).resolves.toEqual({ done: false, value: done });
+    await expect(late.next()).resolves.toEqual({ done: false, value: done });
+    await expect(first.next()).resolves.toMatchObject({ done: true });
+    await expect(late.next()).resolves.toMatchObject({ done: true });
+    expect(pool.snapshot().active).toBe(0);
+  });
   it('rechecks policy expiry after waiting and frees the rejected scope', async () => {
     let now = 0; const f = agentFixture(); const pool = new ProcessPool(() => 1); const activeRuns = new ActiveRuns();
     const release = await pool.acquire(); const executor = new RunExecutor({ agent: f.agent, pool, activeRuns, now: () => now });

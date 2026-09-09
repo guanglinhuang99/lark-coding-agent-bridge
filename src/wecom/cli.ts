@@ -1592,13 +1592,15 @@ async function runCodexPrompt(
         active.state = state;
         active.threadId = threadId;
 
-        const rendered = renderStream(state, threadId, workspace);
         const now = Date.now();
         const terminal = state.terminal !== 'running';
-        if (rendered !== lastSent && (terminal || now - lastFlushAt >= streamFlushIntervalMs)) {
-          lastSent = rendered;
-          lastFlushAt = now;
-          streamUpdates.update(rendered);
+        if (terminal || now - lastFlushAt >= streamFlushIntervalMs) {
+          const rendered = renderStream(state, threadId, workspace);
+          if (rendered !== lastSent) {
+            lastSent = rendered;
+            lastFlushAt = now;
+            streamUpdates.update(rendered);
+          }
         }
       }
 
