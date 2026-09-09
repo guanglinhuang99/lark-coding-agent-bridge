@@ -2,9 +2,6 @@ import type { RiskPretradeAction, RiskSecuritySuggestion, RiskService } from './
 import { confirmedRiskAmount, type RiskIntentState } from './intent';
 import { RiskServiceError } from './client';
 import {
-  extractAmount,
-  findAction,
-  isRiskCandidate,
   matchProductCandidates,
   matchProducts,
   parseRiskMessage,
@@ -35,6 +32,17 @@ export interface RiskSelectionRequest {
   expiresAt: number;
 }
 
+type RiskQueryIntent = Exclude<RiskIntent, { kind: 'pretrade_calc' } | { kind: 'unknown' }>;
+
+export type RiskQueryState =
+  | { kind: 'product'; intent: RiskQueryIntent; options: string[] }
+  | {
+      kind: 'security';
+      intent: Extract<RiskQueryIntent, { kind: 'check_security' }>;
+      options: RiskSecuritySuggestion[];
+    }
+  | { kind: 'missing'; intent: RiskQueryIntent };
+
 export type RiskRouteResult =
   | { handled: false }
   | {
@@ -42,93 +50,179 @@ export type RiskRouteResult =
       markdown: string;
       intent: string;
       selection?: RiskSelectionRequest;
+      continuation?: RiskQueryState;
     };
 
 export interface WeComRiskRouterOptions {
+  /** @deprecated Product caching is owned by RiskDirectClient. */
   productCacheTtlMs?: number;
+  selectionTtlMs?: number;
+  /** @deprecated Use selectionTtlMs. */
   pendingTtlMs?: number;
   now?: () => number;
 }
 
-type PendingState =
-  | { kind: 'product'; intent: RiskIntent; options: string[]; expiresAt: number }
-  | {
-      kind: 'security';
-      intent: Extract<RiskIntent, { kind: 'pretrade_calc' | 'check_security' }>;
-      options: RiskSecuritySuggestion[];
-      expiresAt: number;
-    }
-  | { kind: 'missing'; intent: RiskIntent; expiresAt: number };
-
+/**
+ * Stateless deterministic router for non-pretrade risk queries.
+ *
+ * Conversation/card continuation state is returned to the caller as
+ * `RiskQueryState`; the router never stores it. Pretrade parsing/confirmation is
+ * owned by the intent flow in `risk/intent.ts`.
+ */
 export class WeComRiskRouter {
-  private readonly productCacheTtlMs: number;
-  private readonly pendingTtlMs: number;
+  private readonly selectionTtlMs: number;
   private readonly now: () => number;
-  private products: string[] = [];
-  private productsLoadedAt = 0;
-  private readonly pending = new Map<string, PendingState>();
 
   constructor(
     private readonly service: RiskService,
     options: WeComRiskRouterOptions = {},
   ) {
-    this.productCacheTtlMs = options.productCacheTtlMs ?? 60 * 60_000;
-    this.pendingTtlMs = options.pendingTtlMs ?? 5 * 60_000;
+    this.selectionTtlMs = options.selectionTtlMs ?? options.pendingTtlMs ?? 5 * 60_000;
     this.now = options.now ?? Date.now;
   }
 
-  shouldHandle(conversationKey: string, text: string, hasAttachments: boolean): boolean {
-    if (hasAttachments) return false;
-    // Initial risk entry is explicitly gated by `/测算` in the WeCom CLI.
-    // This predicate only identifies a pending risk follow-up.
-    return this.pending.has(conversationKey);
-  }
-
   async handle(
-    conversationKey: string,
+    _conversationKey: string,
     text: string,
     onProgress?: (progress: string) => void,
   ): Promise<RiskRouteResult> {
     try {
-      const pending = this.pending.get(conversationKey);
-      if (pending?.expiresAt !== undefined && pending.expiresAt <= this.now()) {
-        this.pending.delete(conversationKey);
-        if (!isRiskCandidate(text)) {
-          return handled(
-            pending.intent.kind,
-            '之前的选择已过期，请重新发送完整交易或查询。',
-          );
-        }
-      } else if (pending) {
-        return await this.handlePending(conversationKey, pending, text, onProgress);
-      }
       const products = await this.loadProducts();
       const intent = parseRiskMessage(text, products);
+      if (intent.kind === 'pretrade_calc') return { handled: false };
       if (intent.kind === 'unknown') {
-        return {
-          handled: true,
-          intent: 'unknown-risk',
-          markdown: riskHelp('这条信息还缺少完整的交易内容。'),
-        };
+        return handled(
+          'unknown-risk',
+          riskHelp('这条信息还缺少完整的风险查询内容。'),
+        );
       }
-      return await this.execute(conversationKey, intent, onProgress);
+      return await this.execute(intent, products, onProgress);
     } catch (error) {
-      return {
-        handled: true,
-        intent: 'risk-error',
-        markdown: formatRiskError(error),
-      };
+      return handled('risk-error', formatRiskError(error));
     }
   }
 
-  /** Called only with the server-side state consumed by a validated confirmation. */
+  async continue(
+    state: RiskQueryState,
+    text: string,
+    onProgress?: (progress: string) => void,
+  ): Promise<RiskRouteResult> {
+    try {
+      const products = await this.loadProducts();
+      if (state.kind === 'product') {
+        const index = productSelectionIndex(text, state.options.length);
+        const direct = matchProducts(text, state.options);
+        const selected = index === undefined
+          ? direct.length === 1 ? direct[0] : undefined
+          : state.options[index];
+        if (!selected) {
+          return handled(
+            state.intent.kind,
+            selectionPrompt('账户', state.options, 'letter'),
+            productSelection(state.options, this.selectionExpiry()),
+            state,
+          );
+        }
+        await onProgress?.(`已确认：账户「${selected}」，正在继续风险查询…`);
+        const intent = {
+          ...state.intent,
+          product: selected,
+          productCandidates: [selected],
+        } as RiskQueryIntent;
+        return await this.execute(intent, products, onProgress);
+      }
+
+      if (state.kind === 'security') {
+        const index = isConfirm(text) && state.options.length === 1
+          ? 0
+          : selectionIndex(text, state.options.length);
+        if (index === undefined) {
+          const reparsed = parseRiskMessage(text, products);
+          if (reparsed.kind === 'pretrade_calc') return { handled: false };
+          if (reparsed.kind !== 'unknown') {
+            return await this.execute(reparsed, products, onProgress);
+          }
+          return handled(
+            state.intent.kind,
+            state.options.length === 1
+              ? `请确认证券：**${state.options[0]?.label}**\n\n点击“确认选择”，或回复“确认”/“1”。`
+              : selectionPrompt('证券', state.options.map((item) => item.label), 'number'),
+            securitySelection(state.options, this.selectionExpiry(), state.options.length === 1),
+            state,
+          );
+        }
+        const selected = state.options[index];
+        if (!selected) {
+          return handled(
+            state.intent.kind,
+            '证券序号超出范围，请重新选择。',
+            securitySelection(state.options, this.selectionExpiry(), state.options.length === 1),
+            state,
+          );
+        }
+        await onProgress?.(`已确认：证券「${securityDisplay(selected)}」，正在继续风险查询…`);
+        const data = await this.service.checkSecurity(
+          state.intent.product ?? '',
+          selected.code || selected.name,
+        );
+        return handled(state.intent.kind, formatSecurityCheck(data));
+      }
+
+      const productMatch = matchProductCandidates(text, products);
+      const productMatches = productMatch.products;
+      const reparsed = parseRiskMessage(text, products);
+      if (reparsed.kind === 'pretrade_calc') return { handled: false };
+      let merged: RiskQueryIntent = state.intent;
+
+      if (reparsed.kind !== 'unknown' && reparsed.kind !== merged.kind) {
+        return await this.execute(reparsed, products, onProgress);
+      }
+      if ('productCandidates' in merged && productMatches.length > 0) {
+        merged = {
+          ...merged,
+          product: productMatches.length === 1 && !productMatch.fuzzy ? productMatches[0] : undefined,
+          productCandidates: productMatches,
+        } as RiskQueryIntent;
+      }
+      if (
+        merged.kind === 'check_security' &&
+        !merged.securityQuery &&
+        reparsed.kind === 'unknown' &&
+        productMatches.length === 0
+      ) {
+        merged = { ...merged, securityQuery: text.trim() };
+      } else if (
+        merged.kind === 'check_counterparty' &&
+        !merged.counterparty &&
+        reparsed.kind === 'unknown' &&
+        productMatches.length === 0
+      ) {
+        merged = { ...merged, counterparty: text.trim() };
+      } else if (
+        merged.kind === 'query_credit' &&
+        !merged.entity &&
+        reparsed.kind === 'unknown'
+      ) {
+        merged = { ...merged, entity: text.trim() };
+      } else if (reparsed.kind === merged.kind) {
+        merged = reparsed;
+      }
+      return await this.execute(merged, products, onProgress);
+    } catch (error) {
+      return handled('risk-error', formatRiskError(error));
+    }
+  }
+
+  /** Called only with server-side state consumed by a validated confirmation. */
   async executeConfirmed(
     state: Extract<RiskIntentState, { stage: 'confirm' }>,
     onProgress?: (progress: string) => void,
   ): Promise<RiskRouteResult> {
     try {
       const transactions = state.draft.transactions ?? [{ ...state.draft, resolvedSecurity: state.security }];
-      if (!state.product || !transactions.length) throw new RiskServiceError('交易信息尚未核验', 'unresolved-transaction');
+      if (!state.product || !transactions.length) {
+        throw new RiskServiceError('交易信息尚未核验', 'unresolved-transaction');
+      }
       // Validate every leg before submitting anything: a batch is one scenario.
       const notes: string[] = [];
       const actions: RiskPretradeAction[] = transactions.map((draft, index) => {
@@ -141,7 +235,8 @@ export class WeComRiskRouter {
         if (!type || !['buy', 'sell', 'subscription', 'redemption', 'repo', 'reverse_repo'].includes(type)) {
           throw new RiskServiceError('交易信息尚未核验', 'unresolved-transaction');
         }
-        const needsSecurity = type === 'buy' || type === 'sell' || (type === 'subscription' && draft.market === 'primary');
+        const needsSecurity =
+          type === 'buy' || type === 'sell' || (type === 'subscription' && draft.market === 'primary');
         if (needsSecurity && !draft.resolvedSecurity?.code) {
           throw new RiskServiceError('交易信息尚未核验', 'unresolved-transaction');
         }
@@ -154,13 +249,17 @@ export class WeComRiskRouter {
         } else if (amount.quantity !== undefined) {
           if (type === 'buy' || type === 'sell') action.quantity = amount.quantity;
           else action.shares = amount.quantity;
-        } else action.amount = amount.amount;
+        } else {
+          action.amount = amount.amount;
+        }
         notes.push(`${state.draft.transactions ? `第${index + 1}笔：` : ''}${amount.note}`);
         return action;
       });
       await onProgress?.('正在提交投前测算…');
       const result = await this.service.calculatePretrade(
-        state.product, state.draft.transactions ? actions : actions[0]!, onProgress,
+        state.product,
+        state.draft.transactions ? actions : actions[0]!,
+        onProgress,
       );
       return handled('pretrade_calc', formatCalculation(result, notes.join('；'), actions.length));
     } catch (error) {
@@ -168,39 +267,24 @@ export class WeComRiskRouter {
     }
   }
 
-  clear(conversationKey: string): void {
-    this.pending.delete(conversationKey);
-  }
-
   private async loadProducts(): Promise<string[]> {
-    const fresh = this.products.length > 0 && this.now() - this.productsLoadedAt < this.productCacheTtlMs;
-    if (fresh) return this.products;
-    try {
-      const loaded = await this.service.listProducts();
-      if (loaded.length > 0) {
-        this.products = [...new Set(loaded)];
-        this.productsLoadedAt = this.now();
-      }
-    } catch (error) {
-      if (this.products.length === 0) throw error;
-    }
-    if (this.products.length === 0) {
+    const loaded = [...new Set(await this.service.listProducts())];
+    if (loaded.length === 0) {
       throw new RiskServiceError('暂时无法获取存续产品列表，请稍后重试', 'products-unavailable');
     }
-    return this.products;
+    return loaded;
   }
 
   private async execute(
-    conversationKey: string,
-    intent: RiskIntent,
+    intent: RiskQueryIntent,
+    products: readonly string[],
     onProgress?: (progress: string) => void,
   ): Promise<RiskRouteResult> {
     if (intent.kind === 'list_products') {
-      return {
-        handled: true,
-        intent: intent.kind,
-        markdown: `**可用产品（共 ${this.products.length} 个）**\n\n${this.products.slice(0, 50).map((item) => `- ${item}`).join('\n')}${this.products.length > 50 ? '\n- …' : ''}`,
-      };
+      return handled(
+        intent.kind,
+        `**可用产品（共 ${products.length} 个）**\n\n${products.slice(0, 50).map((item) => `- ${item}`).join('\n')}${products.length > 50 ? '\n- …' : ''}`,
+      );
     }
 
     if (intent.kind === 'search_securities') {
@@ -222,37 +306,36 @@ export class WeComRiskRouter {
             `账户匹配到 ${intent.productCandidates.length} 个候选，数量过多。请补充更完整的产品名称后重新发送。`,
           );
         }
-        const expiresAt = this.now() + this.pendingTtlMs;
-        this.pending.set(conversationKey, {
+        const continuation: RiskQueryState = {
           kind: 'product',
           intent,
           options: intent.productCandidates,
-          expiresAt,
-        });
+        };
         return handled(
           intent.kind,
           selectionPrompt('账户', intent.productCandidates, 'letter'),
-          productSelection(intent.productCandidates, expiresAt),
+          productSelection(intent.productCandidates, this.selectionExpiry()),
+          continuation,
         );
       }
       if (!intent.product) {
-        this.pending.set(conversationKey, {
-          kind: 'missing',
-          intent,
-          expiresAt: this.now() + this.pendingTtlMs,
-        });
-        return handled(intent.kind, '还差产品名。请回复存续产品的完整名称，或发送“有哪些产品”。');
+        return handled(
+          intent.kind,
+          '还差产品名。请回复存续产品的完整名称，或发送“有哪些产品”。',
+          undefined,
+          { kind: 'missing', intent },
+        );
       }
     }
 
     if (intent.kind === 'check_security') {
       if (!intent.securityQuery) {
-        this.pending.set(conversationKey, {
-          kind: 'missing',
-          intent,
-          expiresAt: this.now() + this.pendingTtlMs,
-        });
-        return handled(intent.kind, '还差证券名称或代码，请直接回复证券名称或代码。');
+        return handled(
+          intent.kind,
+          '还差证券名称或代码，请直接回复证券名称或代码。',
+          undefined,
+          { kind: 'missing', intent },
+        );
       }
       await onProgress?.('正在查询证券候选…');
       const options = await this.service.searchSecurities(intent.securityQuery);
@@ -268,268 +351,81 @@ export class WeComRiskRouter {
         const data = await this.service.checkSecurity(intent.product ?? '', exact.code || exact.name);
         return handled(intent.kind, formatSecurityCheck(data));
       }
-      const expiresAt = this.now() + this.pendingTtlMs;
-      this.pending.set(conversationKey, {
-        kind: 'security',
-        intent,
-        options,
-        expiresAt,
-      });
+      const continuation: RiskQueryState = { kind: 'security', intent, options };
       if (options.length === 1) {
         return handled(
           intent.kind,
           `请确认证券：**${options[0]?.label}**\n\n回复“确认”或“1”开始检查；若不是，请直接发正确名称或代码。`,
-          securitySelection(options, expiresAt, true),
+          securitySelection(options, this.selectionExpiry(), true),
+          continuation,
         );
       }
       return handled(
         intent.kind,
         selectionPrompt('证券', options.map((item) => item.label), 'number'),
-        securitySelection(options, expiresAt),
+        securitySelection(options, this.selectionExpiry()),
+        continuation,
       );
     }
 
     if (intent.kind === 'check_counterparty') {
-      if (!intent.counterparty) return handled(intent.kind, '还差交易对手名称，请直接回复完整名称。');
-      if (!intent.product) return handled(intent.kind, '还差产品名，请回复存续产品的完整名称。');
+      if (!intent.counterparty) {
+        return handled(
+          intent.kind,
+          '还差交易对手名称，请直接回复完整名称。',
+          undefined,
+          { kind: 'missing', intent },
+        );
+      }
       await onProgress?.('正在检查交易对手关联方状态…');
-      const data = await this.service.checkCounterparty(intent.product, intent.counterparty);
+      const data = await this.service.checkCounterparty(intent.product ?? '', intent.counterparty);
       return handled(intent.kind, formatCounterpartyCheck(data));
     }
 
     if (intent.kind === 'query_holdings') {
-      if (!intent.product) return handled(intent.kind, '还差产品名，请回复存续产品的完整名称。');
       await onProgress?.('正在查询产品持仓…');
-      return handled(intent.kind, formatHoldings(await this.service.getHoldings(intent.product)));
+      return handled(intent.kind, formatHoldings(await this.service.getHoldings(intent.product ?? '')));
     }
 
     if (intent.kind === 'query_restrictions') {
-      if (!intent.product) return handled(intent.kind, '还差产品名，请回复存续产品的完整名称。');
       await onProgress?.('正在查询产品投资限制…');
-      return handled(intent.kind, formatRestrictions(await this.service.getRestrictions(intent.product)));
+      return handled(intent.kind, formatRestrictions(await this.service.getRestrictions(intent.product ?? '')));
     }
 
     if (intent.kind === 'query_credit') {
-      if (!intent.entity) return handled(intent.kind, '还差主体名称，例如“赣锋锂业 授信额度”。');
-      await onProgress?.('正在查询主体授信额度…');
-      return handled(intent.kind, formatCredit(await this.service.getCredit(intent.entity)));
-    }
-
-    if (intent.kind === 'pretrade_calc') {
-      if (intent.missing.length > 0) {
-        this.pending.set(conversationKey, {
-          kind: 'missing',
-          intent,
-          expiresAt: this.now() + this.pendingTtlMs,
-        });
+      if (!intent.entity) {
         return handled(
           intent.kind,
-          `还差：${intent.missing.join('、')}。请直接回复缺少的信息；也可以重新发送完整交易，例如“安联ESG纯债1号 申购 0.1”。`,
+          '还差主体名称，例如“赣锋锂业 授信额度”。',
+          undefined,
+          { kind: 'missing', intent },
         );
       }
-      if (!intent.action || !intent.product) return handled(intent.kind, riskHelp('交易参数不完整。'));
-      if (intent.action === 'buy' || intent.action === 'sell') {
-        if (!intent.securityQuery) return handled(intent.kind, '买入/卖出还需要证券名称或代码。');
-        const options = await this.service.searchSecurities(intent.securityQuery);
-        if (options.length === 0) {
-          return handled(intent.kind, `没有找到与「${intent.securityQuery}」相关的证券，请提供更精确的名称或代码。`);
-        }
-        if (options.length > 10) {
-          return handled(intent.kind, tooManySecurities(intent.securityQuery, options.length));
-        }
-        const exact = exactSecurityMatch(intent.securityQuery, options);
-        if (!exact) {
-          const expiresAt = this.now() + this.pendingTtlMs;
-          this.pending.set(conversationKey, {
-            kind: 'security',
-            intent,
-            options,
-            expiresAt,
-          });
-          if (options.length === 1) {
-            return handled(
-              intent.kind,
-              `请确认证券：**${options[0]?.label}**\n\n点击“确认选择”，或回复“确认”/“1”后开始测算。`,
-              securitySelection(options, expiresAt, true),
-            );
-          }
-          return handled(
-            intent.kind,
-            selectionPrompt('证券', options.map((item) => item.label), 'number'),
-            securitySelection(options, expiresAt),
-          );
-        }
-        return await this.runCalculation(intent, exact, onProgress);
-      }
-      return await this.runCalculation(intent, undefined, onProgress);
+      await onProgress?.('正在查询主体授信额度…');
+      return handled(intent.kind, formatCredit(await this.service.getCredit(intent.entity)));
     }
 
     return { handled: false };
   }
 
-  private async handlePending(
-    conversationKey: string,
-    pending: PendingState,
-    text: string,
-    onProgress?: (progress: string) => void,
-  ): Promise<RiskRouteResult> {
-    if (pending.kind === 'product') {
-      const index = productSelectionIndex(text, pending.options.length);
-      const direct = matchProducts(text, pending.options);
-      const selected = index === undefined ? (direct.length === 1 ? direct[0] : undefined) : pending.options[index];
-      if (!selected) {
-        return handled(
-          pending.intent.kind,
-          selectionPrompt('账户', pending.options, 'letter'),
-          productSelection(pending.options, pending.expiresAt),
-        );
-      }
-      this.pending.delete(conversationKey);
-      await onProgress?.(`已确认：账户「${selected}」，正在继续风险查询…`);
-      const intent = { ...pending.intent, product: selected, productCandidates: [selected] } as RiskIntent;
-      return this.execute(conversationKey, intent, onProgress);
-    }
-
-    if (pending.kind === 'security') {
-      const index = isConfirm(text) && pending.options.length === 1 ? 0 : selectionIndex(text, pending.options.length);
-      if (index === undefined) {
-        const products = await this.loadProducts();
-        const reparsed = parseRiskMessage(text, products);
-        if (reparsed.kind !== 'unknown') {
-          this.pending.delete(conversationKey);
-          return this.execute(conversationKey, reparsed, onProgress);
-        }
-        return handled(
-          pending.intent.kind,
-          pending.options.length === 1
-            ? `请确认证券：**${pending.options[0]?.label}**\n\n点击“确认选择”，或回复“确认”/“1”。`
-            : selectionPrompt(
-                '证券',
-                pending.options.map((item) => item.label),
-                'number',
-              ),
-          securitySelection(pending.options, pending.expiresAt, pending.options.length === 1),
-        );
-      }
-      const selected = pending.options[index];
-      if (!selected) {
-        return handled(
-          pending.intent.kind,
-          '证券序号超出范围，请重新选择。',
-          securitySelection(pending.options, pending.expiresAt, pending.options.length === 1),
-        );
-      }
-      this.pending.delete(conversationKey);
-      await onProgress?.(selectionConfirmation(pending.intent, selected));
-      if (pending.intent.kind === 'check_security') {
-        const data = await this.service.checkSecurity(
-          pending.intent.product ?? '',
-          selected.code || selected.name,
-        );
-        return handled(pending.intent.kind, formatSecurityCheck(data));
-      }
-      return this.runCalculation(pending.intent, selected, onProgress);
-    }
-
-    const products = await this.loadProducts();
-    const productMatch = matchProductCandidates(text, products);
-    const productMatches = productMatch.products;
-    const reparsed = parseRiskMessage(text, products);
-    let merged = pending.intent;
-    if ('productCandidates' in merged && productMatches.length > 0) {
-      merged = {
-        ...merged,
-        product: productMatches.length === 1 && !productMatch.fuzzy ? productMatches[0] : undefined,
-        productCandidates: productMatches,
-      } as RiskIntent;
-    }
-    if (merged.kind === 'pretrade_calc') {
-      const amount = extractAmount(text);
-      const action = findAction(text);
-      merged = {
-        ...merged,
-        ...(action ? { action } : {}),
-        ...(amount
-          ? { amount: amount.amount, quantity: amount.quantity, amountNote: amount.note }
-          : {}),
-      };
-      if (reparsed.kind === 'pretrade_calc') {
-        merged = {
-          ...merged,
-          ...(reparsed.product ? { product: reparsed.product, productCandidates: reparsed.productCandidates } : {}),
-          ...(reparsed.securityQuery ? { securityQuery: reparsed.securityQuery } : {}),
-        };
-      }
-      if (
-        (merged.action === 'buy' || merged.action === 'sell') &&
-        !merged.securityQuery &&
-        reparsed.kind === 'unknown' &&
-        !amount &&
-        !action &&
-        productMatches.length === 0
-      ) {
-        merged = { ...merged, securityQuery: text.trim() };
-      }
-      merged = { ...merged, missing: pretradeMissing(merged) };
-    } else if (
-      merged.kind === 'check_security' &&
-      !merged.securityQuery &&
-      reparsed.kind === 'unknown' &&
-      productMatches.length === 0
-    ) {
-      merged = { ...merged, securityQuery: text.trim() };
-    } else if (
-      merged.kind === 'check_counterparty' &&
-      !merged.counterparty &&
-      reparsed.kind === 'unknown' &&
-      productMatches.length === 0
-    ) {
-      merged = { ...merged, counterparty: text.trim() };
-    } else if (merged.kind === 'query_credit' && !merged.entity && reparsed.kind === 'unknown') {
-      merged = { ...merged, entity: text.trim() };
-    } else if (reparsed.kind === merged.kind) {
-      merged = reparsed;
-    }
-    this.pending.delete(conversationKey);
-    return this.execute(conversationKey, merged, onProgress);
+  private selectionExpiry(): number {
+    return this.now() + this.selectionTtlMs;
   }
-
-  private async runCalculation(
-    intent: Extract<RiskIntent, { kind: 'pretrade_calc' }>,
-    security: RiskSecuritySuggestion | undefined,
-    onProgress?: (progress: string) => void,
-  ): Promise<RiskRouteResult> {
-    if (!intent.product || !intent.action) return handled(intent.kind, riskHelp('交易参数不完整。'));
-    const action: RiskPretradeAction = { type: intent.action, market: intent.market };
-    if (intent.action === 'buy' || intent.action === 'sell') {
-      if (intent.quantity !== undefined) action.quantity = intent.quantity;
-      else action.amount = intent.amount;
-      action.security_name = security?.code || security?.name || intent.securityQuery;
-    } else if (intent.action === 'subscription' && intent.market === 'primary') {
-      if (intent.quantity !== undefined) action.shares = intent.quantity;
-      else action.amount = intent.amount;
-      action.security_name = security?.code || security?.name;
-    } else if (intent.action === 'repo' || intent.action === 'reverse_repo') {
-      action.amount = intent.amount;
-      if (intent.days !== undefined) action.days = intent.days;
-    } else if (intent.quantity !== undefined) {
-      action.shares = intent.quantity;
-    } else {
-      action.amount = intent.amount;
-    }
-    await onProgress?.('正在提交投前测算…');
-    const result = await this.service.calculatePretrade(intent.product, action, onProgress);
-    return handled(intent.kind, formatCalculation(result, intent.amountNote));
-  }
-
 }
 
 function handled(
   intent: string,
   markdown: string,
   selection?: RiskSelectionRequest,
+  continuation?: RiskQueryState,
 ): RiskRouteResult {
-  return { handled: true, intent, markdown, ...(selection ? { selection } : {}) };
+  return {
+    handled: true,
+    intent,
+    markdown,
+    ...(selection ? { selection } : {}),
+    ...(continuation ? { continuation } : {}),
+  };
 }
 
 function selectionPrompt(
@@ -568,8 +464,7 @@ function productSelection(options: readonly string[], expiresAt: number): RiskSe
     kind: 'product',
     title: '请选择账户',
     subTitle: `账户匹配到 ${options.length} 个候选`,
-    replyHint:
-      options.length === 1 ? '点击确认，也可回复“确认”' : '点击选择，也可回复字母序号',
+    replyHint: options.length === 1 ? '点击确认，也可回复“确认”' : '点击选择，也可回复字母序号',
     options: options.map((label, index) => ({
       key: String.fromCharCode(97 + index),
       label,
@@ -586,9 +481,7 @@ function securitySelection(
   return {
     kind: 'security',
     title: confirm ? '请确认证券' : '请选择证券',
-    subTitle: confirm
-      ? '请确认以下候选证券'
-      : `匹配到 ${options.length} 个候选证券`,
+    subTitle: confirm ? '请确认以下候选证券' : `匹配到 ${options.length} 个候选证券`,
     replyHint: confirm ? '点击确认，也可回复“确认”或“1”' : '点击选择，也可回复数字序号',
     options: options.map((item, index) => ({
       key: String(index + 1),
@@ -598,34 +491,8 @@ function securitySelection(
   };
 }
 
-function selectionConfirmation(
-  intent: Extract<RiskIntent, { kind: 'pretrade_calc' | 'check_security' }>,
-  security: RiskSecuritySuggestion,
-): string {
-  const parts: string[] = [];
-  if (intent.product) parts.push(`账户「${intent.product}」`);
-  const securityLabel = security.code
-    ? `${security.name}（${security.code}）`
-    : security.name;
-  if (securityLabel) parts.push(`证券「${securityLabel}」`);
-  if (intent.kind === 'pretrade_calc') {
-    if (intent.action) parts.push(`动作「${actionLabel(intent.action)}」`);
-    if (intent.amountNote) parts.push(`金额「${intent.amountNote}」`);
-    else if (intent.quantity !== undefined) parts.push(`数量「${intent.quantity}」`);
-  }
-  return `已确认：${parts.join('、')}，正在查询风险限额…`;
-}
-
-function actionLabel(action: RiskPretradeAction['type']): string {
-  const labels: Record<RiskPretradeAction['type'], string> = {
-    subscription: '申购',
-    redemption: '赎回',
-    buy: '买入',
-    sell: '卖出',
-    repo: '回购',
-    reverse_repo: '逆回购',
-  };
-  return labels[action];
+function securityDisplay(security: RiskSecuritySuggestion): string {
+  return security.code ? `${security.name}（${security.code}）` : security.name;
 }
 
 function tooManySecurities(query: string, count: number): string {
@@ -643,17 +510,6 @@ function exactSecurityMatch(
   const normalized = query.trim().toUpperCase();
   if (!normalized) return undefined;
   return options.find((item) => item.code.trim().toUpperCase() === normalized);
-}
-
-function pretradeMissing(intent: Extract<RiskIntent, { kind: 'pretrade_calc' }>): string[] {
-  const missing: string[] = [];
-  if (!intent.product) missing.push('产品名');
-  if (!intent.action) missing.push('动作（申购/赎回/买入/卖出/回购）');
-  if (intent.amount === undefined && intent.quantity === undefined) missing.push('金额或数量');
-  if ((intent.action === 'buy' || intent.action === 'sell') && !intent.securityQuery) {
-    missing.push('证券名称或代码');
-  }
-  return missing;
 }
 
 function riskHelp(prefix: string): string {

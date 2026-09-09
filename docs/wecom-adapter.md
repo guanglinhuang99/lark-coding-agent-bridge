@@ -166,6 +166,18 @@ receive a local retry prompt rather than falling through to Codex. A risk-lookin
 missing parameters asks a deterministic follow-up instead of starting Codex. Messages with
 attachments and unrelated questions continue through Codex.
 
+Risk continuation state has a single owner: `RiskStateRegistry` stores pre-trade
+account/security/freeform/confirmation state, deterministic-query product/security/missing
+continuations, card callback state, and expiry markers. `WeComRiskRouter` is stateless across
+messages and returns any required continuation explicitly; product-list caching remains in
+`RiskDirectClient` rather than being duplicated in the router.
+
+The executable `src/wecom/cli.ts` keeps transport ingress, queue admission, Codex run lifecycle,
+and legacy run controls. `RiskInteractionController` owns WeCom-specific risk presentation,
+continuation/card execution, and selection delivery; `NavigationController` owns home/workspace,
+model/reasoning, and session-resume navigation. These controllers receive their dependencies
+explicitly and do not create another runtime or state owner.
+
 Every accepted text message gets an immediate standalone acknowledgement that echoes the user's
 input before queueing or calculation starts. A template-card choice receives the same treatment
 with the resolved candidate label, while the original card is updated to a non-interactive

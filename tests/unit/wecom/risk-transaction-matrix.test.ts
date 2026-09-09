@@ -212,14 +212,30 @@ describe('risk intent normalization and confirmation matrix', () => {
     expect(await applyDirectRiskIntentInput(state, '补充说明', mockRiskService())).toBeUndefined();
   });
 
-  it('switches a pending confirmation to a complete new transaction', async () => {
+  it('replaces an incomplete pretrade interpretation with a complete new canonical transaction', async () => {
     const calculatePretrade = vi.fn(async () => successfulCalculation());
-    const router = new WeComRiskRouter(mockRiskService({ calculatePretrade }));
-    const first = await router.handle('matrix', '安联稳益3号 申购');
-    expect(first).toMatchObject({ handled: true, intent: 'pretrade_calc' });
-    const second = await router.handle('matrix', '安联远见10号 赎回 1000万');
-    expect(second).toMatchObject({ handled: true, intent: 'pretrade_calc' });
-    expect(calculatePretrade).toHaveBeenCalledWith(products[3], { type: 'redemption', market: 'secondary', amount: 0.1 }, undefined);
+    const service = mockRiskService({ calculatePretrade });
+    const router = new WeComRiskRouter(service);
+    const first = await normalizeRiskDraft(
+      '安联稳益3号 申购',
+      { accountQuery: products[1]!, action: 'subscription', market: 'secondary' },
+      service,
+    );
+    expect(first).toMatchObject({ stage: 'freeform', field: 'amount' });
+
+    const second = await normalizeRiskDraft(
+      '安联远见10号 赎回 1000万',
+      { accountQuery: products[3]!, action: 'redemption', amountText: '1000万', market: 'secondary' },
+      service,
+    );
+    expect(second.stage).toBe('confirm');
+    if (second.stage !== 'confirm') throw new Error('expected confirm state');
+    expect(await router.executeConfirmed(second)).toMatchObject({ handled: true, intent: 'pretrade_calc' });
+    expect(calculatePretrade).toHaveBeenCalledWith(
+      products[3],
+      { type: 'redemption', market: 'secondary', amount: 0.1 },
+      undefined,
+    );
     expect(isPretradeIntentCandidate('安联远见10号 赎回 1000万')).toBe(true);
   });
 
@@ -235,101 +251,57 @@ describe('risk intent normalization and confirmation matrix', () => {
   });
 });
 
-describe('risk router service matrix', () => {
+describe('confirmed risk execution matrix', () => {
   it.each([
-    ['buy', products[0]!, '买入', '国债0115', '0.1亿', '', { type: 'buy', market: 'secondary', amount: 0.1, security_name: '019115.SH' }],
-    ['sell', products[1]!, '卖出', '短融1024001', '10张', '', { type: 'sell', market: 'secondary', quantity: 10, security_name: '1024001.IB' }],
-    ['subscription', products[2]!, '申购', undefined, '500000元', '', { type: 'subscription', market: 'secondary', amount: 0.005 }],
-    ['redemption', products[3]!, '赎回', undefined, '250份', '', { type: 'redemption', market: 'secondary', shares: 250 }],
-    ['repo', products[1]!, '回购', undefined, '2亿', '7天', { type: 'repo', market: 'secondary', amount: 2, days: 7 }],
-    ['reverse_repo', products[2]!, '逆回购', undefined, '3000万', '14天', { type: 'reverse_repo', market: 'secondary', amount: 0.3, days: 14 }],
-  ])('submits the normalized RiskService payload for %s', async (action, product, verb, security, amountText, tenor, expectedAction) => {
+    ['buy', products[0]!, securities[0]!, '0.1亿', undefined, { type: 'buy', market: 'secondary', amount: 0.1, security_name: '019115.SH' }],
+    ['sell', products[1]!, securities[3]!, '10张', undefined, { type: 'sell', market: 'secondary', quantity: 10, security_name: '1024001.IB' }],
+    ['subscription', products[2]!, undefined, '500000元', undefined, { type: 'subscription', market: 'secondary', amount: 0.005 }],
+    ['redemption', products[3]!, undefined, '250份', undefined, { type: 'redemption', market: 'secondary', shares: 250 }],
+    ['repo', products[1]!, undefined, '2亿', 7, { type: 'repo', market: 'secondary', amount: 2, days: 7 }],
+    ['reverse_repo', products[2]!, undefined, '3000万', 14, { type: 'reverse_repo', market: 'secondary', amount: 0.3, days: 14 }],
+  ])('submits the confirmed RiskService payload for %s', async (action, product, security, amountText, days, expectedAction) => {
     const calculatePretrade = vi.fn(async () => successfulCalculation());
-    const service = mockRiskService({
-      searchSecurities: vi.fn(async () => security ? securities.filter((item) => item.name === security) : []),
-      calculatePretrade,
-    });
-    const router = new WeComRiskRouter(service);
-    const result = await router.handle(
-      `matrix-${action}`,
-      [product, verb, amountText, security, tenor].filter(Boolean).join(' '),
-    );
-    if (result.handled && (action === 'buy' || action === 'sell') && result.selection) {
-      await router.handle(`matrix-${action}`, '确认');
-    }
-    expect(result.handled).toBe(true);
+    const router = new WeComRiskRouter(mockRiskService({ calculatePretrade }));
+    const state = {
+      stage: 'confirm',
+      originalText: '已确认交易',
+      product,
+      ...(security ? { security } : {}),
+      draft: {
+        accountQuery: product,
+        action,
+        amountText,
+        market: 'secondary',
+        ...(days ? { days } : {}),
+        ...(security ? { securityQuery: security.code, resolvedSecurity: security } : {}),
+      },
+    } as Extract<RiskIntentState, { stage: 'confirm' }>;
+
+    const result = await router.executeConfirmed(state);
+
+    expect(result).toMatchObject({ handled: true, intent: 'pretrade_calc' });
     expect(calculatePretrade).toHaveBeenCalledWith(product, expectedAction, undefined);
   });
 
-  it('requires a security choice for an ambiguous name and submits the selected code', async () => {
+  it('does not execute an ambiguous pretrade state before the canonical intent flow resolves it', async () => {
     const calculatePretrade = vi.fn(async () => successfulCalculation());
-    const router = new WeComRiskRouter(mockRiskService({
+    const service = mockRiskService({
       searchSecurities: vi.fn(async () => securities.slice(0, 2)),
       calculatePretrade,
-    }));
-
-    const choice = await router.handle('matrix-security-choice', `${products[0]} 买入 3000万 国债`);
-    expect(choice).toMatchObject({
-      handled: true,
-      selection: { kind: 'security', options: expect.arrayContaining([{ key: '2', label: securities[1]!.label }]) },
     });
-    expect(calculatePretrade).not.toHaveBeenCalled();
-
-    await router.handle('matrix-security-choice', '2');
-    expect(calculatePretrade).toHaveBeenCalledWith(
-      products[0],
-      { type: 'buy', market: 'secondary', amount: 0.3, security_name: '019116.SH' },
-      undefined,
+    const router = new WeComRiskRouter(service);
+    const state = await normalizeRiskDraft(
+      `${products[0]} 买入 3000万 国债`,
+      { accountQuery: products[0]!, action: 'buy', securityQuery: '国债', amountText: '3000万', market: 'secondary' },
+      service,
     );
-  });
 
-  it('does not calculate when a security has no candidates', async () => {
-    const calculatePretrade = vi.fn(async () => successfulCalculation());
-    const router = new WeComRiskRouter(mockRiskService({
-      searchSecurities: vi.fn(async () => []),
-      calculatePretrade,
-    }));
-    const result = await router.handle('matrix-security-none', `${products[1]} 卖出 1000万 不存在证券`);
-    expect(result.handled).toBe(true);
-    if (result.handled) {
-      expect(result.selection).toBeUndefined();
-      expect(result.markdown).toContain('没有找到');
-    }
+    expect(state.stage).toBe('security');
     expect(calculatePretrade).not.toHaveBeenCalled();
-  });
-
-  it('resolves a fuzzy product choice before resolving an ambiguous security', async () => {
-    const productChoices = ['安联稳益3号A资产管理产品', '安联稳益3号B资产管理产品'];
-    const calculatePretrade = vi.fn(async () => successfulCalculation());
-    const router = new WeComRiskRouter(mockRiskService({
-      listProducts: vi.fn(async () => productChoices),
-      searchSecurities: vi.fn(async () => securities.slice(0, 2)),
-      calculatePretrade,
-    }));
-
-    const account = await router.handle('matrix-both-fuzzy', '安联稳益3号 买入 1000万 国债');
-    expect(account).toMatchObject({ handled: true, selection: { kind: 'product' } });
-    const security = await router.handle('matrix-both-fuzzy', 'b');
-    expect(security).toMatchObject({ handled: true, selection: { kind: 'security' } });
-    await router.handle('matrix-both-fuzzy', '1');
-    expect(calculatePretrade).toHaveBeenCalledWith(
-      productChoices[1],
-      { type: 'buy', market: 'secondary', amount: 0.1, security_name: '019115.SH' },
-      undefined,
-    );
-  });
-
-  it.each([
-    ['买入 1000万 国债0115', '产品名'],
-    [`${products[0]} 买入 1000万`, '证券名称或代码'],
-    [`${products[0]} 逆回购 7天`, '金额'],
-  ])('keeps incomplete transaction pending: %s', async (text, missing) => {
-    const calculatePretrade = vi.fn(async () => successfulCalculation());
-    const router = new WeComRiskRouter(mockRiskService({ calculatePretrade }));
-    const result = await router.handle(`matrix-missing-${missing}`, text);
-    expect(result).toMatchObject({ handled: true });
-    if (result.handled) expect(result.markdown).toContain(missing);
-    expect(calculatePretrade).not.toHaveBeenCalled();
+    if (state.stage !== 'security') throw new Error('expected security state');
+    expect(state.securities).toEqual(securities.slice(0, 2));
+    expect(buildIntentSelection(state, 123).options).toHaveLength(3);
+    expect(await router.handle('matrix-pretrade', `${products[0]} 买入 3000万 国债`)).toEqual({ handled: false });
   });
 });
 

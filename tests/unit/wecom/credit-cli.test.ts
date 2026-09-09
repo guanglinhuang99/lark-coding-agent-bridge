@@ -7,8 +7,11 @@ import { executeCreditCommand } from '../../../src/wecom/risk/credit-command';
 
 function setup() {
   const source = readFileSync('src/wecom/cli.ts', 'utf8');
-  const block = source.slice(source.indexOf('async function executeConversationMessage('), source.indexOf('function isRiskIntentConfirmation('));
-  const riskIntents = new Map([['conversation', { stage: 'confirm', draft: { accountQuery: '原交易' } }]]);
+  const block = source.slice(source.indexOf('async function executeConversationMessage('), source.indexOf('function isWorkspaceScope('));
+  const states = new Map([['conversation', { stage: 'confirm', draft: { accountQuery: '原交易' } }]]);
+  const riskStates = {
+    getPretrade: (key: string) => states.get(key),
+  };
   const context: any = {
     Date, Buffer, parseWeComCommand, executeCreditCommand, startingRuns: new Set(),
     withReservation: async (_set: unknown, _key: string, fn: () => Promise<void>) => fn(),
@@ -18,7 +21,7 @@ function setup() {
       getCredit: vi.fn(async () => ({ ...creditReport('公司甲'), date: '2026-09-08' })),
       getCredits: vi.fn(),
     },
-    riskRouter: { handle: vi.fn() }, riskIntents,
+    riskRouter: { handle: vi.fn() }, riskStates,
     streamMaxBytes: 4000, messageTarget: () => 'target', client: { sendMessage: vi.fn() },
     renderWeComNotice: (title: string, lines: string[]) => [title, ...lines].join('\n'),
   };
@@ -31,13 +34,13 @@ function setup() {
 describe('credit CLI dispatch', () => {
   it('dispatches before pending trade state and does not modify the pending trade', async () => {
     const api = setup();
-    const before = api.riskIntents.get('conversation');
+    const before = api.riskStates.getPretrade('conversation');
     const stream = { finish: vi.fn(async (_content: string) => true) };
     await api.execute({ body: { from: { userid: 'u1' } } }, 'conversation', '/授信 公司甲', [], stream, true, false, 'task', false);
     expect(api.riskClient.getCredit).toHaveBeenCalledWith('公司甲');
     expect(api.riskClient.getCredits).not.toHaveBeenCalled();
     expect(api.riskRouter.handle).not.toHaveBeenCalled();
-    expect(api.riskIntents.get('conversation')).toBe(before);
+    expect(api.riskStates.getPretrade('conversation')).toBe(before);
     expect(stream.finish.mock.calls[0]?.[0]).toContain('| 公司甲 |');
   });
 

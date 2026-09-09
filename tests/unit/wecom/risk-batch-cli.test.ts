@@ -1,37 +1,46 @@
-import { readFileSync } from 'node:fs';
-import vm from 'node:vm';
-import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
+import type { RiskService } from '../../../src/wecom/risk/client';
+import { RiskSelectionTaskRegistry } from '../../../src/wecom/risk/card';
 import {
-  buildIntentSelection, confirmationSummary, normalizeSecurity, selectRiskIntentSecurity,
+  confirmationSummary,
   type RiskIntentState,
 } from '../../../src/wecom/risk/intent';
+import {
+  RiskInteractionController,
+  riskIntentInputPrompt,
+} from '../../../src/wecom/risk/interaction';
+import { RiskStateRegistry } from '../../../src/wecom/risk/state';
 
-// Exercise the actual CLI callbacks with transport replaced, without connecting a bot.
 function setup() {
-  const source = readFileSync('src/wecom/cli.ts', 'utf8');
-  const block = source.slice(source.indexOf('async function finishRiskIntentState('), source.indexOf('async function runCodexPrompt('));
+  const states = new RiskStateRegistry();
   const events: string[] = [];
-  const service = { searchSecurities: vi.fn(async (code: string) => [{ code, name: code, label: code }]) };
-  const states = new Map();
-  const context: any = {
-    Buffer, Date, riskClient: service, riskIntents: states, buildIntentSelection, confirmationSummary,
-    normalizeSecurity, selectRiskIntentSecurity,
-    streamMaxBytes: 1200,
-    renderWeComNotice: (_title: string, lines: string[]) => lines.join('\n'),
-    truncateUtf8: (value: string) => value,
-    sendRiskMarkdown: vi.fn(async () => { events.push('details'); }),
-    scheduleRiskSelectionCard: vi.fn(() => { events.push('card'); }),
-    client: { updateTemplateCard: vi.fn(async () => {}) },
-    updateRiskCardBestEffort: async (fn: () => Promise<void>) => fn(),
-    buildRiskSelectionStatusCard: vi.fn(),
-    executeRiskCardSelection: vi.fn(async () => {}),
-    log: { fail: vi.fn() },
+  const service: RiskService = {
+    listProducts: vi.fn(async () => ['测试账户']),
+    searchSecurities: vi.fn(async (code: string) => [{ code, name: code, label: code }]),
+    calculatePretrade: vi.fn(async () => ({ status: 'success', result: {} })),
+    getHoldings: vi.fn(async () => ({})),
+    getRestrictions: vi.fn(async () => ({})),
+    getCredit: vi.fn(async () => ({})),
+    checkSecurity: vi.fn(async () => ({})),
+    checkCounterparty: vi.fn(async () => ({})),
   };
-  vm.runInNewContext(ts.transpileModule(block + '\nglobalThis.api={finishRiskIntentState,handleRiskIntentChoice,riskIntentInputPrompt};', {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
-  }).outputText, context);
-  return { ...context, ...context.api, events, service, states };
+  const controller = new RiskInteractionController({
+    riskClient: service,
+    riskStates: states,
+    riskSelectionTasks: new RiskSelectionTaskRegistry(),
+    conversationQueue: { submit: vi.fn() } as never,
+    runGate: { run: async <T>(fn: () => Promise<T>) => fn() },
+    startingRuns: new Set(),
+    streamMaxBytes: 1200,
+    selectionCardDelayMs: 0,
+    refreshHealth: vi.fn(async () => {}),
+    isRiskUserAllowed: () => true,
+    updateTemplateCard: vi.fn(async () => {}),
+    sendMarkdownMessage: vi.fn(async () => {}),
+    sendControlCardMessage: vi.fn(async () => { events.push('card'); }),
+    createRiskTaskId: () => 'risk-test',
+  });
+  return { controller, events, service, states };
 }
 
 function pending(): Extract<RiskIntentState, { stage: 'security' }> {
@@ -49,32 +58,58 @@ function pending(): Extract<RiskIntentState, { stage: 'security' }> {
   };
 }
 
-describe('batch risk CLI presentation and selection', () => {
+describe('batch risk interaction presentation and selection', () => {
   it('keeps the leg index when Other is chosen for an ambiguous security', async () => {
     const api = setup();
-    await api.handleRiskIntentChoice({}, {}, 'conversation', 'task', pending(), '__other_security__', '其他');
-    const state = api.states.get('conversation');
+    const execute = vi.spyOn(api.controller, 'executeSelection');
+    await api.controller.handleIntentChoice(
+      {} as never,
+      {},
+      'conversation',
+      'task',
+      pending(),
+      '__other_security__',
+      '其他',
+    );
+    const state = api.states.getPretrade('conversation');
     expect(state).toMatchObject({ stage: 'freeform', field: 'security', transactionIndex: 1 });
+    if (state?.stage !== 'freeform') throw new Error('expected freeform state');
     expect(state.draft.transactions).toHaveLength(3);
-    expect(api.riskIntentInputPrompt(state)).toContain('第2笔');
-    expect(api.executeRiskCardSelection).not.toHaveBeenCalled();
+    expect(riskIntentInputPrompt(state)).toContain('第2笔');
+    expect(execute).not.toHaveBeenCalled();
   });
 
-  it('resolves a selected leg and the remaining securities before offering whole-batch confirmation', async () => {
+  it('resolves a selected leg and remaining securities before offering whole-batch confirmation', async () => {
     const api = setup();
+    const schedule = vi.spyOn(api.controller, 'scheduleSelectionCard').mockImplementation(() => {});
+    const execute = vi.spyOn(api.controller, 'executeSelection');
     const state = pending();
-    await api.handleRiskIntentChoice({}, {}, 'conversation', 'task', state, JSON.stringify(state.securities[0]), '虚构债乙');
-    const next = api.states.get('conversation');
-    expect(next.stage).toBe('confirm');
-    expect(next.draft.transactions.map((item: any) => item.resolvedSecurity.code)).toEqual([
+    await api.controller.handleIntentChoice(
+      {} as never,
+      {},
+      'conversation',
+      'task',
+      state,
+      JSON.stringify(state.securities[0]),
+      '虚构债乙',
+    );
+    const next = api.states.getPretrade('conversation');
+    expect(next?.stage).toBe('confirm');
+    if (next?.stage !== 'confirm') throw new Error('expected confirm state');
+    expect(next.draft.transactions?.map((item) => item.resolvedSecurity?.code)).toEqual([
       '900000001.IB', '900000002.IB', '900000003.IB',
     ]);
-    expect(api.executeRiskCardSelection).not.toHaveBeenCalled();
-    expect(api.scheduleRiskSelectionCard).toHaveBeenCalledOnce();
+    expect(execute).not.toHaveBeenCalled();
+    expect(schedule).toHaveBeenCalledOnce();
   });
 
   it('sends every detail of a long batch before registering its confirmation card', async () => {
     const api = setup();
+    const sent: string[] = [];
+    vi.spyOn(api.controller, 'sendRiskMarkdown').mockImplementation(async (_body, content) => {
+      sent.push(content);
+    });
+    const schedule = vi.spyOn(api.controller, 'scheduleSelectionCard').mockImplementation(() => {});
     const transactions = Array.from({ length: 35 }, (_, index) => ({
       action: 'buy' as const, amountText: `${index + 1}w`, market: 'primary' as const,
       resolvedSecurity: { code: `${900000001 + index}.IB`, name: `虚构测试债券第${index + 1}只`, label: '虚构债' },
@@ -83,15 +118,13 @@ describe('batch risk CLI presentation and selection', () => {
       stage: 'confirm', originalText: '长清单', product: '测试账户',
       draft: { accountQuery: '测试账户', action: 'buy', amountText: '1w', market: 'primary', transactions },
     };
-    const stream = { finish: vi.fn(async () => {}) };
-    await api.finishRiskIntentState({}, 'conversation', stream, state);
-    const chunks = api.sendRiskMarkdown.mock.calls.map((call: any[]) => call[1]);
-    expect(chunks.length).toBeGreaterThan(1);
-    expect(chunks.join('')).toBe(confirmationSummary(state));
-    expect(chunks.every((chunk: string) => Buffer.byteLength(chunk) <= 688)).toBe(true);
-    expect(api.events.at(-1)).toBe('card');
-    expect(api.scheduleRiskSelectionCard.mock.calls[0][2].subTitle).toContain('共35笔');
-    expect(api.executeRiskCardSelection).not.toHaveBeenCalled();
+    const stream = { update: vi.fn(async () => {}), finish: vi.fn(async () => {}) };
+    await api.controller.finishIntentState({}, 'conversation', stream, state);
+    expect(sent.length).toBeGreaterThan(1);
+    expect(sent.join('')).toBe(confirmationSummary(state));
+    expect(sent.every((chunk) => Buffer.byteLength(chunk) <= 688)).toBe(true);
+    expect(schedule).toHaveBeenCalledOnce();
+    expect(schedule.mock.calls[0]?.[2].subTitle).toContain('共35笔');
   });
 });
 

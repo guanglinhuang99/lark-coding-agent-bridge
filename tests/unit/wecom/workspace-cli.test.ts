@@ -1,13 +1,14 @@
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { conversationKey } from '../../../src/wecom/runtime';
 import { parseWeComCommand, shouldUseRiskFastPath } from '../../../src/wecom/commands';
 import { WeComConversationBindings } from '../../../src/wecom/conversation-bindings';
+import { NavigationController } from '../../../src/wecom/navigation-controller';
 import { WeComNavigationCardRegistry } from '../../../src/wecom/ui/navigation-registry';
 import { navigationActionForPurpose } from '../../../src/wecom/card-routing';
 
@@ -52,25 +53,40 @@ describe('WeCom workspace scope at CLI boundaries', () => {
     const registry = new WeComNavigationCardRegistry();
     registry.register({ taskId: 'workspace_1', purpose: 'workspace', conversationKey: original,
       optionLabels: new Map([['review', '审核']]), expiresAt: Date.now() + 60_000 });
-    const replyNavigationResult = vi.fn();
-    const updateInvalidCallback = vi.fn();
-    const context: Record<string, unknown> = {
-      sessionStore: store, configuredWorkspaces: [{ id: 'review', name: '审核', cwd: review }],
-      navigationCards: registry, navigationActionForPurpose, isConversationBusy: () => true,
-      replyNavigationResult, updateInvalidCallback, updateCardLifecycleError: vi.fn(),
-      log: { fail: vi.fn() },
-    };
-    loadFunction('function workspaceById', 'async function applyWorkspaceSelection', 'switchWorkspace', context);
-    const handle = loadFunction<(...args: unknown[]) => Promise<void>>(
-      'async function handleNavigationCardEvent', 'async function replyNavigationResult', 'handleNavigationCardEvent', context,
+    const navigation = new NavigationController({
+      sessionStore: store,
+      navigationCards: registry,
+      configuredWorkspaces: [{ id: 'review', name: '审核', cwd: review }],
+      navigationCardTtlMs: 60_000,
+      startupModel: 'gpt-test',
+      configuredModelAllowlist: [],
+      conversationAgentPreferences: new Map(),
+      createNavigationTaskId: () => 'workspace_test',
+      effectiveModel: () => 'gpt-test',
+      effectiveReasoningEffort: () => 'low',
+      currentThreadId: () => undefined,
+      isConversationBusy: () => true,
+      recentTaskHint: () => undefined,
+      replyTemplateCard: vi.fn(async () => {}),
+      updateTemplateCard: vi.fn(async () => {}),
+      deliverControlCard: vi.fn(async () => {}),
+      replyControl: vi.fn(async () => {}),
+      replyOnce: vi.fn(async () => {}),
+    });
+    const replyNavigationResult = vi.spyOn(navigation, 'replyNavigationResult');
+    await navigation.handleNavigationCardEvent(
+      frame({}) as never,
+      original,
+      'workspace_1',
+      'workspace',
+      navigationActionForPurpose('workspace'),
+      'review',
     );
-    await handle(frame({}), original, 'workspace_1', 'workspace', navigationActionForPurpose('workspace'), 'review');
     const selected = store.captureScope('group:room');
     expect(selected).not.toBe(original);
     expect(store.threadId(selected)).toBeUndefined();
     expect(store.threadId(original)).toBe('original-thread');
     expect(replyNavigationResult.mock.calls[0]?.[1]).toBe(selected);
-    expect(updateInvalidCallback).not.toHaveBeenCalled();
     expect(store.captureScope('group:another-room')).not.toBe(selected);
     expect(store.workspaceFor('single:alice')).toBe(root);
   });
@@ -150,8 +166,7 @@ describe('WeCom workspace scope at CLI boundaries', () => {
       shouldUseRiskFastPath: vi.fn(() => false),
       classifyTask: vi.fn(),
       taskStore: { annotate: vi.fn(async () => {}) },
-      riskIntents: { has: vi.fn(() => false) },
-      riskRouter: { shouldHandle: vi.fn(() => false) },
+      riskStates: { hasPendingOrExpired: vi.fn(() => false) },
       conversationQueue: {
         submit: vi.fn((key: string, task: () => Promise<void>) => {
           queuedKey = key;
@@ -234,7 +249,7 @@ describe('WeCom workspace scope at CLI boundaries', () => {
       collectWeComMediaInputs: vi.fn(() => []),
       parseWeComCommand,
       taskStore: {},
-      applyWorkspaceSelection,
+      navigation: { applyWorkspaceSelection },
       activeRuns: new Map([[key, {}]]),
       startingRuns: new Set([key]),
       conversationQueue: { has: vi.fn(() => true) },
@@ -268,7 +283,7 @@ describe('WeCom workspace scope at CLI boundaries', () => {
     const taskId = 'codex_1';
     const context: Record<string, unknown> = {
       controlCardScopes: new Map(),
-      updateInvalidCallback,
+      navigation: { updateInvalidCallback },
       Date,
     };
     const handleLegacyControlCardEvent = loadFunction<(
@@ -278,7 +293,7 @@ describe('WeCom workspace scope at CLI boundaries', () => {
       action?: string,
     ) => Promise<void>>(
       'async function handleLegacyControlCardEvent',
-      'async function replyHomeCard',
+      'async function replyDoctor',
       'handleLegacyControlCardEvent',
       context,
     );
@@ -309,39 +324,40 @@ describe('WeCom workspace scope at CLI boundaries', () => {
     await store.setThread(store.captureScope(alice), 'thread-alice');
     await store.setThread(store.captureScope(bob), 'thread-bob');
 
-    const rendered: { sessions?: Array<{ id: string }> } = {};
-    const registerNavigationTask = vi.fn();
-    const context: Record<string, unknown> = {
+    const registry = new WeComNavigationCardRegistry();
+    const replyTemplateCard = vi.fn(async () => {});
+    const navigation = new NavigationController({
       sessionStore: store,
-      formatRelTime: vi.fn(() => '1m'),
-      path: { basename },
-      createNavigationTaskId: vi.fn(() => 'session_1'),
-      registerNavigationTask,
-      buildSessionSelectionCardView: vi.fn((options: { sessions: Array<{ id: string }> }) => {
-        rendered.sessions = options.sessions;
-        return options;
-      }),
-      renderWeComCard: vi.fn((value: unknown) => value),
-      client: { replyTemplateCard: vi.fn(async () => {}) },
-      replyNoticeCard: vi.fn(async () => {}),
-    };
-    const replySessionSelection = loadFunction<(
-      input: unknown,
-      key: string,
-    ) => Promise<void>>(
-      'async function replySessionSelection',
-      'async function handleNavigationCardEvent',
-      'replySessionSelection',
-      context,
-    );
+      navigationCards: registry,
+      configuredWorkspaces: [],
+      navigationCardTtlMs: 60_000,
+      startupModel: 'gpt-test',
+      configuredModelAllowlist: [],
+      conversationAgentPreferences: new Map(),
+      createNavigationTaskId: () => 'session_1',
+      effectiveModel: () => 'gpt-test',
+      effectiveReasoningEffort: () => 'low',
+      currentThreadId: () => undefined,
+      isConversationBusy: () => false,
+      recentTaskHint: () => undefined,
+      replyTemplateCard,
+      updateTemplateCard: vi.fn(async () => {}),
+      deliverControlCard: vi.fn(async () => {}),
+      replyControl: vi.fn(async () => {}),
+      replyOnce: vi.fn(async () => {}),
+    });
 
-    await replySessionSelection(frame({}), store.captureScope(alice));
-    expect(rendered.sessions?.map((entry) => entry.id)).toEqual(['thread-alice']);
-    expect(registerNavigationTask).toHaveBeenCalledWith(
-      'session_1',
-      'session',
-      store.captureScope(alice),
-      [['thread-alice', expect.any(String)]],
-    );
+    const aliceScope = store.captureScope(alice);
+    await navigation.replySessionSelection(frame({}) as never, aliceScope);
+    expect(replyTemplateCard).toHaveBeenCalledOnce();
+    const card = (replyTemplateCard.mock.calls as unknown as Array<[unknown, {
+      button_selection?: { option_list?: Array<{ id: string }> };
+    }]>)[0]?.[1];
+    expect(card?.button_selection?.option_list?.map((entry) => entry.id)).toEqual(['thread-alice']);
+    const registered = registry.resolve('session_1', aliceScope);
+    expect(registered.status).toBe('resolved');
+    if (registered.status === 'resolved') {
+      expect([...registered.card.payload!.optionLabels.keys()]).toEqual(['thread-alice']);
+    }
   });
 });

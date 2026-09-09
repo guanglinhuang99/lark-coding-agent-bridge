@@ -21,7 +21,6 @@ import { CodexAdapter } from '../agent/codex/adapter';
 import { ActiveRuns } from '../bridge/active-runs';
 import { RunExecutor } from '../bridge/run-executor';
 import { startWeComAgentRun } from './agent-runtime';
-import { formatRelTime } from '../session/history';
 import type { AgentRun } from '../agent/types';
 import {
   finalizeIfRunning,
@@ -35,7 +34,6 @@ import {
   renderWeComAcknowledgement,
   renderWeComMarkdown,
   renderWeComNotice,
-  renderWeComRiskOutput,
   truncateUtf8,
   type WeComCardStatus,
 } from './presentation';
@@ -62,7 +60,7 @@ import {
   type WeComConversationSubmission,
 } from './runtime';
 import { WeComConversationBindings } from './conversation-bindings';
-import { loadWorkspaceConfig, type WeComWorkspace } from './workspace-config';
+import { loadWorkspaceConfig } from './workspace-config';
 import { bindingPolicyFingerprint, type SessionBindingIdentity } from '../bridge/identity';
 import { acquireStateDirectoryLock } from '../bridge/state-lock';
 import {
@@ -95,53 +93,34 @@ import { weComUserErrorMarkdown } from './user-error';
 import {
   effectiveModel as effectiveConversationModel,
   effectiveReasoningEffort as effectiveConversationReasoningEffort,
-  setConversationModel,
-  setConversationReasoningEffort,
   type ConversationAgentPreferences,
 } from './agent-preferences';
 import type { NormalizedAttachment } from '../media/attachment';
 import { RiskDirectClient } from './risk/client';
+import { WeComRiskRouter } from './risk/router';
+import { isRiskCandidate } from './risk/parser';
+import { RiskStateRegistry } from './risk/state';
+import { RiskSelectionTaskRegistry } from './risk/card';
 import {
-  WeComRiskRouter,
-  type RiskRouteResult,
-  type RiskSelectionRequest,
-} from './risk/router';
-import {
-  buildRiskSelectionCard,
-  buildRiskSelectionStatusCard,
-  RiskSelectionTaskRegistry,
-  updateRiskCardBestEffort,
-} from './risk/card';
+  isRiskIntentConfirmation,
+  RiskInteractionController,
+} from './risk/interaction';
 import {
   buildErrorCardView,
-  buildNoticeCardView,
   buildQueueCardView,
   type WeComErrorKind,
 } from './ui/builders';
 import { buildAgentSettingsSummaryCardView } from './ui/surfaces';
 import type { WeComCardView } from './ui/model';
-import {
-  buildHomeCardView,
-  buildModelSelectionCardView,
-  buildReasoningSelectionCardView,
-  buildSessionSelectionCardView,
-  buildWorkspaceSelectionCardView,
-  type WeComSessionOption,
-  type WeComWorkspaceOption,
-} from './ui/navigation';
+import { buildHomeCardView } from './ui/navigation';
 import { renderWeComCard } from './ui/renderer';
-import {
-  WeComNavigationCardRegistry,
-  type NavigationCardPurpose,
-  type NavigationSelectionResult,
-} from './ui/navigation-registry';
+import { WeComNavigationCardRegistry } from './ui/navigation-registry';
 import {
   cardPurposeFromTaskId,
   isHomeAction,
-  navigationActionForPurpose,
   type WeComCardPurpose,
 } from './card-routing';
-import { RiskProgressRelay } from './risk/progress';
+import { NavigationController } from './navigation-controller';
 import { executeCreditCommand } from './risk/credit-command';
 import {
   parseWeComCommand,
@@ -152,7 +131,6 @@ import {
 } from './commands';
 import {
   applyDirectRiskIntentInput,
-  buildIntentSelection,
   buildRiskIntentPrompt,
   resolveInitialRiskIntent,
   applySimpleRiskCorrection,
@@ -160,12 +138,8 @@ import {
   isRiskIntentCorrection,
   mergeRiskIntentDraft,
   normalizeRiskDraft,
-  normalizeSecurity,
-  selectRiskIntentSecurity,
-  confirmationSummary,
   parseRiskIntentOutputPartial,
   RiskIntentClarificationError,
-  RiskIntentStateRegistry,
   type RiskAiDraft,
   type RiskIntentState,
 } from './risk/intent';
@@ -420,11 +394,10 @@ const riskClient = riskDirectEnabled
       },
     })
   : undefined;
-const riskRouter = riskClient
-  ? new WeComRiskRouter(riskClient, { productCacheTtlMs: riskProductCacheTtlMs })
-  : undefined;
+const riskRouter = riskClient ? new WeComRiskRouter(riskClient) : undefined;
 const riskSelectionTasks = new RiskSelectionTaskRegistry();
-const riskIntents = new RiskIntentStateRegistry();
+const riskStates = new RiskStateRegistry();
+let riskWarmup: Promise<void> | undefined;
 const riskSelectionCardDelayMs = 800;
 
 if (!riskDirectEnabled) {
@@ -445,6 +418,51 @@ await codex.prepareRun();
 
 const client = new WSClient({ botId, secret, requestTimeout: requestTimeoutMs });
 const mediaStore = new WeComMediaStore(client, mediaDir);
+const riskInteraction = new RiskInteractionController({
+  riskClient,
+  riskRouter,
+  riskStates,
+  riskSelectionTasks,
+  conversationQueue,
+  runGate,
+  startingRuns,
+  streamMaxBytes,
+  selectionCardDelayMs: riskSelectionCardDelayMs,
+  refreshHealth: () => refreshHealth(),
+  isRiskUserAllowed,
+  updateTemplateCard: (frame, card) => client.updateTemplateCard(frame, card),
+  sendMarkdownMessage: (body, content) =>
+    client.sendMessage(messageTarget(body), {
+      msgtype: 'markdown',
+      markdown: { content },
+    }),
+  sendControlCardMessage: (body, card) => sendControlCard(client, body, card),
+  createRiskTaskId,
+});
+const navigation = new NavigationController({
+  sessionStore,
+  navigationCards,
+  configuredWorkspaces,
+  navigationCardTtlMs,
+  startupModel: model,
+  configuredModelAllowlist,
+  conversationAgentPreferences,
+  createNavigationTaskId,
+  effectiveModel,
+  effectiveReasoningEffort,
+  currentThreadId,
+  isConversationBusy,
+  recentTaskHint: (key) => recentTaskHint(
+    taskStore
+      .recent(key, 10)
+      .find((task) => task.kind !== 'command' && task.status !== 'queued' && task.status !== 'running'),
+  ),
+  replyTemplateCard: (frame, card) => client.replyTemplateCard(frame, card),
+  updateTemplateCard: (frame, card) => client.updateTemplateCard(frame, card),
+  deliverControlCard,
+  replyControl,
+  replyOnce,
+});
 
 client.on('connected', () => {
   healthPhase = 'starting';
@@ -641,7 +659,7 @@ async function handleMessage<T extends BaseMessage>(
   }
 
   if (command === '/menu') {
-    await replyHomeCard(frame, key);
+    await navigation.replyHomeCard(frame, key);
     return;
   }
 
@@ -659,25 +677,25 @@ async function handleMessage<T extends BaseMessage>(
   if (workspaceCommand) {
     const selectedId = workspaceCommand[1]?.trim();
     if (selectedId) {
-      await applyWorkspaceSelection(frame, key, selectedId);
+      await navigation.applyWorkspaceSelection(frame, key, selectedId);
     } else {
-      await replyWorkspaceSelection(frame, key);
+      await navigation.replyWorkspaceSelection(frame, key);
     }
     return;
   }
 
   if (command === '/model') {
-    await replyModelSelection(frame, key);
+    await navigation.replyModelSelection(frame, key);
     return;
   }
 
   if (command === '/reasoning') {
-    await replyReasoningSelection(frame, key);
+    await navigation.replyReasoningSelection(frame, key);
     return;
   }
 
   if (command === '/resume') {
-    await replySessionSelection(frame, key);
+    await navigation.replySessionSelection(frame, key);
     return;
   }
 
@@ -698,9 +716,8 @@ async function handleMessage<T extends BaseMessage>(
       );
       return;
     }
-    riskRouter?.clear(key);
     riskSelectionTasks.clearConversation(key);
-    riskIntents.clearConversation(key);
+    riskStates.clearConversation(key);
     navigationCards.clearConversation(key);
     await sessionStore.clear(key);
     await replyControl(
@@ -763,9 +780,7 @@ async function handleMessage<T extends BaseMessage>(
     return;
   }
 
-  const hasActiveRiskState =
-    riskIntents.has(key) ||
-    (riskRouter?.shouldHandle(key, text, mediaInputs.length > 0) ?? false);
+  const hasActiveRiskState = riskStates.hasPendingOrExpired(key);
   const riskCandidate = shouldUseRiskFastPath(
     parsedCommand,
     hasActiveRiskState,
@@ -964,7 +979,44 @@ async function executeConversationMessage(
           return;
         }
         if (useRiskFastPath && riskRouter && riskClient) {
-          const pendingIntent = riskIntents.get(key);
+          const expiredRiskState = riskStates.consumeExpired(key);
+          if (
+            expiredRiskState &&
+            !isRiskCandidate(text) &&
+            !isPretradeIntentCandidate(text)
+          ) {
+            riskSelectionTasks.clearConversation(key);
+            riskStates.clearTasksForConversation(key);
+            await stream.finish(
+              renderWeComNotice('之前的风险选择已过期', [
+                '请重新发送完整交易或风险查询。',
+              ], {
+                status: 'warning',
+                eyebrow: 'RISK · WECOM',
+              }),
+            );
+            return;
+          }
+
+          const pendingQuery = riskStates.getQuery(key);
+          if (pendingQuery) {
+            riskSelectionTasks.clearConversation(key);
+            riskStates.clearTasksForConversation(key);
+            const queryHandled = await riskInteraction.executeQueryMessage(
+              body,
+              key,
+              stream,
+              (onProgress) => riskRouter.continue(pendingQuery, text, onProgress),
+            );
+            if (queryHandled) return;
+            riskStates.delete(key);
+            if (isPretradeIntentCandidate(text)) {
+              await startRiskIntentFlow(body, key, text, stream);
+              return;
+            }
+          }
+
+          const pendingIntent = riskStates.getPretrade(key);
           if (
             pendingIntent &&
             isPretradeIntentCandidate(text) &&
@@ -981,12 +1033,12 @@ async function executeConversationMessage(
                 pendingIntent.field === 'security' ||
                 pendingIntent.field === 'amount'));
           if (pendingIntent && acceptsDirectInput) {
-            riskIntents.delete(key);
+            riskStates.delete(key);
             riskSelectionTasks.clearConversation(key);
-            riskIntents.clearTasksForConversation(key);
+            riskStates.clearTasksForConversation(key);
             const normalized = await applyDirectRiskIntentInput(pendingIntent, text, riskClient);
             if (!normalized) {
-              riskIntents.set(key, pendingIntent);
+              riskStates.setPretrade(key, pendingIntent);
               await stream.finish(
                 renderWeComNotice(
                   '需要修正输入',
@@ -1000,12 +1052,12 @@ async function executeConversationMessage(
               );
               return;
             }
-            riskIntents.set(key, normalized);
-            await finishRiskIntentState(body, key, stream, normalized);
+            riskStates.setPretrade(key, normalized);
+            await riskInteraction.finishIntentState(body, key, stream, normalized);
             return;
           }
           if (pendingIntent?.stage === 'freeform') {
-            riskIntents.delete(key);
+            riskStates.delete(key);
             if (pendingIntent.field === 'market' && pendingIntent.product) {
               const market = /一级/.test(text)
                 ? 'primary'
@@ -1013,7 +1065,7 @@ async function executeConversationMessage(
                   ? 'secondary'
                   : undefined;
               if (!market) {
-                riskIntents.set(key, pendingIntent);
+                riskStates.setPretrade(key, pendingIntent);
                 await stream.finish(
                   renderWeComNotice('需要选择交易市场', ['请输入“一级”或“二级”。'], {
                     status: 'warning',
@@ -1028,8 +1080,8 @@ async function executeConversationMessage(
                   { ...pendingIntent.draft, market },
                   riskClient,
                 );
-                riskIntents.set(key, normalized);
-                await finishRiskIntentState(body, key, stream, normalized);
+                riskStates.setPretrade(key, normalized);
+                await riskInteraction.finishIntentState(body, key, stream, normalized);
                 return;
               }
               const normalized: RiskIntentState = {
@@ -1044,8 +1096,8 @@ async function executeConversationMessage(
                 product: pendingIntent.product,
                 ...(pendingIntent.security ? { security: pendingIntent.security } : {}),
               };
-              riskIntents.set(key, normalized);
-              await finishRiskIntentState(body, key, stream, normalized);
+              riskStates.setPretrade(key, normalized);
+              await riskInteraction.finishIntentState(body, key, stream, normalized);
               return;
             }
             try {
@@ -1067,11 +1119,11 @@ async function executeConversationMessage(
                   : { ...revised, market },
                 riskClient,
               );
-              riskIntents.set(key, normalized);
-              await finishRiskIntentState(body, key, stream, normalized);
+              riskStates.setPretrade(key, normalized);
+              await riskInteraction.finishIntentState(body, key, stream, normalized);
               return;
             } catch (error) {
-              riskIntents.set(key, pendingIntent);
+              riskStates.setPretrade(key, pendingIntent);
               if (error instanceof RiskIntentClarificationError) {
                 await stream.finish(renderWeComNotice('请明确修改内容', error.missing, {
                   status: 'warning', eyebrow: 'RISK · WECOM',
@@ -1083,19 +1135,22 @@ async function executeConversationMessage(
           }
 
           if (pendingIntent?.stage === 'confirm' && isRiskIntentConfirmation(text)) {
-            riskIntents.delete(key);
+            riskStates.delete(key);
             riskSelectionTasks.clearConversation(key);
-            riskIntents.clearTasksForConversation(key);
+            riskStates.clearTasksForConversation(key);
             await stream.update(
               truncateUtf8(
                 renderWeComNotice('已确认交易信息', ['正在执行投资限额测算。']),
                 streamMaxBytes,
               ),
             );
-            await executeRiskCardSelection(body, key, pendingIntent, true, {
-              kind: 'stream',
-              stream,
-            });
+            await riskInteraction.executeSelection(
+              body,
+              key,
+              { kind: 'pretrade', state: pendingIntent },
+              true,
+              { kind: 'stream', stream },
+            );
             return;
           }
           if (pendingIntent?.stage === 'confirm') {
@@ -1109,44 +1164,13 @@ async function executeConversationMessage(
         }
         if (useRiskFastPath && riskRouter && !isPretradeIntentCandidate(text)) {
           riskSelectionTasks.clearConversation(key);
-          riskIntents.clearTasksForConversation(key);
-          const startedAt = Date.now();
-          const progressRelay = new RiskProgressRelay(
-            async (progress) => {
-              await stream.update(
-                truncateUtf8(
-                  renderWeComNotice('⏳ 风险限额查询中', [progress]),
-                  streamMaxBytes,
-                ),
-              );
-            },
-            (err) => log.fail('wecom-risk-progress', err, { step: 'message' }),
-            { includeStageCount: true, coalesce: true },
-          );
-          const result = await riskRouter.handle(key, text, (progress) => {
-            progressRelay.push(progress);
-          });
-          await progressRelay.finish();
-          if (result.handled) {
-            reportMetric('wecom_risk_fastpath_total', 1, { intent: result.intent });
-            reportMetric('wecom_risk_fastpath_ms', Date.now() - startedAt, {
-              intent: result.intent,
-            });
-            log.info('wecom-risk', 'completed', {
-              intent: result.intent,
-              durationMs: Date.now() - startedAt,
-            });
-            await stream.finish(
-              truncateUtf8(
-                renderWeComRiskOutput(result.markdown, Boolean(result.selection)),
-                streamMaxBytes,
-              ),
-            );
-            if (result.selection) {
-              scheduleRiskSelectionCard(body, key, result.selection);
-            }
-            return;
-          }
+          riskStates.clearTasksForConversation(key);
+          if (await riskInteraction.executeQueryMessage(
+            body,
+            key,
+            stream,
+            (onProgress) => riskRouter.handle(key, text, onProgress),
+          )) return;
         }
         const attachments = await resolveAttachments(mediaInputs);
         const prompt = buildWeComAgentPrompt(
@@ -1195,10 +1219,6 @@ async function executeConversationMessage(
   } finally {
     await refreshHealth();
   }
-}
-
-function isRiskIntentConfirmation(text: string): boolean {
-  return /^(?:确认|是|是的|对|对的|好|好的|可以|行|ok|yes|y|1)$/i.test(text.trim());
 }
 
 function isWorkspaceScope(value: string): boolean {
@@ -1335,7 +1355,7 @@ async function startRiskIntentFlow(
 ): Promise<void> {
   if (!riskClient) return;
   riskSelectionTasks.clearConversation(key);
-  riskIntents.clearTasksForConversation(key);
+  riskStates.clearTasksForConversation(key);
   await stream.update(
     truncateUtf8(
       renderWeComNotice('正在核对交易信息', [
@@ -1357,8 +1377,8 @@ async function startRiskIntentFlow(
     });
     log.info('wecom-risk-prepare', 'completed', { durationMs: Date.now() - startedAt, path: usedAi ? 'ai' : 'direct' });
     reportMetric('wecom_risk_prepare_ms', Date.now() - startedAt, { path: usedAi ? 'ai' : 'direct' });
-    riskIntents.set(key, normalized);
-    await finishRiskIntentState(body, key, stream, normalized);
+    riskStates.setPretrade(key, normalized);
+    await riskInteraction.finishIntentState(body, key, stream, normalized);
   } catch (error) {
     if (error instanceof RiskIntentInterruptedError) {
       await finishRiskIntentStopped(stream);
@@ -1392,7 +1412,7 @@ async function revisePendingRiskConfirmation(
 ): Promise<void> {
   if (!riskClient) return;
   riskSelectionTasks.clearConversation(key);
-  riskIntents.clearTasksForConversation(key);
+  riskStates.clearTasksForConversation(key);
   try {
     await stream.update(
       truncateUtf8(
@@ -1407,15 +1427,15 @@ async function revisePendingRiskConfirmation(
       return normalizeRiskDraft(`${pending.originalText} ${correction}`, merged, riskClient);
     })();
     reportMetric('wecom_risk_correction_total', 1, { path: direct ? 'direct' : 'ai' });
-    riskIntents.set(key, normalized);
-    await finishRiskIntentState(body, key, stream, normalized);
+    riskStates.setPretrade(key, normalized);
+    await riskInteraction.finishIntentState(body, key, stream, normalized);
   } catch (error) {
     if (error instanceof RiskIntentInterruptedError) {
-      riskIntents.set(key, pending);
+      riskStates.setPretrade(key, pending);
       await finishRiskIntentStopped(stream);
       return;
     }
-    riskIntents.set(key, pending);
+    riskStates.setPretrade(key, pending);
     const detail = error instanceof RiskIntentClarificationError
       ? `仍需补充：${error.missing.join('、')}`
       : '修正未应用，请直接修改金额、证券或产品后重试。';
@@ -1426,185 +1446,6 @@ async function revisePendingRiskConfirmation(
       }),
     ).catch(() => {});
   }
-}
-
-async function finishRiskIntentState(
-  body: ConversationBody,
-  key: string,
-  stream: WeComStreamReply,
-  state: RiskIntentState,
-): Promise<void> {
-  if (state.stage === 'freeform') {
-    await stream.finish(
-      renderWeComNotice('请补充信息', [riskIntentInputPrompt(state)], {
-        status: 'warning',
-        eyebrow: 'RISK · WECOM',
-      }),
-    );
-    return;
-  }
-  const selection = buildIntentSelection(state, Date.now() + 5 * 60_000);
-  if (state.stage === 'confirm' && state.draft.transactions) {
-    // Send all details before registering a confirmable card; no UTF-8 truncation of legs.
-    const details = confirmationSummary(state);
-    const chunks: string[] = [];
-    let chunk = '';
-    const budget = Math.max(256, streamMaxBytes - 512);
-    for (const line of details.split(/(?<=\n)/u)) {
-      if (chunk && Buffer.byteLength(chunk + line, 'utf8') > budget) {
-        chunks.push(chunk);
-        chunk = '';
-      }
-      for (const character of line) {
-        if (Buffer.byteLength(chunk + character, 'utf8') > budget) {
-          chunks.push(chunk);
-          chunk = '';
-        }
-        chunk += character;
-      }
-    }
-    if (chunk) chunks.push(chunk);
-    await stream.finish(renderWeComNotice('请确认全部交易', [
-      `共${state.draft.transactions.length}笔，请核对下方全部明细后确认合并测算。`,
-    ]));
-    for (const detail of chunks) await sendRiskMarkdown(body, detail);
-    selection.subTitle = `账户：${state.product}；共${state.draft.transactions.length}笔。请核对上方全部交易明细。`;
-  } else {
-    await stream.finish(
-      truncateUtf8(
-        renderWeComNotice(selection.title, [
-          selection.subTitle,
-          state.stage === 'confirm'
-            ? '确认完成前不会执行投资限额测算。'
-            : '可选择最符合的一项，也可以直接输入准确名称或代码。',
-        ]),
-        streamMaxBytes,
-      ),
-    );
-  }
-  scheduleRiskSelectionCard(body, key, selection, state);
-}
-
-async function handleRiskIntentChoice(
-  frame: TemplateCardEventFrame,
-  body: ConversationBody,
-  key: string,
-  taskId: string,
-  state: RiskIntentState,
-  value: string,
-  label: string,
-): Promise<void> {
-  if (!riskClient) return;
-  let next: RiskIntentState;
-  if (state.stage === 'account') {
-    next =
-      value === '__other_account__'
-        ? {
-            stage: 'freeform',
-            originalText: state.originalText,
-            draft: state.draft,
-            field: 'account',
-          }
-        : await normalizeSecurity(state.originalText, { ...state.draft, accountQuery: value }, value, riskClient);
-  } else if (state.stage === 'security') {
-    if (value === '__other_security__') {
-      next = {
-        stage: 'freeform',
-        transactionIndex: state.transactionIndex,
-        originalText: state.originalText,
-        draft: state.draft,
-        field: 'security',
-        product: state.product,
-      };
-    } else {
-      const security = JSON.parse(value) as {
-        name: string;
-        code: string;
-        label: string;
-      };
-      next = await selectRiskIntentSecurity(state, security, riskClient);
-    }
-  } else if (state.stage === 'confirm') {
-    if (value === '__confirm__') {
-      riskIntents.delete(key);
-      await updateRiskCardBestEffort(
-        () =>
-          client.updateTemplateCard(
-            frame,
-            buildRiskSelectionStatusCard(
-              taskId,
-              '测算请求提交成功',
-              '交易信息已锁定；当前阶段：正在准备测算；已完成 0/4。结果将在下方更新。',
-              label,
-            ),
-          ),
-        (error) => log.fail('wecom-risk-card', error, { step: 'confirmation-status' }),
-      );
-      await executeRiskCardSelection(body, key, state, false, {
-        kind: 'card',
-      });
-      return;
-    }
-    const field =
-      value === '__edit_account__'
-        ? 'account'
-        : value === '__edit_security__'
-          ? 'security'
-          : value === '__edit_amount__'
-            ? 'amount'
-            : value === '__edit_market__'
-              ? 'market'
-              : 'other';
-    next = {
-      stage: 'freeform',
-      originalText: state.originalText,
-      draft: state.draft,
-      field,
-      product: state.product,
-      security: state.security,
-    };
-  } else {
-    return;
-  }
-  riskIntents.set(key, next);
-  await updateRiskCardBestEffort(
-    () =>
-      client.updateTemplateCard(
-        frame,
-        buildRiskSelectionStatusCard(
-          taskId,
-          '请补充信息',
-          next.stage === 'freeform' ? riskIntentInputPrompt(next) : '正在继续确认。',
-          label,
-        ),
-      ),
-    (error) => log.fail('wecom-risk-card', error, { step: 'selection-status' }),
-  );
-  if (next.stage !== 'freeform') {
-    const fakeStream = {
-      finish: async (content: string) => {
-        await sendRiskMarkdown(body, content);
-      },
-      update: async () => {},
-    } as unknown as WeComStreamReply;
-    await finishRiskIntentState(body, key, fakeStream, next);
-  }
-}
-
-function riskIntentInputPrompt(
-  state: Extract<RiskIntentState, { stage: 'freeform' }>,
-): string {
-  const prefix = state.transactionIndex === undefined ? '' : `第${state.transactionIndex + 1}笔：`;
-  if (state.draft.transactions && state.field === 'other') return `${prefix}请指定交易序号和修改内容，例如“第2笔金额改为3000万”。`;
-  return prefix + (state.field === 'account'
-    ? '请直接输入准确的账户名称或关键词。'
-    : state.field === 'security'
-      ? '请直接输入准确的证券名称或代码。'
-      : state.field === 'amount'
-        ? '请直接输入正确的金额或数量（含单位）。'
-        : state.field === 'market'
-          ? '请直接输入“一级”或“二级”。'
-          : '请直接输入需要修改或补充的内容。');
 }
 
 async function runCodexPrompt(
@@ -1835,7 +1676,7 @@ async function handleEnterChat(frame: EnterChatFrame): Promise<void> {
   if (!body) return;
   const key = sessionStore.captureScope(conversationKey(body));
   await handleEnterChatEvent(frame, {
-    homeCard: renderWeComCard(buildHomeCardView(homeCardOptions(key))),
+    homeCard: renderWeComCard(buildHomeCardView(navigation.homeCardOptions(key))),
     replyWelcome: (eventFrame, reply) => client.replyWelcome(eventFrame, reply),
     classifyError: failureKind,
     onStage: (stage, errorKind) => {
@@ -1870,11 +1711,11 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
   }
   const purpose = cardPurposeFromTaskId(taskId);
   if (purpose === 'queue' || purpose === 'unknown') {
-    await updateInvalidCallback(frame, taskId);
+    await navigation.updateInvalidCallback(frame, taskId);
     return;
   }
   if (purpose === 'risk') {
-    await handleRiskSelectionCardEvent(frame, key, taskId, rawAction, selectedId);
+    await riskInteraction.handleSelectionCardEvent(frame, key, taskId, rawAction, selectedId);
     return;
   }
   if (purpose === 'menu') {
@@ -1885,7 +1726,7 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
     await handleLegacyControlCardEvent(frame, key, taskId, rawAction);
     return;
   }
-  await handleNavigationCardEvent(frame, key, taskId, purpose, rawAction, selectedId);
+  await navigation.handleNavigationCardEvent(frame, key, taskId, purpose, rawAction, selectedId);
 }
 
 async function handleHomeCardEvent(
@@ -1895,23 +1736,23 @@ async function handleHomeCardEvent(
   rawAction: string | undefined,
 ): Promise<void> {
   if (!isHomeAction(rawAction)) {
-    await updateInvalidCallback(frame, taskId);
+    await navigation.updateInvalidCallback(frame, taskId);
     return;
   }
   const resolution = navigationCards.resolve(taskId, key);
   if (resolution.status !== 'resolved') {
-    await updateCardLifecycleError(frame, taskId, resolution);
+    await navigation.updateCardLifecycleError(frame, taskId, resolution);
     return;
   }
   if (resolution.card.purpose !== 'menu') {
-    await updateInvalidCallback(frame, taskId);
+    await navigation.updateInvalidCallback(frame, taskId);
     return;
   }
   const active = activeRuns.get(key);
   const starting = startingRuns.has(key) || conversationQueue.has(key);
   if (rawAction === 'stop') {
     requestRiskIntentStop(key);
-    await updateHomeCard(frame, key, taskId);
+    await navigation.updateHomeCard(frame, key, taskId);
     if (active) {
       active.state = markInterrupted(active.state);
       if (active.durableTaskId) {
@@ -1925,18 +1766,17 @@ async function handleHomeCardEvent(
   }
   if (rawAction === 'new') {
     if (active || starting) {
-      await updateHomeCard(frame, key, taskId);
+      await navigation.updateHomeCard(frame, key, taskId);
       return;
     }
     await sessionStore.clear(key);
-    riskRouter?.clear(key);
     riskSelectionTasks.clearConversation(key);
-    riskIntents.clearConversation(key);
+    riskStates.clearConversation(key);
     navigationCards.clearConversation(key);
-    await updateHomeCard(frame, key, taskId);
+    await navigation.updateHomeCard(frame, key, taskId);
     return;
   }
-  await updateHomeCard(frame, key, taskId);
+  await navigation.updateHomeCard(frame, key, taskId);
 }
 
 async function handleLegacyControlCardEvent(
@@ -1948,7 +1788,7 @@ async function handleLegacyControlCardEvent(
   const cardScope = controlCardScopes.get(taskId);
   if (!cardScope || cardScope.expiresAt <= Date.now() || cardScope.key !== key) {
     controlCardScopes.delete(taskId);
-    await updateInvalidCallback(frame, taskId);
+    await navigation.updateInvalidCallback(frame, taskId);
     return;
   }
   const workspace = sessionStore.workspaceFor(key);
@@ -2005,9 +1845,8 @@ async function handleLegacyControlCardEvent(
       return;
     }
     await sessionStore.clear(key);
-    riskRouter?.clear(key);
     riskSelectionTasks.clearConversation(key);
-    riskIntents.clearConversation(key);
+    riskStates.clearConversation(key);
     await client.updateTemplateCard(
       frame,
       buildWeComControlCard({
@@ -2036,12 +1875,9 @@ async function handleLegacyControlCardEvent(
     );
     return;
   }
-  await updateInvalidCallback(frame, taskId);
+  await navigation.updateInvalidCallback(frame, taskId);
 }
 
-async function replyHomeCard(frame: WsFrame, key: string): Promise<void> {
-  await client.replyTemplateCard(frame, renderWeComCard(buildHomeCardView(homeCardOptions(key))));
-}
 
 async function replyDoctor(frame: WsFrame, key: string): Promise<void> {
   const workspace = sessionStore.workspaceFor(key);
@@ -2133,344 +1969,6 @@ async function replySettingsSummary(frame: WsFrame, key: string): Promise<void> 
   );
 }
 
-function homeCardOptions(key: string, taskId = createNavigationTaskId('menu')) {
-  const workspace = sessionStore.workspaceFor(key);
-  registerHomeCard(taskId, key);
-  return {
-    taskId,
-    busy: isConversationBusy(key),
-    workspace,
-    model: effectiveModel(key),
-    reasoning: effectiveReasoningEffort(key),
-    threadId: currentThreadId(key),
-    recentTask: recentTaskHint(
-      taskStore
-        .recent(key, 10)
-        .find(
-          (task) =>
-            task.kind !== 'command' && task.status !== 'queued' && task.status !== 'running',
-        ),
-    ),
-  };
-}
-
-async function replyWorkspaceSelection(frame: WsFrame, key: string): Promise<void> {
-  const workspace = sessionStore.workspaceFor(key);
-  const taskId = createNavigationTaskId('workspace');
-  const current = path.resolve(workspace);
-  const options: WeComWorkspaceOption[] = configuredWorkspaces.map((entry) => ({
-    id: entry.id,
-    label: `${entry.name}${path.resolve(entry.cwd) === current ? '（当前）' : ''}`,
-  }));
-  registerNavigationTask(taskId, 'workspace', key, options.map((item) => [item.id, item.label]));
-  await client.replyTemplateCard(
-    frame,
-    renderWeComCard(buildWorkspaceSelectionCardView({ taskId, workspaces: options })),
-  );
-}
-
-function workspaceById(id: string): WeComWorkspace | undefined {
-  return configuredWorkspaces.find((entry) => entry.id === id);
-}
-
-async function switchWorkspace(
-  key: string,
-  selectedId: string,
-): Promise<{ key: string; workspace: WeComWorkspace } | undefined> {
-  const entry = workspaceById(selectedId);
-  if (!entry) return undefined;
-  const chatKey = sessionStore.conversationScope(key);
-  const targetKey = sessionStore.captureScope(chatKey, entry.cwd);
-  await sessionStore.bindWorkspace(chatKey, entry.cwd);
-  // Keep the response bound to the requested target even if another group
-  // member changes the current workspace while the persistence write is in flight.
-  return { key: targetKey, workspace: entry };
-}
-
-async function applyWorkspaceSelection(
-  frame: WsFrame,
-  key: string,
-  selectedId: string,
-): Promise<void> {
-  const entry = workspaceById(selectedId);
-  if (!entry) {
-    await replyOnce(frame, '无法切换 Workspace', [
-      `未找到 \`${selectedId}\`。可用 ID：${configuredWorkspaces.map((item) => item.id).join('、')}`,
-    ]);
-    return;
-  }
-  try {
-    const switched = await switchWorkspace(key, selectedId);
-    if (!switched) throw new Error('Workspace selection disappeared');
-    await replyControl(
-      frame,
-      switched.key,
-      '✅ 已切换 Workspace',
-      [`当前工作区：\`${entry.name}\``, '后续新消息立即使用该工作区；正在运行或排队的任务继续使用原工作区。'],
-      isConversationBusy(switched.key) ? 'running' : 'idle',
-      `已切换到 ${entry.name}`,
-    );
-  } catch (err) {
-    log.fail('wecom-workspace', err, { step: 'switch' });
-    await replyOnce(frame, '无法确认 Workspace 切换结果', [
-      '请发送 `/workspace` 查看当前工作区后再继续。',
-    ]);
-  }
-}
-
-async function replyModelSelection(frame: WsFrame, key: string): Promise<void> {
-  const taskId = createNavigationTaskId('model');
-  const options = modelSelectionOptions(key);
-  registerNavigationTask(taskId, 'model', key, options.map((item) => [item.id, item.text]));
-  await client.replyTemplateCard(
-    frame,
-    renderWeComCard(buildModelSelectionCardView({ taskId, models: options })),
-  );
-}
-
-async function replyReasoningSelection(frame: WsFrame, key: string): Promise<void> {
-  const taskId = createNavigationTaskId('reasoning');
-  const options = reasoningSelectionOptions(key);
-  registerNavigationTask(taskId, 'reasoning', key, options.map((item) => [item.id, item.text]));
-  await client.replyTemplateCard(
-    frame,
-    renderWeComCard(buildReasoningSelectionCardView({ taskId, levels: options })),
-  );
-}
-
-async function replySessionSelection(frame: WsFrame, key: string): Promise<void> {
-  if (key.startsWith('group:')) {
-    await replyNoticeCard(frame, {
-      taskId: createNavigationTaskId('session'),
-      title: '🧵 请在私聊中恢复会话',
-      description: '为保护历史会话隐私，请在与机器人的私聊中使用 /resume。',
-    });
-    return;
-  }
-  const workspace = sessionStore.workspaceFor(key);
-  const taskId = createNavigationTaskId('session');
-  const sessions: WeComSessionOption[] = sessionStore.sessionsFor(key).map((entry) => ({
-    id: entry.threadId,
-    label: `Codex 会话 ${entry.threadId.slice(0, 8)}`,
-    workspace: path.basename(workspace),
-    ...(entry.updatedAt > 0 ? { hint: formatRelTime(entry.updatedAt) } : {}),
-  }));
-  if (sessions.length === 0) {
-    await replyNoticeCard(frame, {
-      taskId,
-      title: '🧵 没有可恢复的会话',
-      description: `工作区 ${path.basename(workspace)} 暂无当前聊天可恢复的 Codex 会话。`,
-    });
-    return;
-  }
-  registerNavigationTask(taskId, 'session', key, sessions.map((item) => [item.id, item.label]));
-  await client.replyTemplateCard(
-    frame,
-    renderWeComCard(buildSessionSelectionCardView({ taskId, sessions })),
-  );
-}
-
-async function handleNavigationCardEvent(
-  frame: TemplateCardEventFrame,
-  key: string,
-  taskId: string,
-  purpose: Exclude<WeComCardPurpose, 'menu' | 'codex' | 'queue' | 'risk' | 'unknown'>,
-  rawAction: string | undefined,
-  selectedId: string | undefined,
-): Promise<void> {
-  // Reject callbacks from group history cards issued before the privacy guard.
-  if (purpose === 'session' && key.startsWith('group:')) {
-    await updateInvalidCallback(frame, taskId);
-    return;
-  }
-  if (rawAction !== navigationActionForPurpose(purpose)) {
-    await updateInvalidCallback(frame, taskId);
-    return;
-  }
-  const resolution = navigationCards.resolve(taskId, key);
-  if (resolution.status !== 'resolved') {
-    await updateCardLifecycleError(frame, taskId, resolution);
-    return;
-  }
-  if (resolution.card.purpose !== purpose) {
-    await updateInvalidCallback(frame, taskId);
-    return;
-  }
-  const optionLabels = resolution.card.payload?.optionLabels;
-  if (!optionLabels || !selectedId || !optionLabels.has(selectedId)) {
-    await updateInvalidCallback(frame, taskId);
-    return;
-  }
-
-  if (purpose === 'session' && isConversationBusy(key)) {
-    await replyNavigationResult(
-      frame,
-      key,
-      taskId,
-      '当前任务仍在运行，请先停止后再恢复会话。',
-      'warning',
-      '⚠️ 暂不能恢复会话',
-    );
-    return;
-  }
-
-  const selection = navigationCards.consumeSelection(taskId, key, purpose, selectedId);
-  if (selection.status === 'invalid' || selection.status === 'purpose-mismatch') {
-    await updateInvalidCallback(frame, taskId);
-    return;
-  }
-  if (selection.status !== 'selected') {
-    await updateCardLifecycleError(frame, taskId, selection);
-    return;
-  }
-  const label = selection.label;
-  if (purpose === 'workspace') {
-    try {
-      const switched = await switchWorkspace(key, selection.selectedId);
-      if (!switched) {
-        await updateInvalidCallback(frame, taskId);
-        return;
-      }
-      await replyNavigationResult(
-        frame,
-        switched.key,
-        taskId,
-        `已切换到 Workspace：${switched.workspace.name}。后续新消息立即使用该工作区；正在运行或排队的任务继续使用原工作区。`,
-        'success',
-        '✅ Workspace 已切换',
-      );
-    } catch (err) {
-      log.fail('wecom-workspace', err, { step: 'card-switch' });
-      await updateInvalidCallback(frame, taskId);
-    }
-    return;
-  }
-  if (purpose === 'model') setConversationModel(conversationAgentPreferences, key, selectedId);
-  if (purpose === 'reasoning') {
-    setConversationReasoningEffort(conversationAgentPreferences, key, selectedId);
-  }
-  if (purpose === 'session') {
-    const allowed = sessionStore.sessionsFor(key).some((entry) => entry.threadId === selectedId);
-    if (!allowed) {
-      await updateInvalidCallback(frame, taskId);
-      return;
-    }
-    await sessionStore.setThread(key, selectedId);
-  }
-
-  const message =
-    purpose === 'session'
-        ? `已恢复会话：${label}`
-        : `已应用${purpose === 'model' ? '模型' : '推理强度'}：${label}（当前会话后续新任务生效）`;
-  await replyNavigationResult(
-    frame,
-    key,
-    taskId,
-    message,
-    'success',
-    '✅ 操作已处理',
-  );
-}
-
-async function replyNavigationResult(
-  frame: TemplateCardEventFrame,
-  key: string,
-  taskId: string,
-  message: string,
-  status: 'success' | 'warning',
-  title: string,
-): Promise<void> {
-  await client.updateTemplateCard(
-    frame,
-    renderWeComCard(
-      buildNoticeCardView({
-        taskId,
-        source: 'Codex Bridge',
-        title,
-        description: message,
-        subtitle: '可继续使用下方最新控制卡片。',
-        status,
-      }),
-    ),
-  );
-  await deliverControlCard(frame, renderWeComCard(buildHomeCardView(homeCardOptions(key))));
-}
-
-async function replyNoticeCard(
-  frame: WsFrame,
-  options: { taskId: string; title: string; description: string },
-): Promise<void> {
-  await client.replyTemplateCard(
-    frame,
-    renderWeComCard(
-      buildNoticeCardView({
-        ...options,
-        source: 'Codex Bridge',
-        status: 'warning',
-      }),
-    ),
-  );
-}
-
-async function updateHomeCard(
-  frame: TemplateCardEventFrame,
-  key: string,
-  taskId: string,
-): Promise<void> {
-  const options = homeCardOptions(key, taskId);
-  await client.updateTemplateCard(
-    frame,
-    renderWeComCard(buildHomeCardView(options)),
-  );
-}
-
-async function updateInvalidCallback(frame: TemplateCardEventFrame, taskId: string): Promise<void> {
-  await client.updateTemplateCard(
-    frame,
-    renderWeComCard(buildErrorCardView({ taskId, kind: 'callback-invalid' })),
-  );
-}
-
-async function updateCardLifecycleError(
-  frame: TemplateCardEventFrame,
-  taskId: string,
-  result: NavigationSelectionResult,
-): Promise<void> {
-  await client.updateTemplateCard(
-    frame,
-    renderWeComCard(
-      buildErrorCardView({
-        taskId,
-        kind: result.status === 'mismatch' ? 'callback-invalid' : 'callback-expired',
-      }),
-    ),
-  );
-}
-
-function registerNavigationTask(
-  taskId: string,
-  purpose: NavigationCardPurpose,
-  key: string,
-  options: readonly [string, string][],
-): void {
-  navigationCards.register({
-    taskId,
-    purpose,
-    conversationKey: key,
-    optionLabels: new Map(options),
-    expiresAt: Date.now() + navigationCardTtlMs,
-  });
-}
-
-function registerHomeCard(taskId: string, key: string): void {
-  navigationCards.register({
-    taskId,
-    purpose: 'menu',
-    conversationKey: key,
-    expiresAt: Date.now() + navigationCardTtlMs,
-  });
-}
-
 function registerControlCard(taskId: string, key: string): void {
   controlCardScopes.set(taskId, {
     key,
@@ -2484,290 +1982,6 @@ function registerControlCard(taskId: string, key: string): void {
   while (controlCardScopes.size > 2_000) {
     controlCardScopes.delete(controlCardScopes.keys().next().value!);
   }
-}
-
-function modelSelectionOptions(key: string) {
-  const currentModel = effectiveModel(key);
-  return weComModelOptions({
-    startupModel: model,
-    currentModel,
-    configuredModels: configuredModelAllowlist,
-  }).map((item) => ({ id: item.value, text: item.label }));
-}
-
-function reasoningSelectionOptions(key: string) {
-  const currentReasoningEffort = effectiveReasoningEffort(key);
-  const known = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].map((id) => ({
-    id,
-    text: id,
-  }));
-  return [
-    { id: currentReasoningEffort, text: `${currentReasoningEffort}（当前）` },
-    ...known.filter((item) => item.id !== currentReasoningEffort),
-  ];
-}
-
-async function handleRiskSelectionCardEvent(
-  frame: TemplateCardEventFrame,
-  key: string,
-  taskId: string,
-  eventKey: string | undefined,
-  selectedId: string | undefined,
-): Promise<void> {
-  const body = frame.body;
-  if (!body) return;
-  if (!riskRouter || !isRiskUserAllowed(body.from?.userid)) {
-    await client.updateTemplateCard(
-      frame,
-      buildRiskSelectionStatusCard(
-        taskId,
-        '无法使用此选择',
-        riskRouter ? '当前用户没有风险查询权限' : '风险查询暂不可用',
-      ),
-    );
-    return;
-  }
-
-  const selectedKey = selectedId || (eventKey === 'submit' ? '' : eventKey ?? '');
-  const resolution = riskSelectionTasks.resolve(taskId, key, selectedKey);
-  if (resolution.status === 'invalid') {
-    await client.updateTemplateCard(
-      frame,
-      buildRiskSelectionCard(
-        {
-          ...resolution.selection,
-          replyHint: '请先选择一个候选项，再点击确认',
-        },
-        taskId,
-      ),
-    );
-    return;
-  }
-  if (resolution.status !== 'selected') {
-    if (resolution.status === 'missing' || resolution.status === 'expired') {
-      riskIntents.deleteTask(taskId);
-    }
-    await client.updateTemplateCard(
-      frame,
-      renderWeComCard(
-        buildErrorCardView({
-          taskId,
-          kind: resolution.status === 'mismatch' ? 'callback-invalid' : 'callback-expired',
-        }),
-      ),
-    );
-    return;
-  }
-
-  const intentState = riskIntents.getTask(taskId);
-  if (intentState) {
-    riskIntents.deleteTask(taskId);
-    await handleRiskIntentChoice(
-      frame,
-      body,
-      key,
-      taskId,
-      intentState,
-      resolution.option.value ?? resolution.option.key,
-      resolution.option.label,
-    );
-    return;
-  }
-
-  let submission: WeComConversationSubmission;
-  try {
-    submission = conversationQueue.submit(key, async () => {
-      await executeRiskCardSelection(
-        body,
-        key,
-        resolution.option.value ?? resolution.option.key,
-        false,
-        { kind: 'card' },
-      );
-    });
-  } catch (err) {
-    if (!(err instanceof WeComConversationQueueError)) throw err;
-    await updateRiskCardBestEffort(
-      () =>
-        client.updateTemplateCard(
-          frame,
-          buildRiskSelectionStatusCard(
-            taskId,
-            '无法开始风险查询',
-            conversationQueueNotice(err.reason),
-            resolution.option.label,
-          ),
-        ),
-      (error) => log.fail('wecom-risk-card', error, { step: 'queue-rejected-status' }),
-    );
-    return;
-  }
-
-  await client
-    .updateTemplateCard(
-      frame,
-      buildRiskSelectionStatusCard(
-        taskId,
-        submission.queued ? '已加入会话队列' : '已收到选择',
-        submission.queued
-          ? `当前排队位置：${submission.position}；前一项完成后会自动处理。`
-          : '正在继续风险查询',
-        resolution.option.label,
-      ),
-    )
-    .catch((err: unknown) => {
-      log.fail('wecom-risk-card', err, { step: 'selection-status' });
-    });
-
-  void submission.completion.catch(async (err: unknown) => {
-    log.fail('wecom-risk-card', err, { step: 'selection' });
-    await sendRiskMarkdown(
-      body,
-      renderWeComNotice('⚠️ 风险查询失败', ['暂时无法完成查询，请稍后重试。']),
-    ).catch(() => {});
-  });
-}
-
-async function executeRiskCardSelection(
-  body: ConversationBody,
-  key: string,
-  selectedKey: string | Extract<RiskIntentState, { stage: 'confirm' }>,
-  withinConversationRun = false,
-  progressTarget?:
-    | { kind: 'card' }
-    | { kind: 'stream'; stream: WeComStreamReply },
-): Promise<void> {
-  if (!riskRouter) return;
-  try {
-    const execute = async () => {
-      await refreshHealth();
-      const progressRelay = new RiskProgressRelay(
-        (progress) =>
-          progressTarget?.kind === 'stream'
-            ? progressTarget.stream.update(
-                truncateUtf8(
-                  renderWeComNotice('⏳ 风险限额查询中', [progress]),
-                  streamMaxBytes,
-                ),
-              )
-            : progressTarget?.kind === 'card'
-              ? Promise.resolve()
-            : sendRiskMarkdown(
-                body,
-                renderWeComNotice('⏳ 风险限额查询中', [progress]),
-              ),
-        (err) => log.fail('wecom-risk-progress', err, { step: 'card-selection' }),
-        { includeStageCount: true, coalesce: true },
-      );
-      const onProgress = (progress: string) => {
-        if (progress.startsWith('已确认：')) return;
-        progressRelay.push(progress);
-      };
-      const startedAt = Date.now();
-      const result = typeof selectedKey === 'string'
-        ? await riskRouter.handle(key, selectedKey, onProgress)
-        : await riskRouter.executeConfirmed(selectedKey, onProgress);
-      reportMetric('wecom_risk_confirmed_ms', Date.now() - startedAt);
-      await progressRelay.finish();
-      if (result.handled) {
-        if (progressTarget?.kind === 'stream') {
-          const failed = result.intent === 'risk-error';
-          await progressTarget.stream.finish(
-            truncateUtf8(
-              renderWeComNotice(
-                failed ? '⚠️ 风险限额测算失败' : '风险限额测算完成',
-                [failed ? '本次未执行成功，请查看下方错误说明。' : '业务结果已生成，请查看下方结果。'],
-                failed ? { status: 'error', eyebrow: 'RISK · WECOM' } : undefined,
-              ),
-              streamMaxBytes,
-            ),
-          );
-        }
-        await sendRiskRouteResult(body, key, result);
-      } else if (progressTarget?.kind === 'stream') {
-        await progressTarget.stream.finish(
-          renderWeComNotice('无法继续风险查询', [
-            '当前选择已失效，请重新发起查询。',
-          ], {
-            status: 'warning',
-            eyebrow: 'RISK · WECOM',
-          }),
-        );
-      }
-    };
-    if (withinConversationRun) {
-      await execute();
-    } else {
-      await withReservation(startingRuns, key, async () => runGate.run(execute));
-    }
-  } catch (err) {
-    if (!(err instanceof WeComRunCapacityError)) {
-      if (progressTarget?.kind === 'stream') {
-        await progressTarget.stream
-          .finish(
-            renderWeComNotice('⚠️ 风险限额测算失败', [
-              '暂时无法完成测算，请稍后重试。',
-            ]),
-          )
-          .catch(() => {});
-      }
-      throw err;
-    }
-    const content = truncateUtf8(
-      renderWeComNotice('⚠️ 当前任务较多', [capacityNotice(err.reason)]),
-      streamMaxBytes,
-    );
-    if (progressTarget?.kind === 'stream') {
-      await progressTarget.stream.finish(content);
-    } else {
-      await sendRiskMarkdown(body, content);
-    }
-  } finally {
-    await refreshHealth();
-  }
-}
-
-async function sendRiskRouteResult(
-  body: ConversationBody,
-  key: string,
-  result: Extract<RiskRouteResult, { handled: true }>,
-): Promise<void> {
-  const content = renderWeComRiskOutput(result.markdown, Boolean(result.selection));
-  await sendRiskMarkdown(body, content);
-  if (result.selection) scheduleRiskSelectionCard(body, key, result.selection);
-}
-
-async function sendRiskMarkdown(body: ConversationBody, content: string): Promise<void> {
-  const rendered = content.includes('**▌ ') ? content : renderWeComRiskOutput(content);
-  await client.sendMessage(messageTarget(body), {
-    msgtype: 'markdown',
-    markdown: { content: truncateUtf8(rendered, streamMaxBytes) },
-  });
-}
-
-function scheduleRiskSelectionCard(
-  body: ConversationBody,
-  key: string,
-  selection: RiskSelectionRequest,
-  intentState?: RiskIntentState,
-): void {
-  const taskId = createRiskTaskId();
-  riskSelectionTasks.register(taskId, key, selection);
-  riskIntents.clearTasksForConversation(key);
-  if (intentState) {
-    riskIntents.registerTask(taskId, key, intentState, selection.expiresAt);
-  }
-  void (async () => {
-    await new Promise<void>((resolve) => setTimeout(resolve, riskSelectionCardDelayMs));
-    if (!riskSelectionTasks.has(taskId, key)) return;
-    try {
-      await sendControlCard(client, body, buildRiskSelectionCard(selection, taskId));
-    } catch (err) {
-      riskSelectionTasks.remove(taskId);
-      riskIntents.deleteTask(taskId);
-      log.fail('wecom-risk-card', err, { step: 'send' });
-    }
-  })();
 }
 
 async function replyStatus(frame: WsFrame, key: string): Promise<void> {
