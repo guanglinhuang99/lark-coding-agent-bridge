@@ -146,4 +146,83 @@ describe('Codex argv contract', () => {
     ).toContain('--ignore-user-config');
   });
 
+  it('builds a compact isolated argv for risk-intent extraction', () => {
+    expect(
+      buildCodexArgs({
+        cwd: '/risk-workspace',
+        purpose: 'risk-intent',
+        sandbox: 'read-only',
+        model: 'gpt-5.5',
+        reasoningEffort: 'low',
+        ignoreUserConfig: true,
+        ignoreRules: true,
+      }),
+    ).toEqual([
+      'exec',
+      '--json',
+      '-c',
+      'project_doc_max_bytes=0',
+      '-c',
+      'skills.include_instructions=false',
+      '-c',
+      'features.skill_search=false',
+      '-c',
+      'orchestrator.skills.enabled=false',
+      '-c',
+      'orchestrator.mcp.enabled=false',
+      '-c',
+      'features.apps=false',
+      '-c',
+      'features.remote_plugin=false',
+      '-c',
+      'features.shell_tool=false',
+      '-c',
+      'features.shell_snapshot=false',
+      '-c',
+      'features.browser_use=false',
+      '-c',
+      'features.computer_use=false',
+      '-c',
+      'features.image_generation=false',
+      '-c',
+      'agents.enabled=false',
+      '-c',
+      'web_search="disabled"',
+      '--sandbox',
+      'read-only',
+      '--model',
+      'gpt-5.5',
+      '-c',
+      'model_reasoning_effort="low"',
+      '-c',
+      'approval_policy="never"',
+      '-c',
+      'shell_environment_policy.inherit="all"',
+      '--ignore-user-config',
+      '--ignore-rules',
+      '--skip-git-repo-check',
+      '-C',
+      '/risk-workspace',
+      '-',
+    ]);
+  });
+
+  it('passes model instructions only for risk-intent purpose', () => {
+    const instructionsFile = '/risk workspace/risk-intent/instructions-fixed.txt';
+    const riskArgs = buildCodexArgs({
+      cwd: '/risk-workspace',
+      purpose: 'risk-intent',
+      instructionsFile,
+      sandbox: 'read-only',
+    });
+    expect(riskArgs).toContain(`model_instructions_file=${JSON.stringify(instructionsFile)}`);
+
+    const ordinaryArgs = buildCodexArgs({
+      cwd: '/workspace',
+      instructionsFile,
+      sandbox: 'read-only',
+    });
+    expect(ordinaryArgs.some((arg) => arg.startsWith('model_instructions_file='))).toBe(false);
+  });
+
 });

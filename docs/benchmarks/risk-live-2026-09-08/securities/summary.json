@@ -1,0 +1,140 @@
+{
+  "kind": "real-client-read-only-query",
+  "controlled_stop": {
+    "utc": "2026-09-08T01:48:39Z",
+    "reason": "Completed all 30 same-query pairs. Extra mixed scenario has only 7 distinct codes, so stopped instead of treating it as 8 distinct. A request may have started before this stop; not counted as a completed sample.",
+    "sampler_pid": 32944,
+    "owned_child_pids": [
+      32985,
+      32994
+    ]
+  },
+  "scenarios": {
+    "products_warmup": {
+      "before": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1.0,
+        "median": 9347.342708,
+        "p95": 9347.342708,
+        "backendRequests": 1
+      },
+      "after": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1.0,
+        "median": 9227.900874999998,
+        "p95": 9227.900874999998,
+        "backendRequests": 1
+      },
+      "absoluteReductionMs": 119.44183300000259,
+      "reductionPercent": 1.2778159176487391,
+      "consistentPairs": 1,
+      "businessConsistent": true
+    },
+    "security_concurrent_mixed": {
+      "status": "cancelled-invalid-scenario",
+      "distinctQueryCount": 7,
+      "completedPairs": 0,
+      "inFlightAtStop": "unobserved; up to one batch may have been submitted; excluded from performance, explicitly recorded here"
+    },
+    "products_repeat": {
+      "before": {
+        "n": 30,
+        "success": 30,
+        "failures": 0,
+        "successRate": 1.0,
+        "median": 0.2928540000011708,
+        "p95": 0.5065830000021379,
+        "backendRequests": 30
+      },
+      "after": {
+        "n": 30,
+        "success": 30,
+        "failures": 0,
+        "successRate": 1.0,
+        "median": 0.06331299999874318,
+        "p95": 0.08933400000023539,
+        "backendRequests": 0
+      },
+      "absoluteReductionMs": 0.2295410000024276,
+      "reductionPercent": 78.38069481772827,
+      "consistentPairs": 30,
+      "businessConsistent": true
+    },
+    "products_concurrent_same_miss": {
+      "before": {
+        "n": 30,
+        "success": 30,
+        "failures": 0,
+        "successRate": 1.0,
+        "median": 1.42370850000043,
+        "p95": 1.8111659999995027,
+        "backendRequests": 240
+      },
+      "after": {
+        "n": 30,
+        "success": 30,
+        "failures": 0,
+        "successRate": 1.0,
+        "median": 0.5519580000018323,
+        "p95": 0.8429169999981241,
+        "backendRequests": 30
+      },
+      "absoluteReductionMs": 0.8717504999985977,
+      "reductionPercent": 61.23096827744825,
+      "consistentPairs": 30,
+      "businessConsistent": true
+    },
+    "security_repeat": {
+      "before": {
+        "n": 30,
+        "success": 30,
+        "failures": 0,
+        "successRate": 1.0,
+        "median": 2614.5671665000045,
+        "p95": 3060.46916600001,
+        "backendRequests": 30
+      },
+      "after": {
+        "n": 30,
+        "success": 30,
+        "failures": 0,
+        "successRate": 1.0,
+        "median": 0.0998745000033523,
+        "p95": 2804.636458000001,
+        "backendRequests": 3
+      },
+      "absoluteReductionMs": 2614.467292000001,
+      "reductionPercent": 99.9961800751848,
+      "consistentPairs": 30,
+      "businessConsistent": true
+    },
+    "security_concurrent_same_miss": {
+      "before": {
+        "n": 30,
+        "success": 30,
+        "failures": 0,
+        "successRate": 1.0,
+        "median": 19194.30943699999,
+        "p95": 21435.845666999987,
+        "backendRequests": 240
+      },
+      "after": {
+        "n": 30,
+        "success": 30,
+        "failures": 0,
+        "successRate": 1.0,
+        "median": 2611.8248960000055,
+        "p95": 3134.3939580000006,
+        "backendRequests": 30
+      },
+      "absoluteReductionMs": 16582.484540999983,
+      "reductionPercent": 86.39271235793817,
+      "consistentPairs": 30,
+      "businessConsistent": true
+    }
+  }
+}

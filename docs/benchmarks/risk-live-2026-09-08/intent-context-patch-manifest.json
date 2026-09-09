@@ -1,0 +1,15 @@
+{
+  "baseCommit": "79f7a75faf54220f4f7b6d72064974c812b176e0",
+  "files": {
+    "src/agent/codex/adapter.ts": "a3974df84f56eec3ace6d35aa43d40b8d210aaded0dcfe50474c68ad9e32d976",
+    "src/agent/codex/argv.ts": "6e80d8a35b9a0d64972b69af668780844cb511f17491a464b6ad32a838ca8a3c",
+    "src/wecom/cli.ts": "1ee40fadb633118f1f293ce9dd1652d28791c29e6620a8129ef4428097e34af8",
+    "tests/process/codex-adapter.test.ts": "2d1cf554845d55f1c7027ec4aea9a8e104fc69cbfd6a6e698fa908d0dfff55b4",
+    "tests/unit/agent/codex-argv.test.ts": "14235ff543c592f87dfb2df87bf7efcdf3f09b759b55f7e3cbe86f79bcfe4456",
+    "tests/unit/bridge/shared-runtime.test.ts": "320f55dfc667b2f9b9cc5645fc467b4038d1a6b03036b886ed04fc0b906e628a"
+  },
+  "ciExitCode": 0,
+  "testFiles": 149,
+  "tests": 1090,
+  "controlledBenchmarkSkipped": 1
+}

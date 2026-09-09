@@ -1,0 +1,8 @@
+{
+  "validated_rows": 432,
+  "ab_ba_order": "pass",
+  "pair_result_hashes": "pass",
+  "median_and_nearest_rank_p95_recalculation": "pass",
+  "pin_versions_start_end_equal": true,
+  "note": "Cancelled extra mixed-security scenario is separate, not included as a successful sample."
+}

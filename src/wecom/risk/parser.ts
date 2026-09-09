@@ -173,6 +173,15 @@ export function matchProductCandidates(
   products: readonly string[],
 ): { products: string[]; fuzzy: boolean } {
   const normalizedText = normalizeProductText(text);
+  // A literal ledger shorthand takes priority over an omitted strategy word.
+  const shorthand = /^esg(\d+)号$/.exec(normalizedText);
+  if (shorthand) {
+    const literal = products.filter((product) => normalizeProductText(product) === normalizedText);
+    if (literal.length) return { products: literal, fuzzy: false };
+    const candidates = products.filter((product) =>
+      normalizeProductText(product) === `esg纯债${shorthand[1]}号`);
+    if (candidates.length) return { products: candidates, fuzzy: true };
+  }
   const fragments = productMatchFragments(text);
   const hits = new Map<string, number>();
   let hasExactAlias = false;
@@ -274,9 +283,11 @@ function normalizeProductText(text: string): string {
     text
       .normalize('NFKC')
       .toLowerCase()
+      .replace(/&(?:#x20|#32|nbsp);/gi, ' ')
+      .replace(/\*\*/g, '')
       .replace(PRODUCT_SEPARATOR_RE, '')
-      .replace(/^安联(?:资产管理|资管)?/, '')
-      .replace(/资产管理产品$/, ''),
+      .replace(/^安联(?:资产管理|资管|资产)?/, '')
+      .replace(/(?:资产管理)?产品$/, ''),
   );
 }
 

@@ -16,10 +16,12 @@ import type {
   AgentRunOptions,
 } from '../types';
 import { buildCodexArgs } from './argv';
+import { riskIntentInstructionsFile } from './risk-intent-instructions';
 import { CodexJsonlTranslator, type CodexFinishReason } from './jsonl';
 
 export interface CodexAdapterOptions {
   binary: string;
+  purpose?: 'risk-intent';
   profileStateDir: string;
   codexHome?: string;
   inheritCodexHome?: boolean;
@@ -37,6 +39,7 @@ export class CodexAdapter implements AgentAdapter {
   readonly displayName = 'Codex CLI';
 
   private readonly binary: string;
+  private readonly purpose: 'risk-intent' | undefined;
   private readonly profileStateDir: string;
   private readonly codexHome: string | undefined;
   private readonly inheritCodexHome: boolean;
@@ -49,11 +52,12 @@ export class CodexAdapter implements AgentAdapter {
 
   constructor(opts: CodexAdapterOptions) {
     this.binary = opts.binary;
+    this.purpose = opts.purpose;
     this.profileStateDir = opts.profileStateDir;
     this.codexHome = opts.codexHome;
     this.inheritCodexHome = opts.inheritCodexHome !== false;
-    this.ignoreUserConfig = opts.ignoreUserConfig === true;
-    this.ignoreRules = opts.ignoreRules !== false;
+    this.ignoreUserConfig = opts.purpose === 'risk-intent' || opts.ignoreUserConfig === true;
+    this.ignoreRules = opts.purpose === 'risk-intent' || opts.ignoreRules !== false;
     this.sandbox = opts.sandbox ?? 'danger-full-access';
     this.defaultStopGraceMs = opts.stopGraceMs ?? 5000;
     this.larkChannel = opts.larkChannel;
@@ -95,6 +99,8 @@ export class CodexAdapter implements AgentAdapter {
 
     const args = buildCodexArgs({
       cwd: opts.cwd,
+      purpose: this.purpose,
+      instructionsFile: this.purpose === 'risk-intent' ? riskIntentInstructionsFile(this.profileStateDir) : undefined,
       sandbox: opts.sandbox ?? this.sandbox,
       threadId: opts.threadId,
       images: opts.images,
@@ -154,7 +160,7 @@ export class CodexAdapter implements AgentAdapter {
     child.stdin.on('error', (err) => {
       log.warn('agent', 'stdin-error', { message: err.message });
     });
-    child.stdin.end(prefixBridgeSystemPrompt(opts.prompt, this.botIdentity), 'utf8');
+    child.stdin.end(this.purpose === 'risk-intent' ? opts.prompt : prefixBridgeSystemPrompt(opts.prompt, this.botIdentity), 'utf8');
 
     const stopGraceMs = opts.stopGraceMs ?? this.defaultStopGraceMs;
 

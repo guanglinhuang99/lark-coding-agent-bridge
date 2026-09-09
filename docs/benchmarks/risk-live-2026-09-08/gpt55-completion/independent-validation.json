@@ -1,0 +1,386 @@
+{
+  "generatedAt": "2026-09-08T10:33:22.403Z",
+  "method": "Independent read-only JSONL validation. Statistics use only complete successful before/after pairs within the selected group; no raw prompts, AI, backend, tests, or services were run.",
+  "expectedCommits": {
+    "before": "f00d635b36536dccac7ebeb73235e7dcf584d49b",
+    "after": "6d28a6a673b3d400f3d30e15018b5a5621d545cf"
+  },
+  "outputFile": "/private/tmp/wecom-live-20260908/gpt55-continuation/independent-validation.json",
+  "selectedScenarioPolicy": "Four 30-pair scenarios only: collected intent_case_0, collected intent_case_1, tenor-live intent_case_0, compound-live intent_case_0. Collected intent_case_2 is retained as failed attempts evidence and excluded from final four-scenario performance stats.",
+  "groups": {
+    "natural_language": {
+      "key": "natural_language",
+      "sourceDir": "/private/tmp/wecom-live-20260908/gpt55-collected-live",
+      "scenario": "intent_case_0",
+      "selectedForFourScenarioStats": true,
+      "targetPairs": 30,
+      "attempts": 30,
+      "pairRows": 30,
+      "successfulPairs": 30,
+      "fullSuccessfulTargetMet": true,
+      "chronologicalByUtc": true,
+      "pairRowsRetained": true,
+      "pairRowsAgreeWithIndependentHashCheck": true,
+      "commits": {
+        "before": [
+          "f00d635b36536dccac7ebeb73235e7dcf584d49b"
+        ],
+        "after": [
+          "6d28a6a673b3d400f3d30e15018b5a5621d545cf"
+        ]
+      },
+      "commitsOk": true,
+      "byVersion": {
+        "before": {
+          "records": 30,
+          "successes": 30,
+          "failures": 0,
+          "calculatePretradeCounts": {
+            "1": 30
+          },
+          "aiCallCounts": {
+            "1": 30
+          }
+        },
+        "after": {
+          "records": 30,
+          "successes": 30,
+          "failures": 0,
+          "calculatePretradeCounts": {
+            "1": 30
+          },
+          "aiCallCounts": {
+            "1": 30
+          }
+        }
+      },
+      "failureRows": [],
+      "failurePairRows": [],
+      "metricsFromSuccessfulPairsOnly": {
+        "nPairs": 30,
+        "beforeMedianMs": 12878.852875,
+        "afterMedianMs": 13805.633667,
+        "beforeP95NearestMs": 22609.717958,
+        "afterP95NearestMs": 24771.163458,
+        "absoluteReductionMs": -926.780792,
+        "reductionPercent": -7.196144
+      },
+      "firstIssueSamples": []
+    },
+    "amount_correction": {
+      "key": "amount_correction",
+      "sourceDir": "/private/tmp/wecom-live-20260908/gpt55-collected-live",
+      "scenario": "intent_case_1",
+      "selectedForFourScenarioStats": true,
+      "targetPairs": 30,
+      "attempts": 30,
+      "pairRows": 30,
+      "successfulPairs": 30,
+      "fullSuccessfulTargetMet": true,
+      "chronologicalByUtc": true,
+      "pairRowsRetained": true,
+      "pairRowsAgreeWithIndependentHashCheck": true,
+      "commits": {
+        "before": [
+          "f00d635b36536dccac7ebeb73235e7dcf584d49b"
+        ],
+        "after": [
+          "6d28a6a673b3d400f3d30e15018b5a5621d545cf"
+        ]
+      },
+      "commitsOk": true,
+      "byVersion": {
+        "before": {
+          "records": 30,
+          "successes": 30,
+          "failures": 0,
+          "calculatePretradeCounts": {
+            "1": 30
+          },
+          "aiCallCounts": {
+            "2": 30
+          }
+        },
+        "after": {
+          "records": 30,
+          "successes": 30,
+          "failures": 0,
+          "calculatePretradeCounts": {
+            "1": 30
+          },
+          "aiCallCounts": {
+            "0": 30
+          }
+        }
+      },
+      "failureRows": [],
+      "failurePairRows": [],
+      "metricsFromSuccessfulPairsOnly": {
+        "nPairs": 30,
+        "beforeMedianMs": 36209.197708,
+        "afterMedianMs": 9895.358146,
+        "beforeP95NearestMs": 45134.241833,
+        "afterP95NearestMs": 23274.200334,
+        "absoluteReductionMs": 26313.839562,
+        "reductionPercent": 72.6717
+      },
+      "firstIssueSamples": []
+    },
+    "tenor_failed_attempts": {
+      "key": "tenor_failed_attempts",
+      "sourceDir": "/private/tmp/wecom-live-20260908/gpt55-collected-live",
+      "scenario": "intent_case_2",
+      "selectedForFourScenarioStats": false,
+      "targetPairs": 30,
+      "attempts": 13,
+      "pairRows": 13,
+      "successfulPairs": 12,
+      "fullSuccessfulTargetMet": false,
+      "chronologicalByUtc": true,
+      "pairRowsRetained": true,
+      "pairRowsAgreeWithIndependentHashCheck": true,
+      "commits": {
+        "before": [
+          "f00d635b36536dccac7ebeb73235e7dcf584d49b"
+        ],
+        "after": [
+          "6d28a6a673b3d400f3d30e15018b5a5621d545cf"
+        ]
+      },
+      "commitsOk": true,
+      "byVersion": {
+        "before": {
+          "records": 13,
+          "successes": 12,
+          "failures": 1,
+          "calculatePretradeCounts": {
+            "1": 13
+          },
+          "aiCallCounts": {
+            "2": 13
+          }
+        },
+        "after": {
+          "records": 13,
+          "successes": 13,
+          "failures": 0,
+          "calculatePretradeCounts": {
+            "1": 13
+          },
+          "aiCallCounts": {
+            "0": 13
+          }
+        }
+      },
+      "failureRows": [
+        {
+          "version": "before",
+          "pair": 12,
+          "line": 145,
+          "errorCategory": "data-date-changed",
+          "calculatePretrade": 1,
+          "dataDate": "2026-08-22",
+          "actualInputHash": null,
+          "inputHash": "cb38791c60f929eae910f6d900450abdb4e59903b0b6db8b69a82237f9070955"
+        }
+      ],
+      "failurePairRows": [
+        {
+          "scenario": "intent_case_2",
+          "pair": 12,
+          "consistent": false,
+          "usable": false,
+          "collectableInputFailure": false,
+          "failureCategories": {
+            "data-date-changed": 1
+          },
+          "_line": 73
+        }
+      ],
+      "metricsFromSuccessfulPairsOnly": {
+        "nPairs": 12,
+        "beforeMedianMs": 21970.407104,
+        "afterMedianMs": 2583.480812,
+        "beforeP95NearestMs": 32704.453792,
+        "afterP95NearestMs": 7683.958292,
+        "absoluteReductionMs": 19386.926292,
+        "reductionPercent": 88.241088
+      },
+      "firstIssueSamples": [
+        "pair 12 calculate_pretrade count unexpected"
+      ]
+    },
+    "tenor_correction": {
+      "key": "tenor_correction",
+      "sourceDir": "/private/tmp/wecom-live-20260908/gpt55-tenor-live",
+      "scenario": "intent_case_0",
+      "selectedForFourScenarioStats": true,
+      "targetPairs": 30,
+      "attempts": 30,
+      "pairRows": 30,
+      "successfulPairs": 30,
+      "fullSuccessfulTargetMet": true,
+      "chronologicalByUtc": true,
+      "pairRowsRetained": true,
+      "pairRowsAgreeWithIndependentHashCheck": true,
+      "commits": {
+        "before": [
+          "f00d635b36536dccac7ebeb73235e7dcf584d49b"
+        ],
+        "after": [
+          "6d28a6a673b3d400f3d30e15018b5a5621d545cf"
+        ]
+      },
+      "commitsOk": true,
+      "byVersion": {
+        "before": {
+          "records": 30,
+          "successes": 30,
+          "failures": 0,
+          "calculatePretradeCounts": {
+            "1": 30
+          },
+          "aiCallCounts": {
+            "2": 30
+          }
+        },
+        "after": {
+          "records": 30,
+          "successes": 30,
+          "failures": 0,
+          "calculatePretradeCounts": {
+            "1": 30
+          },
+          "aiCallCounts": {
+            "0": 30
+          }
+        }
+      },
+      "failureRows": [],
+      "failurePairRows": [],
+      "metricsFromSuccessfulPairsOnly": {
+        "nPairs": 30,
+        "beforeMedianMs": 21494.836,
+        "afterMedianMs": 2602.736687,
+        "beforeP95NearestMs": 30850.551541,
+        "afterP95NearestMs": 7579.2415,
+        "absoluteReductionMs": 18892.099313,
+        "reductionPercent": 87.89134
+      },
+      "firstIssueSamples": []
+    },
+    "compound_correction": {
+      "key": "compound_correction",
+      "sourceDir": "/private/tmp/wecom-live-20260908/gpt55-compound-live",
+      "scenario": "intent_case_0",
+      "selectedForFourScenarioStats": true,
+      "targetPairs": 30,
+      "attempts": 30,
+      "pairRows": 30,
+      "successfulPairs": 30,
+      "fullSuccessfulTargetMet": true,
+      "chronologicalByUtc": true,
+      "pairRowsRetained": true,
+      "pairRowsAgreeWithIndependentHashCheck": true,
+      "commits": {
+        "before": [
+          "f00d635b36536dccac7ebeb73235e7dcf584d49b"
+        ],
+        "after": [
+          "6d28a6a673b3d400f3d30e15018b5a5621d545cf"
+        ]
+      },
+      "commitsOk": true,
+      "byVersion": {
+        "before": {
+          "records": 30,
+          "successes": 30,
+          "failures": 0,
+          "calculatePretradeCounts": {
+            "1": 30
+          },
+          "aiCallCounts": {
+            "2": 30
+          }
+        },
+        "after": {
+          "records": 30,
+          "successes": 30,
+          "failures": 0,
+          "calculatePretradeCounts": {
+            "1": 30
+          },
+          "aiCallCounts": {
+            "1": 30
+          }
+        }
+      },
+      "failureRows": [],
+      "failurePairRows": [],
+      "metricsFromSuccessfulPairsOnly": {
+        "nPairs": 30,
+        "beforeMedianMs": 38306.558458,
+        "afterMedianMs": 22390.395792,
+        "beforeP95NearestMs": 117512.309333,
+        "afterP95NearestMs": 59661.457042,
+        "absoluteReductionMs": 15916.162666,
+        "reductionPercent": 41.549446
+      },
+      "firstIssueSamples": []
+    }
+  },
+  "selectedFourScenarioStats": {
+    "natural_language": {
+      "nPairs": 30,
+      "beforeMedianMs": 12878.852875,
+      "afterMedianMs": 13805.633667,
+      "beforeP95NearestMs": 22609.717958,
+      "afterP95NearestMs": 24771.163458,
+      "absoluteReductionMs": -926.780792,
+      "reductionPercent": -7.196144
+    },
+    "amount_correction": {
+      "nPairs": 30,
+      "beforeMedianMs": 36209.197708,
+      "afterMedianMs": 9895.358146,
+      "beforeP95NearestMs": 45134.241833,
+      "afterP95NearestMs": 23274.200334,
+      "absoluteReductionMs": 26313.839562,
+      "reductionPercent": 72.6717
+    },
+    "tenor_correction": {
+      "nPairs": 30,
+      "beforeMedianMs": 21494.836,
+      "afterMedianMs": 2602.736687,
+      "beforeP95NearestMs": 30850.551541,
+      "afterP95NearestMs": 7579.2415,
+      "absoluteReductionMs": 18892.099313,
+      "reductionPercent": 87.89134
+    },
+    "compound_correction": {
+      "nPairs": 30,
+      "beforeMedianMs": 38306.558458,
+      "afterMedianMs": 22390.395792,
+      "beforeP95NearestMs": 117512.309333,
+      "afterP95NearestMs": 59661.457042,
+      "absoluteReductionMs": 15916.162666,
+      "reductionPercent": 41.549446
+    }
+  },
+  "overall": {
+    "selectedScenarioCount": 4,
+    "allSelectedTargetsMet": true,
+    "allSelectedCommitsOk": true,
+    "allSelectedChronological": true,
+    "allSelectedHashesConsistent": true,
+    "allSelectedCalculatePretradeOnceOnSuccess": true,
+    "excludedFailureGroups": [
+      {
+        "key": "tenor_failed_attempts",
+        "attempts": 13,
+        "failureRows": 1,
+        "successfulPairs": 12
+      }
+    ]
+  }
+}

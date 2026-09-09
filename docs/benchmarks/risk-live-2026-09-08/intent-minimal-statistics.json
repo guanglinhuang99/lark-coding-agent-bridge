@@ -1,0 +1,168 @@
+{
+  "pairedGroups": 8,
+  "rows": 16,
+  "failures": 0,
+  "allBusinessAndInputHashesEqual": true,
+  "scenarios": {
+    "0": {
+      "baseline": {
+        "aiCalls": 0,
+        "usage": [],
+        "totalMs": 17292.553499999998
+      },
+      "patched": {
+        "aiCalls": 0,
+        "usage": [],
+        "totalMs": 16903.443583
+      }
+    },
+    "1": {
+      "baseline": {
+        "aiCalls": 1,
+        "usage": [
+          {
+            "type": "usage",
+            "inputTokens": 5997,
+            "outputTokens": 49,
+            "cachedInputTokens": 0,
+            "reasoningOutputTokens": 9
+          }
+        ],
+        "totalMs": 11188.436625000002
+      },
+      "patched": {
+        "aiCalls": 1,
+        "usage": [
+          {
+            "type": "usage",
+            "inputTokens": 1719,
+            "outputTokens": 101,
+            "cachedInputTokens": 1536,
+            "reasoningOutputTokens": 61
+          }
+        ],
+        "totalMs": 10569.760791
+      }
+    },
+    "2": {
+      "baseline": {
+        "aiCalls": 0,
+        "usage": [],
+        "totalMs": 21960.200791999996
+      },
+      "patched": {
+        "aiCalls": 0,
+        "usage": [],
+        "totalMs": 22296.682124999992
+      }
+    },
+    "3": {
+      "baseline": {
+        "aiCalls": 0,
+        "usage": [],
+        "totalMs": 2521.280958000003
+      },
+      "patched": {
+        "aiCalls": 0,
+        "usage": [],
+        "totalMs": 2455.787458999999
+      }
+    },
+    "4": {
+      "baseline": {
+        "aiCalls": 1,
+        "usage": [
+          {
+            "type": "usage",
+            "inputTokens": 6049,
+            "outputTokens": 72,
+            "cachedInputTokens": 5632,
+            "reasoningOutputTokens": 27
+          }
+        ],
+        "totalMs": 19319.234792000003
+      },
+      "patched": {
+        "aiCalls": 1,
+        "usage": [
+          {
+            "type": "usage",
+            "inputTokens": 1771,
+            "outputTokens": 110,
+            "cachedInputTokens": 0,
+            "reasoningOutputTokens": 65
+          }
+        ],
+        "totalMs": 18368.82033299998
+      }
+    },
+    "5": {
+      "baseline": {
+        "aiCalls": 1,
+        "usage": [
+          {
+            "type": "usage",
+            "inputTokens": 5992,
+            "outputTokens": 54,
+            "cachedInputTokens": 5632,
+            "reasoningOutputTokens": 9
+          }
+        ],
+        "totalMs": 16898.828374999983
+      },
+      "patched": {
+        "aiCalls": 1,
+        "usage": [
+          {
+            "type": "usage",
+            "inputTokens": 1714,
+            "outputTokens": 100,
+            "cachedInputTokens": 0,
+            "reasoningOutputTokens": 55
+          }
+        ],
+        "totalMs": 18023.591958000005
+      }
+    },
+    "6": {
+      "baseline": {
+        "aiCalls": 1,
+        "usage": [
+          {
+            "type": "usage",
+            "inputTokens": 5985,
+            "outputTokens": 53,
+            "cachedInputTokens": 5632,
+            "reasoningOutputTokens": 10
+          }
+        ],
+        "totalMs": 21230.827292
+      },
+      "patched": {
+        "aiCalls": 1,
+        "usage": [
+          {
+            "type": "usage",
+            "inputTokens": 1499,
+            "outputTokens": 97,
+            "cachedInputTokens": 0,
+            "reasoningOutputTokens": 54
+          }
+        ],
+        "totalMs": 18654.404541999975
+      }
+    },
+    "7": {
+      "baseline": {
+        "aiCalls": 0,
+        "usage": [],
+        "totalMs": 4708.826792000007
+      },
+      "patched": {
+        "aiCalls": 0,
+        "usage": [],
+        "totalMs": 4682.993290999992
+      }
+    }
+  }
+}

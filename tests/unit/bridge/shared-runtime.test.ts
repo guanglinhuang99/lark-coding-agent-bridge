@@ -199,8 +199,23 @@ describe('core architecture boundary', () => {
   });
   it('routes both WeCom agent entry paths through the shared executor', async () => {
     const cli = await readFile('src/wecom/cli.ts', 'utf8');
-    expect(cli).not.toContain('codex.run('); expect(cli.match(/startWeComAgentRun\(runExecutor/g)).toHaveLength(2);
+    expect(cli).toContain('pool: runGate.pool,');
+    expect(cli).toContain('activeRuns: agentRuns,');
+    expect(cli).not.toContain('codex.run('); expect(cli.match(/startWeComAgentRun\((?:runExecutor|riskIntentExecutor)/g)).toHaveLength(2);
     expect(await readFile('src/runtime/run-executor.ts', 'utf8')).toContain('../bridge/run-executor');
+  });
+  it('binds every risk intent AI path to the conversation stop lifecycle', async () => {
+    const cli = await readFile('src/wecom/cli.ts', 'utf8');
+    expect(cli).toContain('return await withActiveRun(activeRuns, key, active, async () => {');
+    expect(cli).toContain('riskIntentRunsStarting.add(key);');
+    expect(cli).toContain('riskIntentStopRequests.delete(key);');
+    expect(cli.match(/^\s*requestRiskIntentStop\(key\);/gm)).toHaveLength(3);
+    expect(cli).toContain('return analyzeRiskDraft(key, text);');
+    expect(cli).toContain('const revised = await analyzeRiskDraft(key, pending.originalText, pending.draft, correction);');
+    expect(cli).toMatch(/const revised = await analyzeRiskDraft\(\s+key,/);
+    expect(cli).toContain('active.state.terminal === \'interrupted\' || riskIntentStopRequests.has(key)');
+    expect(cli).toContain('停止请求已记录，风险意图任务启动后将立即终止。');
+    expect(cli).toContain('风险任务正在启动，停止请求已记录');
   });
   it('claims WeCom durable receipts before memory deduplication', async () => {
     const cli = await readFile('src/wecom/cli.ts', 'utf8');

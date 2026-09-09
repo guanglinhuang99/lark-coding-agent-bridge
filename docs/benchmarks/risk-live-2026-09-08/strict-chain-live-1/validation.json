@@ -1,0 +1,10 @@
+{
+  "status": "pass",
+  "samples": 13,
+  "successfulRealCalculations": 6,
+  "fallbackRequiredWithoutCalculation": 7,
+  "aiRequests": 0,
+  "repeatCalculationBusinessEqual": true,
+  "repeatCalculationDistinctRunIds": true,
+  "oldCorrectionConfirmationInvalidated": true
+}

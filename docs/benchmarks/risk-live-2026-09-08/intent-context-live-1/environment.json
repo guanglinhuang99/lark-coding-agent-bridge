@@ -1,0 +1,9 @@
+{
+  "model": "gpt-5.5",
+  "reasoningEffort": "low",
+  "baselineBundleHash": "3989f4e59de8fb4f05cc6a4531cef037be67acad78155a1e5b4cc6a7991568be",
+  "patchedBundleHash": "0a3d434aeed8c961b100bda94bf13674ff678ec4b011ab2ac1f3911e29e39cbb",
+  "configHash": "b40c2bf5013924374f7655e54c0b8db51c73b035acd838af4b94eb24b7ac5508",
+  "order": "AB/BA",
+  "kind": "context-patch-on-optimized-source; not original before/after benchmark"
+}

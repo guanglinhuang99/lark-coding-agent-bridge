@@ -1,0 +1,21 @@
+{
+  "deployed": true,
+  "release": "/Users/guanglin/.lark-channel/releases/wecom-account-20260908-1733dab0256f",
+  "artifactSha256": "1733dab0256f35ade2cd21becb4b83026e45a18c5c19578e14f76054891a353e",
+  "model": "gpt-5.6-luna",
+  "stateDir": "/Users/guanglin/.lark-channel/releases/wecom-risk-20260908-40e196ce3872/state",
+  "health": {
+    "pid": 46026,
+    "connected": true,
+    "activeRuns": 0,
+    "startingRuns": 0,
+    "updatedAt": "2026-09-08T11:51:01.046Z",
+    "phase": "connected"
+  },
+  "tests": {
+    "riskTestsPassed": 186,
+    "artifactAccountVariantsPassed": 3,
+    "typecheck": "passed",
+    "artifactSyntax": "passed"
+  }
+}

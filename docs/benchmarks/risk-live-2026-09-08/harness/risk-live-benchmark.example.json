@@ -1,0 +1,28 @@
+{
+  "ai": {
+    "model": "REPLACE_WITH_VERIFIED_LIVE_MODEL",
+    "binary": "REPLACE_WITH_VERIFIED_CODEX_BINARY",
+    "cwd": "REPLACE_WITH_ISOLATED_WORKSPACE",
+    "codexHomes": {
+      "before": "REPLACE_WITH_ISOLATED_BEFORE_CODEX_HOME",
+      "after": "REPLACE_WITH_ISOLATED_AFTER_CODEX_HOME"
+    },
+    "timeoutMs": 180000
+  },
+  "cases": [
+    {
+      "text": "",
+      "selections": [],
+      "corrections": [],
+      "approvedForLocalCalculation": false,
+      "expected": {
+        "product": "",
+        "type": "subscription",
+        "market": "secondary",
+        "amount": 0.1
+      },
+      "dataDate": "REPLACE_WITH_VERIFIED_DATE",
+      "baselineMetricsHash": "REPLACE_WITH_VERIFIED_BASELINE_METRICS_SHA256"
+    }
+  ]
+}

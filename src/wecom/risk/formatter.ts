@@ -4,7 +4,7 @@ import { isRecord, stringValue } from './client';
 const STATUS_ORDER = ['FAIL', 'WARN', 'NO_DATA', 'UNSUPPORTED', 'EXPIRED', 'N/A', 'PASS'];
 const UNKNOWN_STATUSES = new Set(['NO_DATA', 'UNSUPPORTED', 'EXPIRED', 'N/A', 'NA', 'UNKNOWN']);
 
-export function formatCalculation(data: Record<string, unknown>, amountNote?: string): string {
+export function formatCalculation(data: Record<string, unknown>, amountNote?: string, transactionCount = 1): string {
   if (data.status === 'error') {
     return `⚠️ **测算失败**：${friendlyError(stringValue(data.error))}`;
   }
@@ -31,18 +31,20 @@ export function formatCalculation(data: Record<string, unknown>, amountNote?: st
     UNKNOWN_STATUSES.has(stringValue(item.status)),
   );
 
+  const investment = transactionCount > 1 ? `本批${transactionCount}笔投资` : '本笔投资';
+  const noNewLimit = transactionCount > 1 ? `本批${transactionCount}笔未新增超限` : '本笔未新增超限';
   const lines: string[] = [];
   if (newFails.length > 0 || introducedIssues.length > 0) {
     const issueCount = Math.max(newFails.length, introducedIssues.length);
-    lines.push(`🔴 **未通过**：本笔投资引发 ${issueCount} 项新增超限/问题`);
+    lines.push(`🔴 **未通过**：${investment}引发 ${issueCount} 项新增超限/问题`);
   } else if (unknown.length > 0 || unavailableIssues.length > 0) {
     lines.push('🟡 **未发现新增超限，但检查不完整**：存在无数据或未支持项目，不能视为完整通过');
   } else if (existingFails.length > 0) {
-    lines.push(`🟡 **本笔未新增超限**：产品当前仍有 ${existingFails.length} 项既有超限`);
+    lines.push(`🟡 **${noNewLimit}**：产品当前仍有 ${existingFails.length} 项既有超限`);
   } else if (warnings.length > 0) {
-    lines.push(`🟡 **本笔未新增超限**：测算后仍有 ${warnings.length} 项预警`);
+    lines.push(`🟡 **${noNewLimit}**：测算后仍有 ${warnings.length} 项预警`);
   } else {
-    lines.push('🟢 **通过**：本笔投资未引发新增超限');
+    lines.push(`🟢 **通过**：${investment}未引发新增超限`);
   }
 
   const product = stringValue(data.product) || stringValue(result.product);

@@ -1,0 +1,145 @@
+{
+  "kind": "read-only-collected-pair-summary",
+  "sourceDirectory": "/private/tmp/wecom-live-20260908/gpt55-collected-live",
+  "versions": {
+    "before": [
+      "f00d635b36536dccac7ebeb73235e7dcf584d49b"
+    ],
+    "after": [
+      "6d28a6a673b3d400f3d30e15018b5a5621d545cf"
+    ]
+  },
+  "rows": 146,
+  "scenarios": {
+    "intent_case_0": {
+      "attempts": 30,
+      "usablePairs": 30,
+      "failures": 0,
+      "failureCategories": {},
+      "allAttempts": {
+        "before": {
+          "n": 30,
+          "observedRows": 30,
+          "success": 30,
+          "failures": 0,
+          "missingRows": 0,
+          "duplicateRows": 0,
+          "successRate": 1,
+          "failureCategories": {}
+        },
+        "after": {
+          "n": 30,
+          "observedRows": 30,
+          "success": 30,
+          "failures": 0,
+          "missingRows": 0,
+          "duplicateRows": 0,
+          "successRate": 1,
+          "failureCategories": {}
+        }
+      },
+      "completeConsistentPairs": {
+        "before": {
+          "n": 30,
+          "medianMs": 12878.852874999997,
+          "p95Ms": 22609.717958000023
+        },
+        "after": {
+          "n": 30,
+          "medianMs": 13805.633667000016,
+          "p95Ms": 24771.163458000054
+        }
+      },
+      "absoluteReductionMs": -926.7807920000196,
+      "reductionPercent": -7.196143950048972
+    },
+    "intent_case_1": {
+      "attempts": 30,
+      "usablePairs": 30,
+      "failures": 0,
+      "failureCategories": {},
+      "allAttempts": {
+        "before": {
+          "n": 30,
+          "observedRows": 30,
+          "success": 30,
+          "failures": 0,
+          "missingRows": 0,
+          "duplicateRows": 0,
+          "successRate": 1,
+          "failureCategories": {}
+        },
+        "after": {
+          "n": 30,
+          "observedRows": 30,
+          "success": 30,
+          "failures": 0,
+          "missingRows": 0,
+          "duplicateRows": 0,
+          "successRate": 1,
+          "failureCategories": {}
+        }
+      },
+      "completeConsistentPairs": {
+        "before": {
+          "n": 30,
+          "medianMs": 36209.19770799996,
+          "p95Ms": 45134.24183299998
+        },
+        "after": {
+          "n": 30,
+          "medianMs": 9895.358146499959,
+          "p95Ms": 23274.200334000052
+        }
+      },
+      "absoluteReductionMs": 26313.839561500004,
+      "reductionPercent": 72.67170008488284
+    },
+    "intent_case_2": {
+      "attempts": 13,
+      "usablePairs": 12,
+      "failures": 1,
+      "failureCategories": {
+        "data-date-changed": 1
+      },
+      "allAttempts": {
+        "before": {
+          "n": 13,
+          "observedRows": 13,
+          "success": 12,
+          "failures": 1,
+          "missingRows": 0,
+          "duplicateRows": 0,
+          "successRate": 0.9230769230769231,
+          "failureCategories": {
+            "data-date-changed": 1
+          }
+        },
+        "after": {
+          "n": 13,
+          "observedRows": 13,
+          "success": 13,
+          "failures": 0,
+          "missingRows": 0,
+          "duplicateRows": 0,
+          "successRate": 1,
+          "failureCategories": {}
+        }
+      },
+      "completeConsistentPairs": {
+        "before": {
+          "n": 12,
+          "medianMs": 21970.40710449987,
+          "p95Ms": 32704.45379200019
+        },
+        "after": {
+          "n": 12,
+          "medianMs": 2583.4808120001107,
+          "p95Ms": 7683.958291999996
+        }
+      },
+      "absoluteReductionMs": 19386.92629249976,
+      "reductionPercent": 88.24108811588214
+    }
+  }
+}

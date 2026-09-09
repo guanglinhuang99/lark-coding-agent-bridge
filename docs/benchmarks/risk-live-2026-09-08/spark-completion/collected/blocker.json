@@ -1,0 +1,17 @@
+{
+  "category": "spark-usage-limit",
+  "evidence": "Two actual Codex runs returned: You have hit your usage limit for GPT-5.3-Codex-Spark.",
+  "exitCode": 1,
+  "usablePairs": 22,
+  "attemptedPairs": 23,
+  "failedRows": 2,
+  "remainingScenarios": [
+    "natural_language target 30 not reached",
+    "amount_correction",
+    "tenor_correction",
+    "compound_correction"
+  ],
+  "resetCreditConsumed": false,
+  "modelChangedAfterFailure": false,
+  "appUsageToolLimitation": "Returned general codex bucket only; Spark reset time not available."
+}

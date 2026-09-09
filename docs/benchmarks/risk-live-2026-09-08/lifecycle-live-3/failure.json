@@ -1,0 +1,7 @@
+{
+  "exitCode": 1,
+  "category": "harness-watchdog-and-unhandled-rejection",
+  "businessFailure": false,
+  "detail": "A queued request with 100 ms queue expiry was incorrectly observed with a 5100 ms watchdog although the real blocker lasts about 8 seconds. Fixed watchdog to max(waitMs, requestTimeoutMs+5000), attached rejection handling immediately.",
+  "leftoverHarnessChildrenObserved": false
+}

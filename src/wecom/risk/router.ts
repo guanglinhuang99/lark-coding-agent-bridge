@@ -1,4 +1,5 @@
 import type { RiskPretradeAction, RiskSecuritySuggestion, RiskService } from './client';
+import { confirmedRiskAmount, type RiskIntentState } from './intent';
 import { RiskServiceError } from './client';
 import {
   extractAmount,
@@ -117,6 +118,53 @@ export class WeComRiskRouter {
         intent: 'risk-error',
         markdown: formatRiskError(error),
       };
+    }
+  }
+
+  /** Called only with the server-side state consumed by a validated confirmation. */
+  async executeConfirmed(
+    state: Extract<RiskIntentState, { stage: 'confirm' }>,
+    onProgress?: (progress: string) => void,
+  ): Promise<RiskRouteResult> {
+    try {
+      const transactions = state.draft.transactions ?? [{ ...state.draft, resolvedSecurity: state.security }];
+      if (!state.product || !transactions.length) throw new RiskServiceError('交易信息尚未核验', 'unresolved-transaction');
+      // Validate every leg before submitting anything: a batch is one scenario.
+      const notes: string[] = [];
+      const actions: RiskPretradeAction[] = transactions.map((draft, index) => {
+        const amount = confirmedRiskAmount(draft.amountText ?? '');
+        if (!amount) throw new RiskServiceError(`第${index + 1}笔交易规模无效`, 'invalid-amount');
+        if (draft.days !== undefined && (!Number.isSafeInteger(draft.days) || draft.days <= 0)) {
+          throw new RiskServiceError('期限无效', 'invalid-days');
+        }
+        const type = draft.action;
+        if (!type || !['buy', 'sell', 'subscription', 'redemption', 'repo', 'reverse_repo'].includes(type)) {
+          throw new RiskServiceError('交易信息尚未核验', 'unresolved-transaction');
+        }
+        const needsSecurity = type === 'buy' || type === 'sell' || (type === 'subscription' && draft.market === 'primary');
+        if (needsSecurity && !draft.resolvedSecurity?.code) {
+          throw new RiskServiceError('交易信息尚未核验', 'unresolved-transaction');
+        }
+        const action: RiskPretradeAction = { type, market: draft.market };
+        if (needsSecurity) action.security_name = draft.resolvedSecurity!.code;
+        if (type === 'repo' || type === 'reverse_repo') {
+          if (amount.quantity !== undefined) throw new RiskServiceError('回购需要金额', 'invalid-amount');
+          action.amount = amount.amount;
+          if (draft.days !== undefined) action.days = draft.days;
+        } else if (amount.quantity !== undefined) {
+          if (type === 'buy' || type === 'sell') action.quantity = amount.quantity;
+          else action.shares = amount.quantity;
+        } else action.amount = amount.amount;
+        notes.push(`${state.draft.transactions ? `第${index + 1}笔：` : ''}${amount.note}`);
+        return action;
+      });
+      await onProgress?.('正在提交投前测算…');
+      const result = await this.service.calculatePretrade(
+        state.product, state.draft.transactions ? actions : actions[0]!, onProgress,
+      );
+      return handled('pretrade_calc', formatCalculation(result, notes.join('；'), actions.length));
+    } catch (error) {
+      return handled('risk-error', formatRiskError(error));
     }
   }
 
@@ -457,6 +505,10 @@ export class WeComRiskRouter {
       if (intent.quantity !== undefined) action.quantity = intent.quantity;
       else action.amount = intent.amount;
       action.security_name = security?.code || security?.name || intent.securityQuery;
+    } else if (intent.action === 'subscription' && intent.market === 'primary') {
+      if (intent.quantity !== undefined) action.shares = intent.quantity;
+      else action.amount = intent.amount;
+      action.security_name = security?.code || security?.name;
     } else if (intent.action === 'repo' || intent.action === 'reverse_repo') {
       action.amount = intent.amount;
       if (intent.days !== undefined) action.days = intent.days;
@@ -609,7 +661,18 @@ function riskHelp(prefix: string): string {
 }
 
 function formatRiskError(error: unknown): string {
-  if (error instanceof RiskServiceError) return '⚠️ **风险查询失败**：暂时无法完成查询，请稍后重试。';
+  if (error instanceof RiskServiceError) {
+    if (error.code === 'invalid-amount') {
+      return '⚠️ **交易规模无效**：请重新输入正确的金额或数量（含单位）；本次未执行测算。';
+    }
+    if (error.code === 'invalid-days') {
+      return '⚠️ **期限无效**：请输入大于 0 的整数天数；本次未执行测算。';
+    }
+    if (error.code === 'unresolved-transaction') {
+      return '⚠️ **交易信息尚未核验**：请重新确认账户、证券和交易信息；本次未执行测算。';
+    }
+    return '⚠️ **风险查询失败**：暂时无法完成查询，请稍后重试。';
+  }
   const message = error instanceof Error ? error.message : String(error);
   if (/abort|timeout/i.test(message)) return '⚠️ **风险查询超时**：请稍后重试。';
   return '⚠️ **风险查询失败**：暂时无法完成查询，请稍后重试。';

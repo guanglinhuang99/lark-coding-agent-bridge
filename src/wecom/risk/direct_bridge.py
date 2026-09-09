@@ -4,8 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import base64
+from datetime import date, datetime, timedelta
+from decimal import Decimal
+import hashlib
+from zoneinfo import ZoneInfo
+import sqlite3
 import json
 import os
+import secrets
 import sys
 import threading
 import time
@@ -34,9 +41,136 @@ def json_default(value: Any) -> Any:
     return str(value)
 
 
+class DailyPQCache:
+    """Persist successful PQ reads per Shanghai calendar day and exact query.
+
+    SQLite's write transaction joins readers across bridge processes. Query
+    parameters and connection are part of the key; other database reads bypass it.
+    """
+
+    def __init__(self, path: Path, read: Callable[..., Any], clock=None) -> None:
+        self.path = path
+        self.read = read
+        self.clock = clock or time.time
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(path) as db:
+            db.execute("CREATE TABLE IF NOT EXISTS pq_reads (key TEXT PRIMARY KEY, expires_at REAL, payload TEXT)")
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS pq_inflight "
+                "(key TEXT PRIMARY KEY, owner TEXT NOT NULL, expires_at REAL NOT NULL)"
+            )
+        path.chmod(0o600)
+
+    @staticmethod
+    def encode(value):
+        if type(value).__module__.startswith("pandas.") and type(value).__name__ in {"NAType", "NaTType"}:
+            return ["pandas_null", type(value).__name__]
+        if type(value).__module__.startswith("pandas.") and type(value).__name__ == "DataFrame":
+            return ["dataframe", DailyPQCache.encode({
+                "split": value.to_dict(orient="split"),
+                "dtypes": [str(dtype) for dtype in value.dtypes],
+            })]
+        if isinstance(value, dict):
+            return ["dict", [[key, DailyPQCache.encode(item)] for key, item in value.items()]]
+        if isinstance(value, (list, tuple)):
+            return ["list", [DailyPQCache.encode(item) for item in value]]
+        if isinstance(value, datetime):
+            return ["datetime", value.isoformat()]
+        if isinstance(value, date):
+            return ["date", value.isoformat()]
+        if isinstance(value, Decimal):
+            return ["decimal", str(value)]
+        if isinstance(value, bytes):
+            return ["bytes", base64.b64encode(value).decode("ascii")]
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return ["value", value]
+        raise TypeError(f"Unsupported PQ value: {type(value).__name__}")
+
+    @staticmethod
+    def decode(value):
+        kind, item = value
+        if kind == "pandas_null":
+            import pandas as pd
+            return pd.NA if item == "NAType" else pd.NaT
+        if kind == "dataframe":
+            import pandas as pd
+            data = DailyPQCache.decode(item)
+            frame = pd.DataFrame(**data["split"])
+            for column, dtype in zip(frame.columns, data["dtypes"]):
+                frame[column] = frame[column].astype(dtype)
+            return frame
+        if kind == "dict":
+            return {key: DailyPQCache.decode(v) for key, v in item}
+        if kind == "list":
+            return [DailyPQCache.decode(v) for v in item]
+        return {"datetime": datetime.fromisoformat, "date": date.fromisoformat,
+                "decimal": Decimal, "bytes": base64.b64decode,
+                "value": lambda v: v}[kind](item)
+
+    def __call__(self, connection, sql, *args, **kwargs):
+        if str(connection).strip().casefold() != "pqread":
+            return self.read(connection, sql, *args, **kwargs)
+        # Preserve SQL literals exactly, including whitespace within names.
+        key = hashlib.sha256(json.dumps(self.encode(
+            [connection, sql, args, sorted(kwargs.items())]
+        ), ensure_ascii=False).encode()).hexdigest()
+        owner = secrets.token_hex(16)
+        started_at = self.clock()
+        while True:
+            # Cache hits never acquire SQLite's write lock, so an unrelated slow
+            # database miss cannot stall already-cached queries.
+            with sqlite3.connect(self.path, timeout=180) as db:
+                cached = db.execute(
+                    "SELECT payload FROM pq_reads WHERE key=? AND expires_at>?",
+                    (key, self.clock()),
+                ).fetchone()
+            if cached:
+                return self.decode(json.loads(cached[0]))
+
+            # Claim only this exact key. The write transaction is intentionally
+            # short; the remote database call happens after it has committed.
+            with sqlite3.connect(self.path, timeout=180) as db:
+                db.execute("BEGIN IMMEDIATE")
+                now = self.clock()
+                db.execute("DELETE FROM pq_reads WHERE expires_at <= ?", (now,))
+                cached = db.execute("SELECT payload FROM pq_reads WHERE key=?", (key,)).fetchone()
+                if cached:
+                    return self.decode(json.loads(cached[0]))
+                db.execute("DELETE FROM pq_inflight WHERE expires_at <= ?", (now,))
+                claimed = db.execute(
+                    "INSERT OR IGNORE INTO pq_inflight VALUES (?, ?, ?)",
+                    (key, owner, now + 190),
+                ).rowcount == 1
+            if claimed:
+                break
+            time.sleep(0.05)
+
+        try:
+            rows = self.read(connection, sql, *args, **kwargs)
+            payload = json.dumps(self.encode(rows), ensure_ascii=False)
+            # Expire at midnight of the day this read began, even if the
+            # database response arrives after midnight.
+            local_now = datetime.fromtimestamp(started_at, ZoneInfo("Asia/Shanghai"))
+            midnight = datetime.combine(local_now.date() + timedelta(days=1),
+                                        datetime.min.time(), tzinfo=ZoneInfo("Asia/Shanghai"))
+            with sqlite3.connect(self.path, timeout=180) as db:
+                db.execute("BEGIN IMMEDIATE")
+                db.execute(
+                    "INSERT OR REPLACE INTO pq_reads VALUES (?, ?, ?)",
+                    (key, midnight.timestamp(), payload),
+                )
+                db.execute("DELETE FROM pq_inflight WHERE key=? AND owner=?", (key, owner))
+            return self.decode(json.loads(payload))
+        except Exception:
+            with sqlite3.connect(self.path, timeout=180) as db:
+                db.execute("DELETE FROM pq_inflight WHERE key=? AND owner=?", (key, owner))
+            raise
+
+
 class DirectRiskService:
     def __init__(self, service_dir: Path, state_dir: Path) -> None:
         service_dir = service_dir.resolve()
+        state_dir = state_dir.resolve()
         portfolio_dir = service_dir / "linked_sources" / "portfolio_limits"
         related_dir = service_dir / "linked_sources" / "related_party_query"
         if not portfolio_dir.is_dir() or not related_dir.is_dir():
@@ -68,6 +202,11 @@ class DirectRiskService:
             if source not in sys.path:
                 sys.path.insert(0, source)
 
+        import azpy
+
+        azpy.db_read = DailyPQCache(
+            state_dir / "pq-reads-daily.sqlite3", azpy.db_read,
+        )
         import check_portfolio_limits as checker
         import credit_query
         import portfolio_limits_web as web
@@ -108,6 +247,8 @@ class DirectRiskService:
             return self._product_restrictions(str(args.get("product") or ""))
         if method == "get_credit":
             return self.credit_query.build_credit_report(str(args.get("entity") or ""))
+        if method == "get_credits":
+            return self.credit_query.build_credit_reports(args.get("entities"))
         if method == "calculate_pretrade":
             return self._calculate_pretrade(
                 str(args.get("product") or ""),
@@ -206,9 +347,18 @@ class DirectRiskService:
         raw_action: Any,
         progress: Callable[[str], None],
     ) -> dict[str, Any]:
-        if not isinstance(raw_action, dict):
+        if isinstance(raw_action, dict):
+            actions = [raw_action]
+        elif isinstance(raw_action, list):
+            if not raw_action:
+                raise ValueError("测算场景列表不能为空")
+            for index, action in enumerate(raw_action):
+                if not isinstance(action, dict):
+                    raise ValueError(f"第{index + 1}个测算场景必须是 JSON 对象")
+            actions = raw_action
+        else:
             raise ValueError("测算场景必须是对象")
-        run = self.web.start_pretrade_run({"product": product, "actions": [raw_action]})
+        run = self.web.start_pretrade_run({"product": product, "actions": actions})
         run_id = str(run["id"])
         last_progress = ""
         deadline = time.monotonic() + 180
@@ -228,9 +378,15 @@ class DirectRiskService:
         raise TimeoutError("risk-service 本地测算超过180秒")
 
 
-def handle_request(service: DirectRiskService, request: dict[str, Any]) -> None:
+def handle_request(service: DirectRiskService, request: dict[str, Any],
+                   cancelled: threading.Event | None = None,
+                   deadline: float | None = None) -> None:
     request_id = str(request.get("id") or "")
     try:
+        if cancelled is not None and cancelled.is_set():
+            return
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError("请求在队列中已过期")
         method = str(request.get("method") or "")
         args = request.get("args")
         if not isinstance(args, dict):
@@ -242,16 +398,73 @@ def handle_request(service: DirectRiskService, request: dict[str, Any]) -> None:
                 "id": request_id,
                 "type": "progress",
                 "message": message,
-            }),
+            }) if cancelled is None or not cancelled.is_set() else None,
         )
-        write_message({"id": request_id, "type": "result", "data": result})
+        if cancelled is None or not cancelled.is_set():
+            write_message({"id": request_id, "type": "result", "data": result})
     except Exception as exc:
+        if cancelled is not None and cancelled.is_set():
+            return
         traceback.print_exc(file=sys.stderr)
         write_message({
             "id": request_id,
             "type": "error",
             "error": f"{type(exc).__name__}: {exc}",
         })
+
+
+class RequestDispatcher:
+    """Bound admission and cancel queued requests without killing shared workers.
+
+    A running risk-service call has no cooperative cancellation API. It keeps
+    its slot until completion, and its late progress/result is suppressed.
+    """
+    def __init__(self, service: DirectRiskService, executor: ThreadPoolExecutor,
+                 max_pending: int = 32) -> None:
+        self.service = service
+        self.executor = executor
+        self.slots = threading.BoundedSemaphore(max_pending)
+        self.lock = threading.RLock()
+        self.requests: dict[str, tuple[threading.Event, Any]] = {}
+
+    def submit(self, request: dict[str, Any]) -> None:
+        request_id = str(request.get("id") or "")
+        if not request_id:
+            write_message({"type": "error", "error": "请求缺少id"})
+            return
+        if request.get("method") == "cancel":
+            with self.lock:
+                pending = self.requests.get(request_id)
+                if pending:
+                    pending[0].set()
+                    pending[1].cancel()
+            return
+        with self.lock:
+            if request_id in self.requests:
+                write_message({"id": request_id, "type": "error", "error": "重复请求id"})
+                return
+            if not self.slots.acquire(blocking=False):
+                write_message({"id": request_id, "type": "error",
+                               "error": "risk-service 当前任务较多", "code": "direct-capacity"})
+                return
+            cancelled = threading.Event()
+            try:
+                timeout_ms = float(request.get("timeout_ms") or 180_000)
+                if not 0 < timeout_ms <= 180_000:
+                    timeout_ms = 180_000
+                deadline = time.monotonic() + timeout_ms / 1000
+                future = self.executor.submit(handle_request, self.service, request, cancelled, deadline)
+            except Exception as exc:
+                self.slots.release()
+                write_message({"id": request_id, "type": "error", "error": str(exc)})
+                return
+            self.requests[request_id] = (cancelled, future)
+
+            def completed(_future: Any) -> None:
+                with self.lock:
+                    self.requests.pop(request_id, None)
+                    self.slots.release()
+            future.add_done_callback(completed)
 
 
 def main() -> int:
@@ -263,6 +476,7 @@ def main() -> int:
     service = DirectRiskService(args.service_dir, args.state_dir)
     write_message({"type": "ready"})
     with ThreadPoolExecutor(max_workers=max(1, min(args.workers, 8))) as executor:
+        dispatcher = RequestDispatcher(service, executor)
         for line in sys.stdin:
             try:
                 request = json.loads(line)
@@ -271,7 +485,7 @@ def main() -> int:
             except Exception as exc:
                 write_message({"type": "error", "error": f"输入无效：{exc}"})
                 continue
-            executor.submit(handle_request, service, request)
+            dispatcher.submit(request)
     return 0
 
 

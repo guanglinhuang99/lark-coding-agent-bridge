@@ -1,0 +1,58 @@
+{
+  "kind": "real-ai-intent-safety-guard",
+  "workers": 1,
+  "measurementKind": "functional guards, not latency benchmark",
+  "versions": {
+    "before": "f00d635b36536dccac7ebeb73235e7dcf584d49b",
+    "after": "6d28a6a673b3d400f3d30e15018b5a5621d545cf"
+  },
+  "node": "v24.19.0",
+  "platform": "darwin",
+  "model": "gpt-5.3-codex-spark",
+  "binary": "/Users/guanglin/.local/bin/codex",
+  "cwd": "/private/tmp/wecom-live-20260908/ai-workspace",
+  "python": "/Users/guanglin/Documents/trae_projects/icube/bin/python",
+  "serviceDir": "/Users/guanglin/Sync/risk-service",
+  "bundles": {
+    "before": "7a6f265801e260b826351208c727e1e5fc955f5ea08c8958d2092517e65f1071",
+    "after": "3989f4e59de8fb4f05cc6a4531cef037be67acad78155a1e5b4cc6a7991568be"
+  },
+  "bridges": {
+    "before": "639bdae2967808b3d0deaf802a68e814f4349a3fe0ad5d5d539cd8a8b95a89af",
+    "after": "207b22b286a497a76cc3dbb50a88f06bbd425bd8438d0c074895aee4fde7c630"
+  },
+  "sourceChecks": {
+    "before": {
+      "root": "/private/tmp/wecom-live-20260908/before",
+      "head": "f00d635b36536dccac7ebeb73235e7dcf584d49b",
+      "srcDirty": false
+    },
+    "after": {
+      "root": "/private/tmp/wecom-live-20260908/after",
+      "head": "6d28a6a673b3d400f3d30e15018b5a5621d545cf",
+      "srcDirty": false
+    }
+  },
+  "codexHomeConfigHash": "70e2ee29138d651514cc14a3d1c0ffc9258c5d737c4eac09cb833697e3a60cb2",
+  "authFilesPresent": {
+    "before": true,
+    "after": true
+  },
+  "casesFileHash": "f965c592a5e8625f3494ee89e1c598a504be8efedab6c2db370edd1e37fe6d8e",
+  "caseIds": [
+    "negative-amount",
+    "zero-amount",
+    "ambiguous-amount",
+    "missing-amount",
+    "chinese-amount"
+  ],
+  "boundaries": [
+    "AI output is consumed from CodexAdapter events; no model draft is fabricated on error or parse failure.",
+    "RiskDirectClient is used only for read-only list_products/search_securities normalization calls.",
+    "Read-only master-data responses do not prove a frozen holdings/NAV or calculation data snapshot.",
+    "No router, confirmation callback, calculatePretrade, transaction, or business-ledger path is invoked.",
+    "Output stores hashes/presence/state/timing only; raw cases, prompts, AI output, products, securities, and credentials are not written.",
+    "routeObservation is source-contract reasoning for after executeConfirmed amount validation; this harness does not call that route.",
+    "A confirm state retaining a negative/zero/ambiguous/Chinese amount is reported as risk-observed-invalid-confirmation, not as safe."
+  ]
+}

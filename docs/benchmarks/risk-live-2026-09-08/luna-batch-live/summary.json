@@ -1,0 +1,168 @@
+{
+  "model": "gpt-5.6-luna",
+  "reasoningEffort": "low",
+  "recordedAt": "2026-09-08T11:36:37.457674+00:00",
+  "scope": {
+    "realModel": true,
+    "syntheticInputs": true,
+    "masterData": "fixture",
+    "calculationBackend": "fixture",
+    "wecomTransport": false,
+    "deployed": false
+  },
+  "passed": 5,
+  "scenarios": [
+    {
+      "name": "three-secondary",
+      "model": "gpt-5.6-luna",
+      "success": true,
+      "count": 3,
+      "markets": [
+        "secondary",
+        "secondary",
+        "secondary"
+      ],
+      "calculationCalls": 1,
+      "preConfirmationCalls": 0,
+      "actualActions": [
+        {
+          "type": "buy",
+          "market": "secondary",
+          "security_name": "900000001.IB",
+          "amount": 0.012
+        },
+        {
+          "type": "buy",
+          "market": "secondary",
+          "security_name": "900000002.IB",
+          "amount": 0.034
+        },
+        {
+          "type": "buy",
+          "market": "secondary",
+          "security_name": "900000003.IB",
+          "amount": 0.056
+        }
+      ],
+      "backend": "fixture-only",
+      "platform": false
+    },
+    {
+      "name": "three-primary",
+      "model": "gpt-5.6-luna",
+      "success": true,
+      "count": 3,
+      "markets": [
+        "primary",
+        "primary",
+        "primary"
+      ],
+      "calculationCalls": 1,
+      "preConfirmationCalls": 0,
+      "actualActions": [
+        {
+          "type": "subscription",
+          "market": "primary",
+          "security_name": "900000001.IB",
+          "amount": 0.012
+        },
+        {
+          "type": "subscription",
+          "market": "primary",
+          "security_name": "900000002.IB",
+          "amount": 0.034
+        },
+        {
+          "type": "subscription",
+          "market": "primary",
+          "security_name": "900000003.IB",
+          "amount": 0.056
+        }
+      ],
+      "backend": "fixture-only",
+      "platform": false
+    },
+    {
+      "name": "mixed",
+      "model": "gpt-5.6-luna",
+      "success": true,
+      "count": 3,
+      "markets": [
+        "primary",
+        "secondary",
+        "primary"
+      ],
+      "calculationCalls": 1,
+      "preConfirmationCalls": 0,
+      "actualActions": [
+        {
+          "type": "buy",
+          "market": "primary",
+          "security_name": "900000001.IB",
+          "amount": 0.012
+        },
+        {
+          "type": "buy",
+          "market": "secondary",
+          "security_name": "900000002.IB",
+          "amount": 0.034
+        },
+        {
+          "type": "buy",
+          "market": "primary",
+          "security_name": "900000003.IB",
+          "amount": 0.056
+        }
+      ],
+      "backend": "fixture-only",
+      "platform": false
+    },
+    {
+      "name": "missing-second-amount",
+      "success": true,
+      "stage": "freeform",
+      "transactionIndex": 1,
+      "calculationCalls": 0
+    },
+    {
+      "name": "correct-second-amount",
+      "success": true,
+      "calculationCalls": 1,
+      "preConfirmationCalls": 0,
+      "actualActions": [
+        {
+          "type": "buy",
+          "market": "secondary",
+          "security_name": "900000001.IB",
+          "amount": 0.012
+        },
+        {
+          "type": "buy",
+          "market": "secondary",
+          "security_name": "900000002.IB",
+          "amount": 0.078
+        },
+        {
+          "type": "buy",
+          "market": "secondary",
+          "security_name": "900000003.IB",
+          "amount": 0.056
+        }
+      ]
+    }
+  ],
+  "fixes": [
+    "Extract unique security code from code plus name output; reject multiple codes per leg.",
+    "Use the original security row and heading when the model embellishes the source excerpt."
+  ],
+  "regression": {
+    "passed": 115,
+    "typecheck": "passed",
+    "build": "passed"
+  },
+  "sourceHashes": {
+    "src/wecom/risk/intent.ts": "770a8471ca13245953b4b0d21d9dac0f5c20ec2aadcef482fc41bb20971d0436",
+    "src/wecom/risk/router.ts": "b4bd13c5eca43e5dfa54f352bab17867f1ac2a179f0ee9a215879c9995b09d00",
+    "src/wecom/model-config.ts": "b73eeb7322862365b1e1e07ed778f7217d8f8d94d8fce90dde136a7b3b36b011"
+  }
+}

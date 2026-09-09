@@ -1,0 +1,216 @@
+{
+  "kind": "real-client-query-and-preapproved-local-calculation",
+  "versions": {
+    "before": "f00d635b36536dccac7ebeb73235e7dcf584d49b",
+    "after": "6d28a6a673b3d400f3d30e15018b5a5621d545cf"
+  },
+  "dataVersion": {
+    "scope_version": "2784",
+    "limit_version": "2783",
+    "release_id": "money-rule-alignment-20260902T155318",
+    "scope_rows": 251,
+    "limit_rows": 1373
+  },
+  "node": "v24.19.0",
+  "python": "/Users/guanglin/Documents/trae_projects/icube/bin/python",
+  "service": "/Users/guanglin/Sync/risk-service",
+  "workers": 4,
+  "timeoutMs": 180000,
+  "startupTimeoutMs": 30000,
+  "failure": null,
+  "observability": "backendRequests counts client call invocations, not database executions. Missing stages=null (unobserved). Platform confirmation, dedupe, expiry and lifecycle are not exercised. Optional cases only exercise real AI and preapproved local state execution.",
+  "scenarios": {
+    "calculation_case_0": {
+      "businessConsistent": true,
+      "status": "sampled",
+      "before": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 23048.860041,
+        "p95": 23048.860041,
+        "backendRequests": 1
+      },
+      "after": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 17305.894833999995,
+        "p95": 17305.894833999995,
+        "backendRequests": 1
+      },
+      "absoluteReductionMs": 5742.965207000005,
+      "reductionPercent": 24.916482623367266
+    },
+    "calculation_case_1": {
+      "businessConsistent": true,
+      "status": "sampled",
+      "before": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 2392.6112500000017,
+        "p95": 2392.6112500000017,
+        "backendRequests": 1
+      },
+      "after": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 2478.5597080000007,
+        "p95": 2478.5597080000007,
+        "backendRequests": 1
+      },
+      "absoluteReductionMs": -85.94845799999894,
+      "reductionPercent": -3.5922450001018236
+    },
+    "calculation_case_2": {
+      "businessConsistent": true,
+      "status": "sampled",
+      "before": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 2548.957666000002,
+        "p95": 2548.957666000002,
+        "backendRequests": 1
+      },
+      "after": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 2461.303832999998,
+        "p95": 2461.303832999998,
+        "backendRequests": 1
+      },
+      "absoluteReductionMs": 87.65383300000394,
+      "reductionPercent": 3.4388108586187793
+    },
+    "calculation_case_3": {
+      "businessConsistent": true,
+      "status": "sampled",
+      "before": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 2465.6110840000038,
+        "p95": 2465.6110840000038,
+        "backendRequests": 1
+      },
+      "after": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 2521.345917000006,
+        "p95": 2521.345917000006,
+        "backendRequests": 1
+      },
+      "absoluteReductionMs": -55.734833000002254,
+      "reductionPercent": -2.2604876073797797
+    },
+    "calculation_case_4": {
+      "businessConsistent": true,
+      "status": "sampled",
+      "before": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 2547.547375000002,
+        "p95": 2547.547375000002,
+        "backendRequests": 1
+      },
+      "after": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 2523.230792000002,
+        "p95": 2523.230792000002,
+        "backendRequests": 1
+      },
+      "absoluteReductionMs": 24.31658299999981,
+      "reductionPercent": 0.9545095505829271
+    },
+    "calculation_case_5": {
+      "businessConsistent": true,
+      "status": "sampled",
+      "before": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 30291.360250000005,
+        "p95": 30291.360250000005,
+        "backendRequests": 1
+      },
+      "after": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 20678.52225000001,
+        "p95": 20678.52225000001,
+        "backendRequests": 1
+      },
+      "absoluteReductionMs": 9612.837999999996,
+      "reductionPercent": 31.73458676224351
+    },
+    "calculation_case_6": {
+      "businessConsistent": true,
+      "status": "sampled",
+      "before": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 4812.115582999992,
+        "p95": 4812.115582999992,
+        "backendRequests": 1
+      },
+      "after": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 4803.41575,
+        "p95": 4803.41575,
+        "backendRequests": 1
+      },
+      "absoluteReductionMs": 8.699832999991486,
+      "reductionPercent": 0.1807901919630872
+    },
+    "calculation_case_7": {
+      "businessConsistent": true,
+      "status": "sampled",
+      "before": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 2541.386083999998,
+        "p95": 2541.386083999998,
+        "backendRequests": 1
+      },
+      "after": {
+        "n": 1,
+        "success": 1,
+        "failures": 0,
+        "successRate": 1,
+        "median": 2617.217583000005,
+        "p95": 2617.217583000005,
+        "backendRequests": 1
+      },
+      "absoluteReductionMs": -75.83149900000717,
+      "reductionPercent": -2.9838637850984284
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "codex_version": "0.153.2",
+  "model": "gpt-5.3-codex-spark",
+  "config_sha256": "70e2ee29138d651514cc14a3d1c0ffc9258c5d737c4eac09cb833697e3a60cb2",
+  "isolated_homes": true,
+  "config_equal": true,
+  "auth_equal": true
+}

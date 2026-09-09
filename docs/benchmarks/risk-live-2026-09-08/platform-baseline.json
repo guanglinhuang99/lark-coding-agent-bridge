@@ -1,0 +1,12 @@
+{
+  "observed_at_utc": "2026-09-08T02:10:51.694804+00:00",
+  "authorized_bot": "riskbot@codex",
+  "authorized_group": "bot 测试",
+  "group_members_verified": "user plus two bots",
+  "sent_command": "@riskbot@codex /status",
+  "observed_response": "READY; read-only; queue 0; status card rendered",
+  "result": "pass",
+  "version_scope": "existing old frontend build; not candidate optimization",
+  "bot_restart": false,
+  "second_instance": false
+}

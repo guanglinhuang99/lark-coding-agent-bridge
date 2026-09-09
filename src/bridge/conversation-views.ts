@@ -1,5 +1,5 @@
 import { ConversationState, scopeRecordKey, type ConversationBucket } from './conversation-state';
-import { sessionBindingKey, type BridgeIdentity } from './identity';
+import { sessionBindingKey, sessionHistoryKey, type BridgeIdentity } from './identity';
 import { SessionStore, type SessionEntry } from './session-store';
 import {
   SessionCatalog, type SessionCatalogIdentity, type SessionCatalogEntry,
@@ -72,21 +72,37 @@ class CatalogView extends SessionCatalog {
   }
   override upsertActive(input: UpsertSessionCatalogInput): SessionCatalogEntry {
     const key = sessionBindingKey(this.context, input);
+    const now = input.now ?? Date.now();
     const entry: SessionCatalogEntry = {
       key, scopeId: input.scopeId, agentId: input.agentId, cwdRealpath: input.cwdRealpath,
-      policyFingerprint: input.policyFingerprint, status: 'active', updatedAt: input.now ?? Date.now(),
+      policyFingerprint: input.policyFingerprint, status: 'active', updatedAt: now,
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
       ...(input.threadId ? { threadId: input.threadId } : {}),
       ...(input.lastSummary ? { lastSummary: input.lastSummary } : {}),
     };
-    this.state.change(this.context, (bucket) => { bucket.sessions[key] = entry; });
+    this.state.change(this.context, (bucket) => {
+      const previous = bucket.sessions[key];
+      const previousId = previous?.threadId ?? previous?.sessionId;
+      const nextId = entry.threadId ?? entry.sessionId;
+      if (previous?.status === 'active' && previousId && previousId !== nextId) {
+        const archivedKey = sessionHistoryKey(this.context, previous, previousId);
+        bucket.sessions[archivedKey] = { ...previous, key: archivedKey, status: 'archived', updatedAt: now };
+      }
+      bucket.sessions[key] = entry;
+    });
     return { ...entry };
   }
   override archiveActive(input: ArchiveSessionCatalogInput): boolean {
     const entry = this.activeFor(input);
     if (!entry) return false;
+    const id = entry.threadId ?? entry.sessionId;
+    if (!id) return false;
     this.state.change(this.context, (bucket) => {
-      bucket.sessions[entry.key] = { ...entry, status: 'archived', updatedAt: input.now ?? Date.now() };
+      const archivedKey = sessionHistoryKey(this.context, entry, id);
+      delete bucket.sessions[entry.key];
+      bucket.sessions[archivedKey] = {
+        ...entry, key: archivedKey, status: 'archived', updatedAt: input.now ?? Date.now(),
+      };
     });
     return true;
   }
@@ -115,7 +131,9 @@ class CatalogView extends SessionCatalog {
   override async replaceForTest(entries: SessionCatalogEntry[]): Promise<void> {
     this.state.change(this.context, (bucket) => {
       bucket.sessions = Object.fromEntries(entries.map((entry) => {
-        const key = sessionBindingKey(this.context, entry);
+        const bindingKey = sessionBindingKey(this.context, entry);
+        const id = entry.threadId ?? entry.sessionId ?? entry.key;
+        const key = entry.status === 'archived' ? sessionHistoryKey(this.context, entry, id) : bindingKey;
         return [key, { ...entry, key }];
       }));
     });

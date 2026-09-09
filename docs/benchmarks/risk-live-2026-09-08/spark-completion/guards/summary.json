@@ -1,0 +1,13 @@
+{
+  "model": "gpt-5.3-codex-spark",
+  "reasoningEffort": "low",
+  "n": 5,
+  "verificationPassed": 5,
+  "verificationFailed": 0,
+  "confirmStates": 4,
+  "nonConfirmStates": 1,
+  "businessSuccess": 0,
+  "calculationCalls": 0,
+  "closeError": null,
+  "boundary": "Real Spark AI and master-data normalization, then Router trap; no formal calculation, business write, or WeCom callback"
+}

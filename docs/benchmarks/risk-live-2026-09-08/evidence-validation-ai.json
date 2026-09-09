@@ -1,0 +1,28 @@
+{
+  "results": [
+    {
+      "directory": "ai-cold-live",
+      "rows": 6,
+      "pairedGroups": 3,
+      "failures": 0,
+      "validation": "pass"
+    },
+    {
+      "directory": "ai-performance-live-1",
+      "rows": 66,
+      "pairedGroups": 33,
+      "failures": 2,
+      "validation": "pass"
+    }
+  ],
+  "checks": [
+    "fixed commits",
+    "AB/BA order",
+    "business hashes",
+    "N and failures",
+    "median",
+    "nearest-rank P95",
+    "request counts",
+    "reduction formula"
+  ]
+}

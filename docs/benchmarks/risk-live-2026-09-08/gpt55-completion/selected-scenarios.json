@@ -1,0 +1,505 @@
+{
+  "natural_language": {
+    "cohort": "gpt55-collected-live",
+    "summary": {
+      "attempts": 30,
+      "usablePairs": 30,
+      "failures": 0,
+      "failureCategories": {},
+      "allAttempts": {
+        "before": {
+          "n": 30,
+          "observedRows": 30,
+          "success": 30,
+          "failures": 0,
+          "missingRows": 0,
+          "duplicateRows": 0,
+          "successRate": 1,
+          "failureCategories": {}
+        },
+        "after": {
+          "n": 30,
+          "observedRows": 30,
+          "success": 30,
+          "failures": 0,
+          "missingRows": 0,
+          "duplicateRows": 0,
+          "successRate": 1,
+          "failureCategories": {}
+        }
+      },
+      "completeConsistentPairs": {
+        "before": {
+          "n": 30,
+          "medianMs": 12878.852874999997,
+          "p95Ms": 22609.717958000023
+        },
+        "after": {
+          "n": 30,
+          "medianMs": 13805.633667000016,
+          "p95Ms": 24771.163458000054
+        }
+      },
+      "absoluteReductionMs": -926.7807920000196,
+      "reductionPercent": -7.196143950048972
+    },
+    "stages": {
+      "before": {
+        "startup": {
+          "observedN": 1,
+          "medianMs": 475.4947080000002
+        },
+        "ai": {
+          "observedN": 30,
+          "medianMs": 9861.240229499977
+        },
+        "preparation": {
+          "observedN": 30,
+          "medianMs": 10255.409896500001
+        },
+        "securityCandidates": {
+          "observedN": 0,
+          "medianMs": null
+        },
+        "calculation": {
+          "observedN": 30,
+          "medianMs": 2611.2723960000076
+        },
+        "queue": {
+          "observedN": 0,
+          "medianMs": null
+        },
+        "display": {
+          "observedN": 0,
+          "medianMs": null
+        }
+      },
+      "after": {
+        "startup": {
+          "observedN": 1,
+          "medianMs": 373.013082999998
+        },
+        "ai": {
+          "observedN": 30,
+          "medianMs": 10902.952041999983
+        },
+        "preparation": {
+          "observedN": 30,
+          "medianMs": 10904.498333500029
+        },
+        "securityCandidates": {
+          "observedN": 0,
+          "medianMs": null
+        },
+        "calculation": {
+          "observedN": 30,
+          "medianMs": 2592.1269374999756
+        },
+        "queue": {
+          "observedN": 0,
+          "medianMs": null
+        },
+        "display": {
+          "observedN": 0,
+          "medianMs": null
+        }
+      }
+    },
+    "aiCalls": {
+      "before": 30,
+      "after": 30
+    },
+    "backendCalls": {
+      "before": {
+        "list_products": 60,
+        "calculate_pretrade": 30
+      },
+      "after": {
+        "list_products": 1,
+        "calculate_pretrade": 30
+      }
+    },
+    "utcRange": [
+      "2026-09-08T08:50:44.299Z",
+      "2026-09-08T09:05:13.370Z"
+    ]
+  },
+  "amount_correction": {
+    "cohort": "gpt55-collected-live",
+    "summary": {
+      "attempts": 30,
+      "usablePairs": 30,
+      "failures": 0,
+      "failureCategories": {},
+      "allAttempts": {
+        "before": {
+          "n": 30,
+          "observedRows": 30,
+          "success": 30,
+          "failures": 0,
+          "missingRows": 0,
+          "duplicateRows": 0,
+          "successRate": 1,
+          "failureCategories": {}
+        },
+        "after": {
+          "n": 30,
+          "observedRows": 30,
+          "success": 30,
+          "failures": 0,
+          "missingRows": 0,
+          "duplicateRows": 0,
+          "successRate": 1,
+          "failureCategories": {}
+        }
+      },
+      "completeConsistentPairs": {
+        "before": {
+          "n": 30,
+          "medianMs": 36209.19770799996,
+          "p95Ms": 45134.24183299998
+        },
+        "after": {
+          "n": 30,
+          "medianMs": 9895.358146499959,
+          "p95Ms": 23274.200334000052
+        }
+      },
+      "absoluteReductionMs": 26313.839561500004,
+      "reductionPercent": 72.67170008488284
+    },
+    "stages": {
+      "before": {
+        "startup": {
+          "observedN": 0,
+          "medianMs": null
+        },
+        "ai": {
+          "observedN": 30,
+          "medianMs": 20004.12043699983
+        },
+        "preparation": {
+          "observedN": 30,
+          "medianMs": 25064.65495850006
+        },
+        "securityCandidates": {
+          "observedN": 0,
+          "medianMs": null
+        },
+        "calculation": {
+          "observedN": 30,
+          "medianMs": 8190.676729000115
+        },
+        "queue": {
+          "observedN": 0,
+          "medianMs": null
+        },
+        "display": {
+          "observedN": 0,
+          "medianMs": null
+        }
+      },
+      "after": {
+        "startup": {
+          "observedN": 0,
+          "medianMs": null
+        },
+        "ai": {
+          "observedN": 30,
+          "medianMs": 0.0
+        },
+        "preparation": {
+          "observedN": 30,
+          "medianMs": 1073.458229499869
+        },
+        "securityCandidates": {
+          "observedN": 0,
+          "medianMs": null
+        },
+        "calculation": {
+          "observedN": 30,
+          "medianMs": 8369.637416500133
+        },
+        "queue": {
+          "observedN": 0,
+          "medianMs": null
+        },
+        "display": {
+          "observedN": 0,
+          "medianMs": null
+        }
+      }
+    },
+    "aiCalls": {
+      "before": 60,
+      "after": 0
+    },
+    "backendCalls": {
+      "before": {
+        "list_products": 90,
+        "search_securities": 90,
+        "calculate_pretrade": 30
+      },
+      "after": {
+        "search_securities": 15,
+        "calculate_pretrade": 30
+      }
+    },
+    "utcRange": [
+      "2026-09-08T09:05:25.387Z",
+      "2026-09-08T09:29:43.793Z"
+    ]
+  },
+  "tenor_correction": {
+    "cohort": "gpt55-tenor-live",
+    "summary": {
+      "attempts": 30,
+      "usablePairs": 30,
+      "failures": 0,
+      "failureCategories": {},
+      "allAttempts": {
+        "before": {
+          "n": 30,
+          "observedRows": 30,
+          "success": 30,
+          "failures": 0,
+          "missingRows": 0,
+          "duplicateRows": 0,
+          "successRate": 1,
+          "failureCategories": {}
+        },
+        "after": {
+          "n": 30,
+          "observedRows": 30,
+          "success": 30,
+          "failures": 0,
+          "missingRows": 0,
+          "duplicateRows": 0,
+          "successRate": 1,
+          "failureCategories": {}
+        }
+      },
+      "completeConsistentPairs": {
+        "before": {
+          "n": 30,
+          "medianMs": 21494.835999999996,
+          "p95Ms": 30850.551540999993
+        },
+        "after": {
+          "n": 30,
+          "medianMs": 2602.736686999997,
+          "p95Ms": 7579.241500000004
+        }
+      },
+      "absoluteReductionMs": 18892.099313,
+      "reductionPercent": 87.89133963618053
+    },
+    "stages": {
+      "before": {
+        "startup": {
+          "observedN": 1,
+          "medianMs": 516.7826249999998
+        },
+        "ai": {
+          "observedN": 30,
+          "medianMs": 18892.041583499988
+        },
+        "preparation": {
+          "observedN": 30,
+          "medianMs": 18897.02272899999
+        },
+        "securityCandidates": {
+          "observedN": 0,
+          "medianMs": null
+        },
+        "calculation": {
+          "observedN": 30,
+          "medianMs": 2585.172187499993
+        },
+        "queue": {
+          "observedN": 0,
+          "medianMs": null
+        },
+        "display": {
+          "observedN": 0,
+          "medianMs": null
+        }
+      },
+      "after": {
+        "startup": {
+          "observedN": 1,
+          "medianMs": 331.7897499999963
+        },
+        "ai": {
+          "observedN": 30,
+          "medianMs": 0.0
+        },
+        "preparation": {
+          "observedN": 30,
+          "medianMs": 1.1219794999924488
+        },
+        "securityCandidates": {
+          "observedN": 0,
+          "medianMs": null
+        },
+        "calculation": {
+          "observedN": 30,
+          "medianMs": 2601.488416499982
+        },
+        "queue": {
+          "observedN": 0,
+          "medianMs": null
+        },
+        "display": {
+          "observedN": 0,
+          "medianMs": null
+        }
+      }
+    },
+    "aiCalls": {
+      "before": 60,
+      "after": 0
+    },
+    "backendCalls": {
+      "before": {
+        "list_products": 90,
+        "calculate_pretrade": 30
+      },
+      "after": {
+        "list_products": 1,
+        "calculate_pretrade": 30
+      }
+    },
+    "utcRange": [
+      "2026-09-08T09:38:21.939Z",
+      "2026-09-08T09:51:30.567Z"
+    ]
+  },
+  "compound_correction": {
+    "cohort": "gpt55-compound-live",
+    "summary": {
+      "attempts": 30,
+      "usablePairs": 30,
+      "failures": 0,
+      "failureCategories": {},
+      "allAttempts": {
+        "before": {
+          "n": 30,
+          "observedRows": 30,
+          "success": 30,
+          "failures": 0,
+          "missingRows": 0,
+          "duplicateRows": 0,
+          "successRate": 1,
+          "failureCategories": {}
+        },
+        "after": {
+          "n": 30,
+          "observedRows": 30,
+          "success": 30,
+          "failures": 0,
+          "missingRows": 0,
+          "duplicateRows": 0,
+          "successRate": 1,
+          "failureCategories": {}
+        }
+      },
+      "completeConsistentPairs": {
+        "before": {
+          "n": 30,
+          "medianMs": 38306.558458000014,
+          "p95Ms": 117512.3093330001
+        },
+        "after": {
+          "n": 30,
+          "medianMs": 22390.39579150011,
+          "p95Ms": 59661.457042000024
+        }
+      },
+      "absoluteReductionMs": 15916.162666499906,
+      "reductionPercent": 41.549445596765544
+    },
+    "stages": {
+      "before": {
+        "startup": {
+          "observedN": 1,
+          "medianMs": 366.46920800000044
+        },
+        "ai": {
+          "observedN": 30,
+          "medianMs": 18341.14502149995
+        },
+        "preparation": {
+          "observedN": 30,
+          "medianMs": 24684.783083499817
+        },
+        "securityCandidates": {
+          "observedN": 0,
+          "medianMs": null
+        },
+        "calculation": {
+          "observedN": 30,
+          "medianMs": 8652.196499999845
+        },
+        "queue": {
+          "observedN": 0,
+          "medianMs": null
+        },
+        "display": {
+          "observedN": 0,
+          "medianMs": null
+        }
+      },
+      "after": {
+        "startup": {
+          "observedN": 1,
+          "medianMs": 383.84004200000345
+        },
+        "ai": {
+          "observedN": 30,
+          "medianMs": 9326.315750000023
+        },
+        "preparation": {
+          "observedN": 30,
+          "medianMs": 11950.943145999976
+        },
+        "securityCandidates": {
+          "observedN": 0,
+          "medianMs": null
+        },
+        "calculation": {
+          "observedN": 30,
+          "medianMs": 8637.65833350009
+        },
+        "queue": {
+          "observedN": 0,
+          "medianMs": null
+        },
+        "display": {
+          "observedN": 0,
+          "medianMs": null
+        }
+      }
+    },
+    "aiCalls": {
+      "before": 60,
+      "after": 30
+    },
+    "backendCalls": {
+      "before": {
+        "list_products": 90,
+        "search_securities": 90,
+        "calculate_pretrade": 30
+      },
+      "after": {
+        "list_products": 1,
+        "search_securities": 26,
+        "calculate_pretrade": 30
+      }
+    },
+    "utcRange": [
+      "2026-09-08T09:52:33.570Z",
+      "2026-09-08T10:31:07.119Z"
+    ]
+  }
+}

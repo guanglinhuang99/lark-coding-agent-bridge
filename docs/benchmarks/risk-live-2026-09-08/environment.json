@@ -1,0 +1,25 @@
+{
+  "node": "24.19.0",
+  "pnpm": "10.33.0",
+  "python": "3.12.8",
+  "system_python": "3.9.6",
+  "before": "f00d635b36536dccac7ebeb73235e7dcf584d49b",
+  "after": "6d28a6a673b3d400f3d30e15018b5a5621d545cf",
+  "main_head": "79f7a75faf54220f4f7b6d72064974c812b176e0",
+  "lock_sha256": "d4a95a8cc6c212d170b095dd021e409da85e6667de783f0cd90cdf68466f5008",
+  "checks": {
+    "ci-platform": 1,
+    "ci-platform-network": 0,
+    "python-tests": 0,
+    "diff-check": 0
+  },
+  "passed_tests": 1088,
+  "skipped_tests": 1,
+  "passed_files": 149,
+  "artifacts": {
+    "dist/index.js": "5f765804b81cb7acdb74631d27f54a6ec1cb0db99a411635e7908f26eb54530f",
+    "dist/wecom.js": "e2ec69f0da5def23cd080cec414bfe8bacf3bf7836f9b237ebbd988406c6b23b",
+    "dist/cli.js": "9418b1af27a58798d9d57c4a8e8f2cb3466ac124c2cbdfa4dfcbb405bb27558f",
+    "dist/index.d.ts": "153bc7b0d62a3504b064dfe3a9dc848e977088d22eeb16411f4314ca21a33177"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "kind": "real-ai-invalid-confirmation-replay",
+  "version": "after",
+  "commit": "6d28a6a673b3d400f3d30e15018b5a5621d545cf",
+  "node": "v24.19.0",
+  "bundleSha256": "3989f4e59de8fb4f05cc6a4531cef037be67acad78155a1e5b4cc6a7991568be",
+  "sourceCheck": {
+    "root": "/private/tmp/wecom-live-20260908/after",
+    "head": "6d28a6a673b3d400f3d30e15018b5a5621d545cf",
+    "srcDirty": false
+  },
+  "casesFileHash": "f965c592a5e8625f3494ee89e1c598a504be8efedab6c2db370edd1e37fe6d8e",
+  "guardSamplesFileHash": "ea26bfc517ceac0e9e1d8fc6cb3f55c43912f28e19a134d819a339488df2618a",
+  "statesFileHash": null,
+  "caseIds": [
+    "negative-amount",
+    "zero-amount",
+    "ambiguous-amount",
+    "chinese-amount"
+  ],
+  "stateInput": "private-cases-reconstruction-checked-by-guard-state-hash",
+  "backend": "none; every RiskService method is a fail-fast trap",
+  "boundaries": [
+    "The guard samples must come from real AI and include the after normalized state/draft hashes.",
+    "Without --states, the harness reconstructs only the hash-covered normalized fields from private cases; a hash mismatch stops before routing.",
+    "The confirmation registry is the fixed source registry, not a WeCom platform callback or the CLI global registry.",
+    "executeConfirmed is the fixed after bundle route; calculatePretrade is never allowed to run.",
+    "No AI, Python, risk-service, holdings/NAV snapshot, platform transport, transaction, or business-ledger evidence is produced."
+  ]
+}

@@ -1,9 +1,10 @@
 import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { CodexAdapter } from '../../src/agent/codex/adapter.js';
 import { buildCodexArgs } from '../../src/agent/codex/argv.js';
+import { RISK_INTENT_INSTRUCTIONS } from '../../src/agent/codex/risk-intent-instructions.js';
 import type { AgentEvent } from '../../src/agent/types.js';
 
 interface FakeBinary {
@@ -68,6 +69,7 @@ describe('CodexAdapter process contract', () => {
 
     expect(await realpath(record.cwd)).toBe(cwd);
     expect(record.argv).toEqual(buildCodexArgs({ cwd, sandbox: 'read-only' }));
+    expect(record.argv.some((arg) => arg.startsWith('model_instructions_file='))).toBe(false);
     expect(record.argv).not.toContain('--ignore-user-config');
     expect(record.argv).toContain('--skip-git-repo-check');
     expect(record.argv).not.toContain('hello from lark');
@@ -84,6 +86,102 @@ describe('CodexAdapter process contract', () => {
       CODEX_HOME: '/outer/codex-home',
     });
     expect(record.env.APP_SECRET).toBe('inherited-secret');
+  });
+
+  it('keeps risk-intent prompts bare and forces compact isolated read-only argv', async () => {
+    delete process.env.CODEX_HOME;
+    const fake = await createFakeCodex({
+      lines: [{ type: 'turn.completed' }],
+    });
+    cleanup.push(fake.dir);
+    const cwd = await realpath(fake.dir);
+    const profileStateDir = join(fake.dir, 'risk profile state');
+    const codexHome = join(fake.dir, 'risk-codex-home');
+    const prompt = '{"action":"buy","amount_text":"1000万"}';
+
+    const run = new CodexAdapter({
+      binary: fake.path,
+      purpose: 'risk-intent',
+      profileStateDir,
+      codexHome,
+      sandbox: 'read-only',
+      ignoreUserConfig: false,
+      ignoreRules: false,
+    }).run({
+      runId: 'run-risk-intent',
+      prompt,
+      cwd,
+      sandbox: 'read-only',
+      model: 'gpt-5.5',
+      reasoningEffort: 'low',
+    });
+
+    await collect(run.events);
+    const record = await readRecord(fake.recordPath);
+
+    expect(record.stdin).toBe(prompt);
+    expect(record.stdin).not.toContain('lark-channel-bridge 运行约定');
+    expect(record.stdin).not.toContain('__bridge_cb');
+    const instructionsArg = record.argv.find((arg) => arg.startsWith('model_instructions_file='));
+    if (!instructionsArg) throw new Error('risk-intent instructions file was not passed');
+    const instructionsPath = JSON.parse(instructionsArg.slice('model_instructions_file='.length)) as string;
+    expect(instructionsPath.startsWith(join(profileStateDir, 'risk-intent') + sep)).toBe(true);
+    expect(await readFile(instructionsPath, 'utf8')).toBe(RISK_INTENT_INSTRUCTIONS);
+    expect(record.argv).toEqual([
+      'exec',
+      '--json',
+      '-c',
+      'project_doc_max_bytes=0',
+      '-c',
+      'skills.include_instructions=false',
+      '-c',
+      'features.skill_search=false',
+      '-c',
+      'orchestrator.skills.enabled=false',
+      '-c',
+      'orchestrator.mcp.enabled=false',
+      '-c',
+      'features.apps=false',
+      '-c',
+      'features.remote_plugin=false',
+      '-c',
+      'features.shell_tool=false',
+      '-c',
+      'features.shell_snapshot=false',
+      '-c',
+      'features.browser_use=false',
+      '-c',
+      'features.computer_use=false',
+      '-c',
+      'features.image_generation=false',
+      '-c',
+      'agents.enabled=false',
+      '-c',
+      'web_search="disabled"',
+      '-c',
+      `model_instructions_file=${JSON.stringify(instructionsPath)}`,
+      '--sandbox',
+      'read-only',
+      '--model',
+      'gpt-5.5',
+      '-c',
+      'model_reasoning_effort="low"',
+      '-c',
+      'approval_policy="never"',
+      '-c',
+      'shell_environment_policy.inherit="all"',
+      '--ignore-user-config',
+      '--ignore-rules',
+      '--skip-git-repo-check',
+      '-C',
+      cwd,
+      '-',
+    ]);
+    expect(record.argv).toContain('--ignore-user-config');
+    expect(record.argv).toContain('--ignore-rules');
+    expect(record.argv).toContain('--sandbox');
+    expect(record.argv[record.argv.indexOf('--sandbox') + 1]).toBe('read-only');
+    expect(record.env.CODEX_HOME).toBe(codexHome);
   });
 
   it('injects the active bridge profile env while preserving Codex env overrides', async () => {

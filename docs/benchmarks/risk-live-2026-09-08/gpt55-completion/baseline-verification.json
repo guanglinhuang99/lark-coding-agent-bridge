@@ -1,0 +1,72 @@
+[
+  {
+    "version": "before",
+    "utc": "2026-09-08T08:49:50.378Z",
+    "aiCalls": 0,
+    "aiMs": 0,
+    "usage": [],
+    "preparationMs": null,
+    "calculationMs": 23869.881125,
+    "displayMs": null,
+    "inputHash": "bc183f8c74a633489877354001e9a3c6f5e22eba1e2264a314f46a826d87c074",
+    "businessHash": "ac869481443fe5aa3398e8bac5df5fd5ac3f5ce87997032c82176510608d7b7b",
+    "displayHash": null,
+    "confirmationChecks": [],
+    "backendTimings": {
+      "queue_wait": 0,
+      "setup": 17.181,
+      "rules_and_holdings": 3.832,
+      "scenario_resolution": 0.013,
+      "limit_calculation": 2.348,
+      "restriction_checks": 0,
+      "credit_checks": 0,
+      "total": 6.193,
+      "end_to_end": 23.375
+    },
+    "dataDate": "2026-09-07",
+    "baselineHash": "315ee53e710e9737f5f57da647ccc5637dc149b97a7d5cbc3f6b22498ec98470",
+    "netAssets": null,
+    "excludedNonBusinessPaths": [
+      "$.timings"
+    ],
+    "path": "direct-client-calculation-no-ai-or-confirmation",
+    "baselineMetricsHash": "c9cecaf655dd0907f0ba2ea7497f1ca1cf4c28cd6cacb17caf74a1fd937998e7",
+    "backendRunIdHash": "09c91b0ede8b9c8cc65bde02739fc5ce3ecb67f07f983a0951ecd6d6087028b2",
+    "calculationCalls": 1
+  },
+  {
+    "version": "after",
+    "utc": "2026-09-08T08:50:07.877Z",
+    "aiCalls": 0,
+    "aiMs": 0,
+    "usage": [],
+    "preparationMs": null,
+    "calculationMs": 17491.896708999997,
+    "displayMs": null,
+    "inputHash": "bc183f8c74a633489877354001e9a3c6f5e22eba1e2264a314f46a826d87c074",
+    "businessHash": "ac869481443fe5aa3398e8bac5df5fd5ac3f5ce87997032c82176510608d7b7b",
+    "displayHash": null,
+    "confirmationChecks": [],
+    "backendTimings": {
+      "queue_wait": 0,
+      "setup": 10.89,
+      "rules_and_holdings": 3.859,
+      "scenario_resolution": 0.013,
+      "limit_calculation": 2.465,
+      "restriction_checks": 0,
+      "credit_checks": 0,
+      "total": 6.337,
+      "end_to_end": 17.228
+    },
+    "dataDate": "2026-09-07",
+    "baselineHash": "315ee53e710e9737f5f57da647ccc5637dc149b97a7d5cbc3f6b22498ec98470",
+    "netAssets": null,
+    "excludedNonBusinessPaths": [
+      "$.timings"
+    ],
+    "path": "direct-client-calculation-no-ai-or-confirmation",
+    "baselineMetricsHash": "c9cecaf655dd0907f0ba2ea7497f1ca1cf4c28cd6cacb17caf74a1fd937998e7",
+    "backendRunIdHash": "f4deb3b8f924c283da0e48eb204e020c7137758d04de96394ca15cf84d49e056",
+    "calculationCalls": 1
+  }
+]

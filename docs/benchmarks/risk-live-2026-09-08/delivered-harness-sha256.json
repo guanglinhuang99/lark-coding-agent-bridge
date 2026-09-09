@@ -1,0 +1,10 @@
+{
+  "note": "Final delivered harness hashes; reporting and preflight additions postdate early sampling. Query algorithms unchanged.",
+  "files": {
+    "summarize-stopped.py": "a456a03dc947c8d7f40e0f7f641caf2199581fbe4ba6c6c280137fa33c278980",
+    "risk-live-benchmark.example.json": "ae67d9b5a914994eb168644600ada630e574df498c45bc7b70400dce9b51c7ba",
+    "risk-live-benchmark.md": "c2eefff68345f5fc6f8c425d44c71c10812bf6f333f0b7fb43811e1d94d32e6b",
+    "risk-live-benchmark.mjs": "469ade00d4d97fe66d8ff156d90c2dfa0e130fff1532405785e50ffc59959f85",
+    "risk-live-intent-chain.mjs": "86c45514e3425b5f087a3c4dd65000b987da7aa20fe1834fb2be0528abc4658a"
+  }
+}

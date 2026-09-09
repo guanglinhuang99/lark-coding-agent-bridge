@@ -1,0 +1,80 @@
+{
+  "status": "verified-no-ai-no-calculation",
+  "observedAtUtc": "2026-09-08T08:20:20Z",
+  "fixedBenchmarkRefs": {
+    "before": "f00d635b36536dccac7ebeb73235e7dcf584d49b",
+    "after": "6d28a6a673b3d400f3d30e15018b5a5621d545cf"
+  },
+  "backend": {
+    "path": "/Users/guanglin/Sync/risk-service",
+    "pythonFileCount": 41,
+    "excludedPath": ".connect-package",
+    "sha256PathThenContent": "9f0134f81a256e1ca2a5c4576974fcf93317f211634d0008cad964d6f84d245c",
+    "historicalSha256": "9f0134f81a256e1ca2a5c4576974fcf93317f211634d0008cad964d6f84d245c",
+    "matchesHistorical": true,
+    "gitRepository": false
+  },
+  "deployedCandidate": {
+    "releasePath": "/Users/guanglin/.lark-channel/releases/wecom-risk-20260908-40e196ce3872",
+    "artifactHash": "40e196ce3872a0a616b195646a6561dbeaad204e5a8be95ed21ebc50e0403fed",
+    "pythonRuntime": "/Users/guanglin/.lark-channel/releases/wecom-risk-20260908-40e196ce3872/python-runtime/bin/python",
+    "riskIntentModel": "gpt-5.3-codex-spark"
+  },
+  "runtime": {
+    "node": "24.19.0",
+    "pnpm": "10.33.0",
+    "configuredPython": "/Users/guanglin/Documents/trae_projects/icube/bin/python",
+    "configuredPythonVersion": "3.12.8",
+    "deployedPythonVersion": "3.12.8",
+    "packageVersions": {
+      "azpy": "1.9.0",
+      "pandas": "3.0.2",
+      "pins": "0.9.1",
+      "openpyxl": "3.1.5",
+      "numpy": "2.4.4",
+      "pyarrow": "23.0.1",
+      "requests": "2.33.1",
+      "fsspec": "2025.7.0"
+    },
+    "configuredAndDeployedPackagesMatch": true,
+    "workers": 4,
+    "timeoutMs": 180000,
+    "startupTimeoutMs": 30000,
+    "servicePath": "/Users/guanglin/Sync/risk-service",
+    "bridgePath": "/Users/guanglin/.lark-channel/releases/wecom-risk-20260908-40e196ce3872/risk-bridge/direct_bridge.py"
+  },
+  "pins": {
+    "serverHost": "10.8.11.57",
+    "accessCheck": "read-only board_connect and pin_meta using the deployed candidate runtime with a command-level private-IP proxy bypass",
+    "scope": {
+      "name": "guanglin.huang/PTF_investment_scope",
+      "version": "2784",
+      "release_id": "money-rule-alignment-20260902T155318",
+      "status": "ok"
+    },
+    "limit": {
+      "name": "guanglin.huang/PTF_investment_limit",
+      "version": "2783",
+      "release_id": "money-rule-alignment-20260902T155318",
+      "status": "ok"
+    },
+    "sameRelease": true
+  },
+  "data": {
+    "holdingDateObserved": "2026-09-07",
+    "pinRows": {
+      "scope": 251,
+      "limit": 1373
+    }
+  },
+  "checks": {
+    "ai": "not-run",
+    "formalCalculation": "not-run",
+    "wecomTransport": "not-run",
+    "businessWrites": "none"
+  },
+  "proxyEvidence": {
+    "scope": "This file records the direct Pin metadata observation only; older diagnostic logs are not used as current evidence.",
+    "runtimeProcessSetting": "Not inferred from this probe; the benchmark wrapper adds a process-level bypass for 10.8.11.57 when run."
+  }
+}

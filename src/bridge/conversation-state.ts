@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { writeFileAtomic } from '../platform/atomic-write';
 import type { SessionEntry } from './session-store';
 import type { SessionCatalogEntry } from './session-catalog';
-import { bridgeIdentityKey, sessionBindingKey, type BridgeIdentity } from './identity';
+import { bridgeIdentityKey, sessionBindingKey, sessionHistoryKey, type BridgeIdentity } from './identity';
 
 export interface ConversationBucket {
   identity: BridgeIdentity;
@@ -135,8 +135,11 @@ function importLegacy(bucket: ConversationBucket, name: string, value: unknown):
     for (const raw of value) {
       const entry = validateSession(raw);
       const oldKey = [entry.scopeId, entry.agentId, entry.cwdRealpath, entry.policyFingerprint].join('\x1f');
-      if (entry.key !== oldKey && entry.key !== sessionBindingKey(bucket.identity, entry)) throw damaged();
-      const key = sessionBindingKey(bucket.identity, entry);
+      const bindingKey = sessionBindingKey(bucket.identity, entry);
+      const sessionId = entry.threadId ?? entry.sessionId!;
+      const historyKey = sessionHistoryKey(bucket.identity, entry, sessionId);
+      if (entry.key !== oldKey && entry.key !== bindingKey && entry.key !== historyKey) throw damaged();
+      const key = entry.status === 'archived' ? historyKey : bindingKey;
       if (Object.hasOwn(bucket.sessions, key)) throw damaged();
       bucket.sessions[key] = { ...entry, key };
     }
@@ -195,9 +198,23 @@ function validateState(value: unknown): ConversationDiskState {
         if (!nonempty(cwd)) throw damaged();
       }
     }
-    for (const [key, rawSession] of Object.entries(object(bucket.sessions))) {
+    const sessions = object(bucket.sessions);
+    for (const [key, rawSession] of Object.entries(sessions)) {
       const session = validateSession(rawSession);
-      if (session.key !== key || sessionBindingKey(identity, session) !== key) throw damaged();
+      const sessionId = session.threadId ?? session.sessionId!;
+      const bindingKey = sessionBindingKey(identity, session);
+      const expectedKey = session.status === 'archived'
+        ? sessionHistoryKey(identity, session, sessionId)
+        : bindingKey;
+      if (session.key !== key) throw damaged();
+      if (session.status === 'archived' && key === bindingKey) {
+        // Schema-v2 previously stored the archived entry at the active binding
+        // key. Normalize it in memory; the next state mutation persists the history key.
+        delete sessions[key];
+        sessions[expectedKey] = { ...session, key: expectedKey };
+      } else if (expectedKey !== key) {
+        throw damaged();
+      }
     }
     for (const [key, rawThread] of Object.entries(object(bucket.unverifiedThreads))) {
       validateScopeKey(key);

@@ -182,3 +182,22 @@ describe('WeCom risk parser', () => {
     expect(matchProducts('完全不同的产品', products)).toEqual([]);
   });
 });
+
+describe('ESG numbered account shorthand', () => {
+  const formal = '安联资产ESG1号资产管理产品';
+  const pure = '安联ESG纯债1号资产管理产品';
+  it.each(['ESG1号', 'ESG1号产品', '【**ESG一号产品**】', 'ESG1号产品&#x20;'])(
+    'resolves %s to the literal ledger name', (query) => {
+      expect(matchProductCandidates(query, [pure, formal, '安联资产ESG10号资产管理产品']))
+        .toEqual({ products: [formal], fuzzy: false });
+    },
+  );
+  it('requires confirmation for an omitted strategy word', () => {
+    expect(matchProductCandidates('ESG1号产品', [pure]))
+      .toEqual({ products: [pure], fuzzy: true });
+  });
+  it('retains identical normalized names for selection', () => {
+    const names = [formal, '安联ESG1号资产管理产品'];
+    expect(matchProductCandidates('ESG1号产品', names).products).toEqual(names);
+  });
+});

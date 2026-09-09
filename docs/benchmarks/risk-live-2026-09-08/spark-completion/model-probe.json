@@ -1,0 +1,13 @@
+{
+  "usage": {
+    "type": "usage",
+    "inputTokens": 1484,
+    "outputTokens": 410,
+    "cachedInputTokens": 0,
+    "reasoningOutputTokens": 370
+  },
+  "errors": [],
+  "hasDraft": true,
+  "action": "subscription",
+  "amountPreserved": true
+}

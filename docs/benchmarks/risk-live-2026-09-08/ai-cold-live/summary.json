@@ -1,0 +1,48 @@
+{
+  "kind": "real-client-query-and-preapproved-local-calculation",
+  "versions": {
+    "before": "f00d635b36536dccac7ebeb73235e7dcf584d49b",
+    "after": "6d28a6a673b3d400f3d30e15018b5a5621d545cf"
+  },
+  "dataVersion": {
+    "scope_version": "2784",
+    "limit_version": "2783",
+    "release_id": "money-rule-alignment-20260902T155318",
+    "scope_rows": 251,
+    "limit_rows": 1373
+  },
+  "node": "v24.19.0",
+  "python": "/Users/guanglin/Documents/trae_projects/icube/bin/python",
+  "service": "/Users/guanglin/Sync/risk-service",
+  "workers": 4,
+  "timeoutMs": 180000,
+  "startupTimeoutMs": 30000,
+  "failure": null,
+  "observability": "backendRequests counts client call invocations, not database executions. Missing stages=null (unobserved). No platform transport is exercised. Direct calculation cases do not exercise intent or confirmation. Optional intent cases exercise source confirmation registries and real AI only when authorized; lifecycle is tested separately.",
+  "scenarios": {
+    "intent_case_0": {
+      "businessConsistent": true,
+      "status": "sampled",
+      "before": {
+        "n": 3,
+        "success": 3,
+        "failures": 0,
+        "successRate": 1,
+        "median": 26093.487416000004,
+        "p95": 26282.499542,
+        "backendRequests": 9
+      },
+      "after": {
+        "n": 3,
+        "success": 3,
+        "failures": 0,
+        "successRate": 1,
+        "median": 17685.174332999995,
+        "p95": 18034.246124999998,
+        "backendRequests": 6
+      },
+      "absoluteReductionMs": 8408.313083000008,
+      "reductionPercent": 32.22379955944179
+    }
+  }
+}

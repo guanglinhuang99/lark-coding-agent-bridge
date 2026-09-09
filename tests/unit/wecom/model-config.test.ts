@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { resolveWeComModelConfig } from '../../../src/wecom/model-config';
 
 describe('WeCom model config', () => {
-  it('uses GPT-5.6 Luna at max effort for normal runs and GPT-5.3 Codex Spark for risk intent by default', () => {
+  it('uses GPT-5.6 Luna at max effort for normal runs and GPT-5.6 Luna for risk intent by default', () => {
     expect(resolveWeComModelConfig({})).toEqual({
       codexModel: 'gpt-5.6-luna',
       codexReasoningEffort: 'max',
-      riskIntentModel: 'gpt-5.3-codex-spark',
+      riskIntentModel: 'gpt-5.6-luna',
     });
   });
 
@@ -34,7 +34,7 @@ describe('WeCom model config', () => {
     ).toEqual({
       codexModel: 'gpt-5.6-luna',
       codexReasoningEffort: 'max',
-      riskIntentModel: 'gpt-5.3-codex-spark',
+      riskIntentModel: 'gpt-5.6-luna',
     });
   });
 });

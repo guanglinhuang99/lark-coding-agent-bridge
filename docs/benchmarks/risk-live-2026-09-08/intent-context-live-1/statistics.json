@@ -1,0 +1,102 @@
+{
+  "0": {
+    "baseline": {
+      "n": 1,
+      "success": 1,
+      "medianMs": 25094.187292000002,
+      "p95Ms": 25094.187292000002,
+      "aiCalls": 0,
+      "medianInputTokens": null,
+      "cachedInputTokens": 0
+    },
+    "patched": {
+      "n": 1,
+      "success": 1,
+      "medianMs": 17688.562708999998,
+      "p95Ms": 17688.562708999998,
+      "aiCalls": 0,
+      "medianInputTokens": null,
+      "cachedInputTokens": 0
+    }
+  },
+  "1": {
+    "baseline": {
+      "n": 3,
+      "success": 3,
+      "medianMs": 11863.529292000007,
+      "p95Ms": 12906.818832999998,
+      "aiCalls": 3,
+      "medianInputTokens": 16647,
+      "cachedInputTokens": 12416
+    },
+    "patched": {
+      "n": 3,
+      "success": 3,
+      "medianMs": 9562.200416,
+      "p95Ms": 11249.331666999999,
+      "aiCalls": 3,
+      "medianInputTokens": 5997,
+      "cachedInputTokens": 5632
+    }
+  },
+  "2": {
+    "baseline": {
+      "n": 3,
+      "success": 3,
+      "medianMs": 10585.915833000006,
+      "p95Ms": 23551.15587500001,
+      "aiCalls": 0,
+      "medianInputTokens": null,
+      "cachedInputTokens": 0
+    },
+    "patched": {
+      "n": 3,
+      "success": 3,
+      "medianMs": 10590.881000000023,
+      "p95Ms": 22707.624666000018,
+      "aiCalls": 0,
+      "medianInputTokens": null,
+      "cachedInputTokens": 0
+    }
+  },
+  "3": {
+    "baseline": {
+      "n": 3,
+      "success": 3,
+      "medianMs": 2499.526292000024,
+      "p95Ms": 2598.4527090000047,
+      "aiCalls": 0,
+      "medianInputTokens": null,
+      "cachedInputTokens": 0
+    },
+    "patched": {
+      "n": 3,
+      "success": 3,
+      "medianMs": 2579.8143330000166,
+      "p95Ms": 2585.9930419999873,
+      "aiCalls": 0,
+      "medianInputTokens": null,
+      "cachedInputTokens": 0
+    }
+  },
+  "4": {
+    "baseline": {
+      "n": 3,
+      "success": 3,
+      "medianMs": 21069.022457999992,
+      "p95Ms": 24068.026958000002,
+      "aiCalls": 3,
+      "medianInputTokens": 16699,
+      "cachedInputTokens": 32896
+    },
+    "patched": {
+      "n": 3,
+      "success": 3,
+      "medianMs": 17494.554249999986,
+      "p95Ms": 18960.463208,
+      "aiCalls": 3,
+      "medianInputTokens": 6049,
+      "cachedInputTokens": 11264
+    }
+  }
+}

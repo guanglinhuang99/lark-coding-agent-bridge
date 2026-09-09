@@ -1,0 +1,9 @@
+{
+  "utc": "2026-09-08T01:48:39Z",
+  "reason": "Completed all 30 same-query pairs. Extra mixed scenario has only 7 distinct codes, so stopped instead of treating it as 8 distinct. A request may have started before this stop; not counted as a completed sample.",
+  "sampler_pid": 32944,
+  "owned_child_pids": [
+    32985,
+    32994
+  ]
+}

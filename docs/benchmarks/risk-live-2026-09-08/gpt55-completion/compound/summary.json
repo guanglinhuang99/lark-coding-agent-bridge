@@ -1,0 +1,60 @@
+{
+  "kind": "real-client-query-and-preapproved-local-calculation",
+  "versions": {
+    "before": "f00d635b36536dccac7ebeb73235e7dcf584d49b",
+    "after": "6d28a6a673b3d400f3d30e15018b5a5621d545cf"
+  },
+  "dataVersion": {
+    "scope_version": "2784",
+    "limit_version": "2783",
+    "release_id": "money-rule-alignment-20260902T155318",
+    "scope_rows": 251,
+    "limit_rows": 1373
+  },
+  "node": "v24.19.0",
+  "python": "/Users/guanglin/.lark-channel/releases/wecom-risk-20260908-40e196ce3872/python-runtime/bin/python",
+  "service": "/Users/guanglin/Sync/risk-service",
+  "workers": 4,
+  "timeoutMs": 180000,
+  "startupTimeoutMs": 30000,
+  "failure": null,
+  "collection": {
+    "enabled": true,
+    "targetUsablePairs": 30,
+    "maxAttempts": 40,
+    "policy": "continue only when every failed row is normalized-input-mismatch; stop for all other failures or mismatches"
+  },
+  "observability": "backendRequests counts client call invocations, not database executions. Missing stages=null (unobserved). No platform transport is exercised. Direct calculation cases do not exercise intent or confirmation. Optional intent cases exercise source confirmation registries and real AI only when authorized; lifecycle is tested separately.",
+  "scenarios": {
+    "intent_case_0": {
+      "attempts": 30,
+      "targetUsablePairs": 30,
+      "usablePairs": 30,
+      "failures": 0,
+      "failureCategories": {},
+      "businessConsistent": true,
+      "usablePairConsistency": true,
+      "status": "sampled",
+      "before": {
+        "n": 30,
+        "success": 30,
+        "failures": 0,
+        "successRate": 1,
+        "median": 38306.558458000014,
+        "p95": 117512.3093330001,
+        "backendRequests": 210
+      },
+      "after": {
+        "n": 30,
+        "success": 30,
+        "failures": 0,
+        "successRate": 1,
+        "median": 22390.39579150011,
+        "p95": 59661.457042000024,
+        "backendRequests": 57
+      },
+      "absoluteReductionMs": 15916.162666499906,
+      "reductionPercent": 41.549445596765544
+    }
+  }
+}

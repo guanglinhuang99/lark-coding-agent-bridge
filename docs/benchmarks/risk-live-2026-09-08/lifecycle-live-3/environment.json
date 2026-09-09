@@ -1,0 +1,32 @@
+{
+  "kind": "real-risk-lifecycle",
+  "generatedAt": "2026-09-08T02:33:56.100Z",
+  "afterCommit": "6d28a6a673b3d400f3d30e15018b5a5621d545cf",
+  "afterRoot": "/private/tmp/wecom-live-20260908/after",
+  "bridgeSource": "/private/tmp/wecom-live-20260908/after/src/wecom/risk/direct_bridge.py",
+  "bridgeSha256": "207b22b286a497a76cc3dbb50a88f06bbd425bd8438d0c074895aee4fde7c630",
+  "clientSource": "/private/tmp/wecom-live-20260908/after/src/wecom/risk/client.ts",
+  "clientSha256": "7e5289f67981ae1fc099b3d7bbb90c73c90774fec3160aa8388842a0e58be2af",
+  "progressSource": "/private/tmp/wecom-live-20260908/after/src/wecom/risk/progress.ts",
+  "progressSha256": "f73a7b2c770a7b96214599fe8852828e90aa153bd9b8b7f2f0cf5d164af73dce",
+  "python": "/Users/guanglin/Documents/trae_projects/icube/bin/python",
+  "pythonVersion": "Python 3.12.8",
+  "service": "/Users/guanglin/Sync/risk-service",
+  "node": "v24.19.0",
+  "workers": 1,
+  "defaultClientTimeoutMs": 180000,
+  "startupTimeoutMs": 30000,
+  "queryHash": "f989359812cd03e6",
+  "followupQueryHash": "b65b8f0919866fc4",
+  "timeoutMs": 250,
+  "queueExpiryMs": 100,
+  "waitMs": 180000,
+  "observationBoundary": {
+    "wrapper": "/private/tmp/wecom-live-20260908/lifecycle-live-3/risk-lifecycle-observer.py",
+    "records": "method entry/exit, argument hash, thread id and outcome only",
+    "source": "wrapper imports and invokes the fixed after direct_bridge.py; it does not replace service methods or add delay",
+    "limitation": "method entry proves DirectRiskService.call was entered, not the number of SQL statements inside risk-service",
+    "argumentHash": "sha256 of UTF-8 compact JSON with recursively sorted object keys; matches Python json.dumps(sort_keys=True, separators=(\",\", \":\"), ensure_ascii=False)",
+    "rawProtocolLog": "/private/tmp/wecom-live-20260908/lifecycle-live-3/raw-protocol.jsonl"
+  }
+}

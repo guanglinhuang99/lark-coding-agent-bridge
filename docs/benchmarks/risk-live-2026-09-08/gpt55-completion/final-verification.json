@@ -1,0 +1,32 @@
+{
+  "utc": "2026-09-08T10:32:43.647173+00:00",
+  "sourceFingerprintMatches": true,
+  "verifiedFiles": 9,
+  "artifactSha256": "40e196ce3872a0a616b195646a6561dbeaad204e5a8be95ed21ebc50e0403fed",
+  "riskModel": "gpt-5.5",
+  "health": {
+    "schemaVersion": 1,
+    "pid": 84775,
+    "startedAt": "2026-09-08T08:49:13.581Z",
+    "updatedAt": "2026-09-08T10:32:13.685Z",
+    "phase": "connected",
+    "connected": true,
+    "activeRuns": 0,
+    "startingRuns": 0,
+    "riskFastPath": {
+      "enabled": true,
+      "serviceDirConfigured": true,
+      "pythonConfigured": true
+    }
+  },
+  "backend": {
+    "pythonFileCount": 41,
+    "sha256PathThenContent": "9f0134f81a256e1ca2a5c4576974fcf93317f211634d0008cad964d6f84d245c",
+    "gitRepository": false
+  },
+  "harnessChecks": {
+    "syntax": "pass",
+    "collectionSelfTest": "pass",
+    "diffCheck": "pass"
+  }
+}

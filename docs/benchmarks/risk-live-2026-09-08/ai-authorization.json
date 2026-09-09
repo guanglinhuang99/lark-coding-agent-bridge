@@ -1,0 +1,6 @@
+{
+  "authorized": true,
+  "scope": "specific product and simulated transaction text for testing",
+  "excluded": "holdings, NAV, credentials, full ledgers",
+  "botRestartAuthorized": false
+}

@@ -1,0 +1,39 @@
+{
+  "scenarios": {
+    "intent_case_0": {
+      "name": "standard_warmup",
+      "plannedPairs": 1,
+      "performance": false
+    },
+    "intent_case_1": {
+      "name": "standard_repeat",
+      "plannedPairs": 30,
+      "performance": true
+    },
+    "intent_case_2": {
+      "name": "natural_language",
+      "plannedPairs": 30,
+      "performance": true
+    },
+    "intent_case_3": {
+      "name": "amount_correction",
+      "plannedPairs": 30,
+      "performance": true
+    },
+    "intent_case_4": {
+      "name": "tenor_correction",
+      "plannedPairs": 30,
+      "performance": true
+    },
+    "intent_case_5": {
+      "name": "compound_correction",
+      "plannedPairs": 30,
+      "performance": true
+    }
+  },
+  "coldFirstProcessPairs": 3,
+  "model": "gpt-5.3-codex-spark",
+  "reasoningEffortObserved": "low",
+  "order": "AB/BA alternation within every scenario",
+  "noConcurrentTestsOrBuilds": true
+}

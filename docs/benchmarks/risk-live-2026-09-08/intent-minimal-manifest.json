@@ -1,0 +1,18 @@
+{
+  "baseCommit": "79f7a75faf54220f4f7b6d72064974c812b176e0",
+  "files": {
+    "src/agent/codex/adapter.ts": "fc79b87dd2edbc434dd42d3670dbd4446cae4c8da7fa07c6a6b16b3e9eb4a8ae",
+    "src/agent/codex/argv.ts": "7156c2a9a1e7a9d70944bb607bdf6e4b7f4e9351920319d6c8746e99eb49ce52",
+    "src/wecom/cli.ts": "1ee40fadb633118f1f293ce9dd1652d28791c29e6620a8129ef4428097e34af8",
+    "tests/process/codex-adapter.test.ts": "d457b9f5f68f54040b98534c3b66f072ec153b4e41ff015aff9ad039ef32c10d",
+    "tests/unit/agent/codex-argv.test.ts": "e31fe795e59e1a9e12b8129b60240aa2c11435cc787d5dc376fe65eda49d8be9",
+    "tests/unit/bridge/shared-runtime.test.ts": "320f55dfc667b2f9b9cc5645fc467b4038d1a6b03036b886ed04fc0b906e628a",
+    "src/agent/codex/risk-intent-instructions.ts": "46137fd85888d0b54a96c489fabcc2219c40351f17b0c865a8c9f252d84d2bef",
+    "tests/unit/agent/risk-intent-instructions.test.ts": "438640049fa0984b2f7330c24bd9c75f6ab168351660679feca2b7315ce63f5a"
+  },
+  "ciExitCode": 0,
+  "testFiles": 150,
+  "tests": 1093,
+  "skipped": 1,
+  "isolatedSourcesMatch": true
+}

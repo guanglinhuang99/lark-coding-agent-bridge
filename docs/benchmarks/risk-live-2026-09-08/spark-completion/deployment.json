@@ -1,0 +1,22 @@
+{
+  "release": "/Users/guanglin/.lark-channel/releases/wecom-risk-20260908-40e196ce3872",
+  "artifactHash": "40e196ce3872a0a616b195646a6561dbeaad204e5a8be95ed21ebc50e0403fed",
+  "currentRiskIntentModel": "gpt-5.3-codex-spark",
+  "currentModelVerifiedAt": "2026-09-08T08:34:35.698455+00:00",
+  "candidatePlistHash": "455c717af3299b05341797298ed38c2abd25eb9aa990e22169956428e7329940",
+  "health": {
+    "schemaVersion": 1,
+    "pid": 73327,
+    "startedAt": "2026-09-08T08:05:52.545Z",
+    "updatedAt": "2026-09-08T08:34:22.686Z",
+    "phase": "connected",
+    "connected": true,
+    "activeRuns": 0,
+    "startingRuns": 0,
+    "riskFastPath": {
+      "enabled": true,
+      "serviceDirConfigured": true,
+      "pythonConfigured": true
+    }
+  }
+}
