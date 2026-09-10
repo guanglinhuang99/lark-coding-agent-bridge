@@ -155,8 +155,8 @@ export function formatCredit(data: Record<string, unknown>): string {
   const date = stringValue(data.date);
   const lines = [`**${escapeCell(entity)}**${date ? `（授信日 ${date}）` : ''}`, '', '| 授信类型 | 授信额度 | 已用授信 | 剩余授信 | 使用率 |', '| --- | --- | --- | --- | --- |'];
   for (const [title, key] of [
-    ['集团内授信', 'group_internal'],
     ['三方授信', 'third_party'],
+    ['集团内授信', 'group_internal'],
     ['合计', 'total'],
   ] as const) {
     const item = isRecord(data[key]) ? data[key] : undefined;

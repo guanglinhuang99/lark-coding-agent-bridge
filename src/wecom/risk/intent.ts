@@ -139,81 +139,7 @@ export function isRiskIntentCorrection(text: string): boolean {
   return /(?:改成|改为|修改|调整|换成|替换|设为|改回|变更为)/.test(text.trim());
 }
 
-export class RiskIntentStateRegistry {
-  private readonly states = new Map<string, RiskIntentState>();
-  private readonly stateTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private readonly taskStates = new Map<
-    string,
-    { conversationKey: string; state: RiskIntentState }
-  >();
-  private readonly taskTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-  constructor(
-    private readonly now: () => number = Date.now,
-    private readonly ttlMs = 5 * 60_000,
-  ) {}
-
-  get(conversationKey: string): RiskIntentState | undefined {
-    return this.states.get(conversationKey);
-  }
-
-  has(conversationKey: string): boolean {
-    return this.states.has(conversationKey);
-  }
-
-  set(conversationKey: string, state: RiskIntentState): void {
-    this.delete(conversationKey);
-    this.states.set(conversationKey, state);
-    const timer = setTimeout(() => {
-      if (this.states.get(conversationKey) === state) this.delete(conversationKey);
-    }, this.ttlMs);
-    timer.unref?.();
-    this.stateTimers.set(conversationKey, timer);
-  }
-
-  delete(conversationKey: string): void {
-    const timer = this.stateTimers.get(conversationKey);
-    if (timer) clearTimeout(timer);
-    this.stateTimers.delete(conversationKey);
-    this.states.delete(conversationKey);
-  }
-
-  registerTask(
-    taskId: string,
-    conversationKey: string,
-    state: RiskIntentState,
-    expiresAt: number,
-  ): void {
-    this.deleteTask(taskId);
-    this.clearTasksForConversation(conversationKey);
-    this.taskStates.set(taskId, { conversationKey, state });
-    const timer = setTimeout(() => this.deleteTask(taskId), Math.max(0, expiresAt - this.now()));
-    timer.unref?.();
-    this.taskTimers.set(taskId, timer);
-  }
-
-  getTask(taskId: string): RiskIntentState | undefined {
-    return this.taskStates.get(taskId)?.state;
-  }
-
-  deleteTask(taskId: string): void {
-    const timer = this.taskTimers.get(taskId);
-    if (timer) clearTimeout(timer);
-    this.taskTimers.delete(taskId);
-    this.taskStates.delete(taskId);
-  }
-
-  clearTasksForConversation(conversationKey: string): void {
-    for (const [taskId, task] of this.taskStates) {
-      if (task.conversationKey === conversationKey) this.deleteTask(taskId);
-    }
-  }
-
-  clearConversation(conversationKey: string): void {
-    this.delete(conversationKey);
-    this.clearTasksForConversation(conversationKey);
-  }
-}
+export { RiskStateRegistry as RiskIntentStateRegistry } from './state';
 
 export function buildRiskIntentPrompt(userText: string, previous?: RiskAiDraft, correction?: string): string {
   return [
@@ -322,22 +248,44 @@ export async function normalizeRiskDraft(originalText: string, draft: RiskAiDraf
   );
 }
 
+const RISK_SECURITY_RESOLUTION_CONCURRENCY = 4;
+
 export async function normalizeSecurity(originalText: string, draft: RiskAiDraft, product: string, service: RiskService): Promise<RiskIntentState> {
   if (draft.transactions) {
     if (!draft.transactions.length) throw new Error('交易列表不能为空');
     const transactions = draft.transactions.map(item => ({ ...item }));
-    for (let index = 0; index < transactions.length; index++) {
-      const item = transactions[index]!;
-      const leaf = { ...item, accountQuery: draft.accountQuery };
-      const state = item.resolvedSecurity
-        ? completeOrMissing(originalText, leaf, product, item.resolvedSecurity)
-        : await normalizeSecurity(originalText, leaf, product, service);
+    const resolutions = await mapSettledConcurrent(
+      transactions,
+      RISK_SECURITY_RESOLUTION_CONCURRENCY,
+      async (item) => {
+        const leaf = { ...item, accountQuery: draft.accountQuery };
+        return item.resolvedSecurity
+          ? completeOrMissing(originalText, leaf, product, item.resolvedSecurity)
+          : normalizeSecurity(originalText, leaf, product, service);
+      },
+    );
+
+    // Keep successful lookups from later legs so an earlier clarification does
+    // not force those independent master-data queries to run again afterwards.
+    for (let index = 0; index < resolutions.length; index++) {
+      const result = resolutions[index]!;
+      if (result.status !== 'fulfilled' || result.value.stage !== 'confirm') continue;
+      const security = result.value.security;
+      if (security) transactions[index] = { ...transactions[index]!, resolvedSecurity: security };
+    }
+
+    // Preserve the prior sequential user-visible semantics: the first failing,
+    // ambiguous, or incomplete leg in transaction order is still the one shown.
+    for (let index = 0; index < resolutions.length; index++) {
+      const result = resolutions[index]!;
+      if (result.status === 'rejected') throw result.reason;
+      const state = result.value;
       if (state.stage !== 'confirm') return { ...state, draft: { ...draft, transactions }, transactionIndex: index };
+      const item = transactions[index]!;
       if (!confirmedRiskAmount(item.amountText ?? '')) return {
         stage: 'freeform', field: 'amount', originalText, product,
         draft: { ...draft, transactions }, transactionIndex: index,
       };
-      transactions[index] = { ...item, resolvedSecurity: state.security };
     }
     const first = transactions[0]!;
     return { stage: 'confirm', originalText, product,
@@ -772,4 +720,27 @@ function securityQueryValue(value: unknown): string {
   const codes = [...new Set(query.match(/\b\d{6,12}\.(?:IB|SH|SZ)\b/gi)?.map(code => code.toUpperCase()))];
   if (codes.length > 1) throw new RiskIntentClarificationError(['单笔含多个证券代码，请拆分交易']);
   return codes[0] ?? query;
+}
+
+async function mapSettledConcurrent<T, R>(
+  items: readonly T[],
+  maxConcurrent: number,
+  task: (item: T, index: number) => Promise<R> | R,
+): Promise<Array<PromiseSettledResult<R>>> {
+  const results = new Array<PromiseSettledResult<R>>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(items.length, Math.max(1, maxConcurrent));
+  const workers = Array.from({ length: workerCount }, async () => {
+    for (;;) {
+      const index = nextIndex++;
+      if (index >= items.length) return;
+      try {
+        results[index] = { status: 'fulfilled', value: await task(items[index]!, index) };
+      } catch (reason) {
+        results[index] = { status: 'rejected', reason };
+      }
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }

@@ -17,6 +17,7 @@ import sys
 import threading
 import time
 import traceback
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
@@ -65,11 +66,22 @@ class DailyPQCache:
     def encode(value):
         if type(value).__module__.startswith("pandas.") and type(value).__name__ in {"NAType", "NaTType"}:
             return ["pandas_null", type(value).__name__]
-        if type(value).__module__.startswith("pandas.") and type(value).__name__ == "DataFrame":
-            return ["dataframe", DailyPQCache.encode({
-                "split": value.to_dict(orient="split"),
-                "dtypes": [str(dtype) for dtype in value.dtypes],
-            })]
+        try:
+            import pandas as pd
+            if isinstance(value, pd.DataFrame):
+                return ["dataframe", DailyPQCache.encode({
+                    "split": value.to_dict(orient="split"),
+                    "dtypes": [str(dtype) for dtype in value.dtypes],
+                })]
+        except ImportError:
+            pass
+        try:
+            import polars as pl
+            if isinstance(value, pl.DataFrame):
+                payload = value.serialize(format="binary")
+                return ["polars_dataframe_binary", base64.b64encode(payload).decode("ascii")]
+        except ImportError:
+            pass
         if isinstance(value, dict):
             return ["dict", [[key, DailyPQCache.encode(item)] for key, item in value.items()]]
         if isinstance(value, (list, tuple)):
@@ -99,6 +111,15 @@ class DailyPQCache:
             for column, dtype in zip(frame.columns, data["dtypes"]):
                 frame[column] = frame[column].astype(dtype)
             return frame
+        if kind == "polars_dataframe_binary":
+            import polars as pl
+            return pl.DataFrame.deserialize(base64.b64decode(item), format="binary")
+        if kind == "polars_dataframe":
+            # Compatibility with the first release hotfix. Those cache rows did
+            # not preserve schema, so inspect every row instead of Polars' first
+            # 100 rows; production credit data has late non-null issuer columns.
+            import polars as pl
+            return pl.DataFrame(DailyPQCache.decode(item), infer_schema_length=None)
         if kind == "dict":
             return {key: DailyPQCache.decode(v) for key, v in item}
         if kind == "list":
@@ -116,6 +137,7 @@ class DailyPQCache:
         ), ensure_ascii=False).encode()).hexdigest()
         owner = secrets.token_hex(16)
         started_at = self.clock()
+        poll_delay = 0.05
         while True:
             # Cache hits never acquire SQLite's write lock, so an unrelated slow
             # database miss cannot stall already-cached queries.
@@ -143,7 +165,8 @@ class DailyPQCache:
                 ).rowcount == 1
             if claimed:
                 break
-            time.sleep(0.05)
+            time.sleep(poll_delay)
+            poll_delay = min(poll_delay * 2, 0.5)
 
         try:
             rows = self.read(connection, sql, *args, **kwargs)
@@ -246,9 +269,17 @@ class DirectRiskService:
         if method == "get_restrictions":
             return self._product_restrictions(str(args.get("product") or ""))
         if method == "get_credit":
-            return self.credit_query.build_credit_report(str(args.get("entity") or ""))
+            requested = str(args.get("entity") or "")
+            entity, security = self._resolve_credit_entity(requested)
+            report = self.credit_query.build_credit_report(entity)
+            if security is not None:
+                report["requested_entity"] = requested
+                report["security_name"] = security["security_name"]
+                report["security_code"] = security["security_code"]
+                report["matched_queries"] = [requested]
+            return report
         if method == "get_credits":
-            return self.credit_query.build_credit_reports(args.get("entities"))
+            return self._credit_reports(args.get("entities"))
         if method == "calculate_pretrade":
             return self._calculate_pretrade(
                 str(args.get("product") or ""),
@@ -256,6 +287,129 @@ class DirectRiskService:
                 progress,
             )
         raise ValueError(f"不支持的直接调用方法：{method}")
+
+    @staticmethod
+    def _credit_match_key(value: Any) -> str:
+        return "".join(unicodedata.normalize("NFKC", str(value or "")).split()).casefold()
+
+    def _resolve_credit_entity(self, requested: str) -> tuple[str, dict[str, str] | None]:
+        """Resolve an exact JYDB security name/code to its issuer."""
+        query_key = self._credit_match_key(requested)
+        if not query_key:
+            return requested, None
+        try:
+            payload = self.web.pretrade_security_suggestions_payload(requested)
+        except Exception:
+            # JYDB lookup must not make an ordinary entity query unavailable.
+            return requested, None
+        suggestions = payload.get("suggestions") if isinstance(payload, dict) else None
+        exact: list[dict[str, str]] = []
+        for raw in suggestions if isinstance(suggestions, list) else []:
+            if not isinstance(raw, dict):
+                continue
+            code = str(raw.get("security_code") or "").strip()
+            name = str(raw.get("security_name") or "").strip()
+            code_key = self._credit_match_key(code)
+            base_code_key = self._credit_match_key(code.partition(".")[0])
+            if query_key not in {self._credit_match_key(name), code_key, base_code_key}:
+                continue
+            exact.append({
+                "security_code": code,
+                "security_name": name,
+                "issuer_name": str(raw.get("issuer_name") or "").strip(),
+            })
+        if not exact:
+            return requested, None
+        issuers = {item["issuer_name"] for item in exact if item["issuer_name"]}
+        if not issuers:
+            raise ValueError(f"JYDB未返回证券“{requested}”的发行人")
+        if len(issuers) != 1:
+            raise ValueError(f"证券“{requested}”匹配到多个发行人，请使用证券代码查询")
+        selected = next(item for item in exact if item["issuer_name"] in issuers)
+        return selected["issuer_name"], selected
+
+    def _credit_reports(self, entities: Any) -> dict[str, Any]:
+        if (
+            not isinstance(entities, list)
+            or not entities
+            or any(not isinstance(item, str) for item in entities)
+        ):
+            return self.credit_query.build_credit_reports(entities)
+
+        resolved: list[str | None] = [None] * len(entities)
+        resolution_errors: list[dict[str, str]] = []
+
+        def resolve(index: int, requested: str) -> tuple[int, str, str | None]:
+            try:
+                entity, _security = self._resolve_credit_entity(requested)
+                return index, entity, None
+            except ValueError as exc:
+                return index, requested, str(exc)
+
+        # Bound JYDB concurrency so a long multi-name request stays well within
+        # the bridge timeout without opening an unbounded number of connections.
+        with ThreadPoolExecutor(max_workers=min(4, len(entities))) as pool:
+            for index, entity, error in pool.map(
+                lambda item: resolve(*item),
+                enumerate(entities),
+            ):
+                if error:
+                    resolution_errors.append({
+                        "query": entities[index],
+                        "code": "security_issuer_resolution",
+                        "message": error,
+                    })
+                else:
+                    resolved[index] = entity
+
+        originals_by_entity: dict[str, list[str]] = {}
+        unique_entities: list[str] = []
+        for original, entity in zip(entities, resolved):
+            if entity is None:
+                continue
+            key = self._credit_match_key(entity)
+            originals = originals_by_entity.setdefault(key, [])
+            if original not in originals:
+                originals.append(original)
+            if entity not in unique_entities:
+                unique_entities.append(entity)
+
+        if unique_entities:
+            data = self.credit_query.build_credit_reports(unique_entities)
+        else:
+            data = {"date": "", "amount_unit": "CNY", "reports": [], "unmatched": [], "errors": []}
+
+        def original_queries(value: Any) -> list[str]:
+            key = self._credit_match_key(value)
+            return originals_by_entity.get(key, [str(value or "")])
+
+        reports = data.get("reports") if isinstance(data.get("reports"), list) else []
+        for report in reports:
+            if not isinstance(report, dict):
+                continue
+            matched = report.get("matched_queries")
+            rewritten: list[str] = []
+            for query in matched if isinstance(matched, list) else []:
+                for original in original_queries(query):
+                    if original not in rewritten:
+                        rewritten.append(original)
+            report["matched_queries"] = rewritten
+
+        unmatched = data.get("unmatched") if isinstance(data.get("unmatched"), list) else []
+        data["unmatched"] = [
+            original
+            for query in unmatched
+            for original in original_queries(query)
+        ]
+        errors = data.get("errors") if isinstance(data.get("errors"), list) else []
+        rewritten_errors: list[dict[str, Any]] = []
+        for raw in errors:
+            if not isinstance(raw, dict):
+                continue
+            originals = original_queries(raw.get("query"))
+            rewritten_errors.extend(dict(raw, query=original) for original in originals)
+        data["errors"] = rewritten_errors + resolution_errors
+        return data
 
     def _container(self) -> Any:
         with self._related_lock:
@@ -374,7 +528,7 @@ class DirectRiskService:
             if current.get("status") in {"success", "error"}:
                 current.pop("traceback", None)
                 return current
-            time.sleep(0.05)
+            time.sleep(0.1)
         raise TimeoutError("risk-service 本地测算超过180秒")
 
 

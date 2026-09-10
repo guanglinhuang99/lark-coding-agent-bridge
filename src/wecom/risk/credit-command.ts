@@ -6,7 +6,7 @@ export function parseCreditQueries(payload: string): string[] {
   return [...new Set(payload.split(/[,，、;；\r\n]+/u).map((item) => item.trim()).filter(Boolean))];
 }
 
-const columns = '| 授信主体 | 集团内授信 | 集团内已用 | 集团内剩余 | 三方授信 | 三方已用 | 三方剩余 |';
+const columns = '| 授信主体 | 三方授信 | 三方已用 | 三方剩余 | 集团内授信 | 集团内已用 | 集团内剩余 |';
 const separator = '| --- | ---: | ---: | ---: | ---: | ---: | ---: |';
 const record = (value: unknown): RecordValue =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? value as RecordValue : {};
@@ -42,7 +42,7 @@ export function formatCreditPages(data: RecordValue, maxBytes: number): string[]
   for (const report of reports) {
     const name = cell(report.entity);
     const values: string[] = [];
-    for (const [key, title] of [['group_internal', '集团内'], ['third_party', '三方']] as const) {
+    for (const [key, title] of [['third_party', '三方'], ['group_internal', '集团内']] as const) {
       const item = record(report[key]);
       values.push(money(item.credit_limit_yuan, '未配置'), money(item.used_credit_yuan), money(item.remaining_credit_yuan));
       const limit = numeric(item.credit_limit_yuan);
@@ -72,7 +72,10 @@ export function formatCreditPages(data: RecordValue, maxBytes: number): string[]
 
 export async function executeCreditCommand(
   payload: string,
-  service: { getCredits(entities: string[]): Promise<RecordValue> } | undefined,
+  service: {
+    getCredit(entity: string): Promise<RecordValue>;
+    getCredits(entities: string[]): Promise<RecordValue>;
+  } | undefined,
   maxBytes: number,
   finish: (content: string) => Promise<void>,
   send: (content: string) => Promise<void>,
@@ -92,7 +95,14 @@ export async function executeCreditCommand(
   }
   let pages: string[];
   try {
-    pages = formatCreditPages(await service.getCredits(queries), maxBytes);
+    const data = queries.length === 1
+      ? await service.getCredit(queries[0]!).then((report) => ({
+          date: report.date,
+          amount_unit: report.amount_unit,
+          reports: [report],
+        }))
+      : await service.getCredits(queries);
+    pages = formatCreditPages(data, maxBytes);
   } catch {
     await finish('授信查询失败，未将失败结果计为零。请稍后重试；名称过于宽泛时请缩小查询范围。');
     return;

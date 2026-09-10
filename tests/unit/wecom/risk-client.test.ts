@@ -65,6 +65,19 @@ afterEach(() => {
 });
 
 describe('riskservice direct client', () => {
+  it('sends one credit subject through the singular bridge request', async () => {
+    const requests: Record<string, unknown>[] = [];
+    installBridge((request, child) => {
+      requests.push(request);
+      child.stdout.write(`${JSON.stringify({ id: request.id, type: 'result', data: { entity: '公司甲' } })}\n`);
+    });
+    const service = client();
+    await expect(service.getCredit('公司甲')).resolves.toEqual({ entity: '公司甲' });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ method: 'get_credit', args: { entity: '公司甲' } });
+    await service.close();
+  });
+
   it('sends all credit subjects in one bridge request', async () => {
     const requests: Record<string, unknown>[] = [];
     installBridge((request, child) => {
@@ -219,6 +232,57 @@ describe('riskservice direct client', () => {
     await expect(service.listProducts()).resolves.toEqual(['产品B']);
     expect(childProcessMocks.spawn).toHaveBeenCalledTimes(2);
     await service.close();
+  });
+
+  it('ignores a delayed exit from an obsolete child after a clean restart', async () => {
+    const stuck = new FakeChild();
+    stuck.kill.mockImplementation(() => {
+      stuck.exitCode = 0;
+      return true;
+    });
+    const healthy = new FakeChild();
+    let healthyInput = '';
+    healthy.stdin.on('data', (chunk) => {
+      healthyInput += chunk.toString();
+      const lines = healthyInput.split('\n');
+      healthyInput = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line) continue;
+        const request = JSON.parse(line) as Record<string, unknown>;
+        healthy.stdout.write(
+          `${JSON.stringify({ id: request.id, type: 'result', data: { products: ['产品B'] } })}\n`,
+        );
+      }
+    });
+    childProcessMocks.spawn
+      .mockReturnValueOnce(stuck)
+      .mockImplementationOnce(() => {
+        queueMicrotask(() => healthy.stdout.write('{"type":"ready"}\n'));
+        return healthy;
+      });
+    const service = client({ startupTimeoutMs: 5 });
+
+    await expect(service.listProducts()).rejects.toMatchObject({ code: 'direct-start-timeout' });
+    await expect(service.listProducts()).resolves.toEqual(['产品B']);
+
+    stuck.emit('exit', 0, null);
+    service.clearLookupCache();
+    await expect(service.listProducts()).resolves.toEqual(['产品B']);
+    expect(childProcessMocks.spawn).toHaveBeenCalledTimes(2);
+    await service.close();
+  });
+
+  it('rejects an in-progress startup when the client closes', async () => {
+    const stuck = new FakeChild();
+    childProcessMocks.spawn.mockReturnValue(stuck);
+    const service = client({ startupTimeoutMs: 10_000 });
+    const pending = service.listProducts().catch((error) => error);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    await service.close();
+
+    expect(await pending).toMatchObject({ code: 'direct-process' });
+    expect(stuck.kill).toHaveBeenCalledWith('SIGTERM');
   });
 
   it('times out a local call without killing the shared process', async () => {

@@ -2,10 +2,21 @@ import { describe, expect, it } from 'vitest';
 import {
   formatCalculation,
   formatCounterpartyCheck,
+  formatCredit,
   formatSecurityCheck,
 } from '../../../src/wecom/risk/formatter';
 
 describe('WeCom risk result formatting', () => {
+  it('shows third-party credit before group-internal credit', () => {
+    const markdown = formatCredit({
+      entity: '测试公司',
+      third_party: { credit_limit_yuan: 200_000, used_credit_yuan: 10_000 },
+      group_internal: { credit_limit_yuan: 100_000, used_credit_yuan: 5_000 },
+    });
+
+    expect(markdown.indexOf('三方授信')).toBeLessThan(markdown.indexOf('集团内授信'));
+  });
+
   it('does not present an existing breach as an overall green pass', () => {
     const markdown = formatCalculation({
       status: 'success',

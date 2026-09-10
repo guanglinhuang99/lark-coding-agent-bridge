@@ -2,7 +2,9 @@
 
 The public copy redacts actual net asset values and holdings counts (`netAssets`,
 `newNetAssets`, and `holdingsCount`) to `null`. Corresponding values in narrative
-reports are marked `[REDACTED]`. Original evidence remains local.
+reports are marked `[REDACTED]`. Original evidence remains local. Harness writes that
+target this public evidence directory pass through the repository sanitizer; outputs
+outside this directory remain unchanged so private acceptance evidence stays complete.
 
 Timing observations, simulated transaction inputs, failures, and historical result
 hashes are retained. Hashes describe the original observations, not the redacted

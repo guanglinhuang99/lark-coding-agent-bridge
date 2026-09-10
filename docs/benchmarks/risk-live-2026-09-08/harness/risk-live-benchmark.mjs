@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import { runIntentChain, runCalculationOnly } from './risk-live-intent-chain.mjs';
+import { stringifyEvidenceForPath } from './public-evidence.mjs';
 const args = process.argv.slice(2);
 const opt = (key, fallback) => { const i = args.indexOf(key); return i < 0 ? fallback : args[i + 1]; };
 const collectInputFailures = args.includes('--collect-input-failures');
@@ -94,7 +95,7 @@ async function sample(v,scenario,pair,holder,fn,cacheState) {
  const row={version:v,commit:versions[v],scenario,pair,caseId:hash(anonymousCase??{scenario}).slice(0,12),utc,dataVersion,cacheState,success:false,errorCategory:null,aiCalls:0,backendRequests:null,totalMs:null,stages:{startup:null,ai:null,preparation:null,securityCandidates:null,calculation:null,queue:null,display:null},humanWaitMs:null,resultHash:null};
  try {const value=await fn(holder.c,v); if(value?.chainMetrics){const m=value.chainMetrics;row.aiCalls=m.aiCalls;row.usage=m.usage??[];row.stages.ai=m.aiMs??null;row.stages.preparation=m.preparationMs;row.stages.calculation=m.calculationMs;row.stages.display=m.displayMs;row.inputHash=m.inputHash;row.draftHash=m.draftHash;row.displayHash=m.displayHash;row.dataDate=m.dataDate;row.baselineHash=m.baselineHash;row.baselineMetricsHash=m.baselineMetricsHash;row.backendRunIdHash=m.backendRunIdHash;row.netAssets=m.netAssets;row.backendTimings=m.backendTimings;row.confirmationChecks=m.confirmationChecks;row.excludedNonBusinessPaths=m.excludedNonBusinessPaths;row.resultHash=m.businessHash;row.success=true;}else {if(!Array.isArray(value)||value.length===0)throw Error('EmptyQueryResult');row.resultHash=hash(value);row.success=true;}}catch(e){const known=['EmptyQueryResult','NormalizedInputMismatch','CalculationMissingOrRejected','CalculationNotSuccessful','UnresolvedConfirmation','CandidateSelectionUnresolved','CorrectionNeedsConfirmationState','RealAiRunError','RealAiTimeout'];row.errorCategory=e.code??(known.includes(e.message)?e.message:e.name)??'Error';if(e.chainMetrics){row.aiCalls=e.chainMetrics.aiCalls;row.usage=e.chainMetrics.usage??[];row.stages.ai=e.chainMetrics.aiMs;row.inputHash=e.chainMetrics.inputHash;row.actualInputHash=e.chainMetrics.actualInputHash;row.missingInputFields=e.chainMetrics.missingInputFields;row.dataDate=e.chainMetrics.dataDate;row.baselineHash=e.chainMetrics.baselineHash;row.baselineMetricsHash=e.chainMetrics.baselineMetricsHash;row.backendRunIdHash=e.chainMetrics.backendRunIdHash;row.netAssets=e.chainMetrics.netAssets;row.backendTimings=e.chainMetrics.backendTimings;}else if(scenario.startsWith('intent_'))row.aiCalls=null;}
  row.totalMs=performance.now()-t;row.backendRequests=holder.metrics.methods;row.stages.startup=holder.metrics.startupMs;
- rows.push(row);appendFileSync(join(out,'samples.jsonl'),JSON.stringify(row)+'\n');return row;
+ rows.push(row);const samplePath=join(out,'samples.jsonl');appendFileSync(samplePath,stringifyEvidenceForPath(samplePath,row)+'\n');return row;
 }
 const order=i=>i%2?['after','before']:['before','after'];
 async function paired(scenario,count,holders,fn,cacheState,clear=false){
@@ -157,4 +158,4 @@ for(const s of new Set([...planned,...rows.map(r=>r.scenario)])){
  const targetUsablePairs=scenarioTargets.get(s)??(collectInputFailures?N:null),collectionComplete=!collectInputFailures||usablePairs>=targetUsablePairs;
  const b=by.before.median,a=by.after.median;summary.scenarios[s]={attempts:checks.length,targetUsablePairs,usablePairs,failures:pairFailures,failureCategories,businessConsistent:checks.length>0&&checks.every(p=>p.consistent),usablePairConsistency:usablePairs>0&&checks.filter(p=>p.consistent).every(p=>p.consistent),status:by.before.n===0&&by.after.n===0?'not-run':collectionComplete?'sampled':'failed',...by,absoluteReductionMs:b!==null&&a!==null?b-a:null,reductionPercent:b&&a!==null?100*(1-a/b):null};
 }
-writeFileSync(join(out,'summary.json'),JSON.stringify(summary,null,2)+'\n');console.log(JSON.stringify(summary,null,2));
+const summaryPath=join(out,'summary.json');writeFileSync(summaryPath,stringifyEvidenceForPath(summaryPath,summary,2)+'\n');console.log(JSON.stringify(summary,null,2));

@@ -67,6 +67,7 @@ export class RiskDirectClient implements RiskService {
   private readonly timeoutMs: number;
   private readonly startupTimeoutMs: number;
   private child?: ChildProcessWithoutNullStreams;
+  private childGeneration = 0;
   private lines?: ReadLineInterface;
   private ready = false;
   private startPromise?: Promise<void>;
@@ -143,27 +144,24 @@ export class RiskDirectClient implements RiskService {
   async close(): Promise<void> {
     this.closing = true;
     this.clearLookupCache();
+    const failure = new RiskServiceError('risk-service 已关闭', 'direct-process');
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
-      pending.reject(new RiskServiceError('risk-service 已关闭', 'direct-process'));
+      pending.reject(failure);
     }
     this.pending.clear();
     this.lines?.close();
     this.lines = undefined;
     const child = this.child;
+    this.startReject?.(failure);
+    this.startResolve = undefined;
+    this.startReject = undefined;
+    this.childGeneration++;
     this.child = undefined;
     this.ready = false;
     this.startPromise = undefined;
-    if (!child || child.exitCode !== null) return;
-    child.kill('SIGTERM');
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, 2_000);
-      timer.unref();
-      child.once('exit', () => {
-        clearTimeout(timer);
-        resolve();
-      });
-    });
+    if (!isChildRunning(child)) return;
+    await terminateChild(child, 2_000, 1_000);
   }
 
   private reportStage(startedAt: number, outcome: RiskStageEvent['outcome']): void {
@@ -264,9 +262,10 @@ export class RiskDirectClient implements RiskService {
   }
 
   private async ensureStarted(): Promise<void> {
-    if (this.ready && this.child?.exitCode === null) return;
+    if (this.ready && isChildRunning(this.child)) return;
     if (this.startPromise) return await this.startPromise;
     this.closing = false;
+    const generation = ++this.childGeneration;
     this.startPromise = new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
         const failure = new RiskServiceError(
@@ -274,8 +273,8 @@ export class RiskDirectClient implements RiskService {
           'direct-start-timeout',
         );
         const child = this.child;
-        if (child && child.exitCode === null) child.kill('SIGTERM');
-        this.handleExit(failure);
+        if (isChildRunning(child)) child.kill('SIGTERM');
+        this.handleExit(failure, child, generation);
       }, this.startupTimeoutMs);
       timer.unref();
       this.startResolve = () => {
@@ -309,7 +308,7 @@ export class RiskDirectClient implements RiskService {
     this.lines.on('line', (line) => this.handleLine(line));
     const stderr = createInterface({ input: child.stderr });
     stderr.on('line', (line) => this.options.onDiagnostic?.(line));
-    child.once('error', (error) => this.handleExit(error));
+    child.once('error', (error) => this.handleExit(error, child, generation));
     child.once('exit', (code, signal) => {
       stderr.close();
       this.handleExit(
@@ -317,6 +316,8 @@ export class RiskDirectClient implements RiskService {
           `risk-service 本地进程退出：code=${code ?? ''} signal=${signal ?? ''}`,
           'direct-process',
         ),
+        child,
+        generation,
       );
     });
     return await this.startPromise;
@@ -354,7 +355,12 @@ export class RiskDirectClient implements RiskService {
     );
   }
 
-  private handleExit(error: unknown): void {
+  private handleExit(
+    error: unknown,
+    child: ChildProcessWithoutNullStreams | undefined,
+    generation: number,
+  ): void {
+    if (generation !== this.childGeneration || (child && this.child !== child)) return;
     this.clearLookupCache();
     const failure =
       error instanceof RiskServiceError
@@ -378,6 +384,54 @@ export class RiskDirectClient implements RiskService {
     }
     if (!this.closing) this.options.onDiagnostic?.(failure.message);
   }
+}
+
+function isChildRunning(
+  child: ChildProcessWithoutNullStreams | undefined,
+): child is ChildProcessWithoutNullStreams {
+  return Boolean(child && child.exitCode === null && child.signalCode == null);
+}
+
+async function terminateChild(
+  child: ChildProcessWithoutNullStreams,
+  gracefulMs: number,
+  forcedMs: number,
+): Promise<void> {
+  if (!isChildRunning(child)) return;
+  try {
+    child.kill('SIGTERM');
+  } catch {
+    return;
+  }
+  if (await waitForChildExit(child, gracefulMs)) return;
+  if (!isChildRunning(child)) return;
+  try {
+    child.kill('SIGKILL');
+  } catch {
+    return;
+  }
+  await waitForChildExit(child, forcedMs);
+}
+
+function waitForChildExit(
+  child: ChildProcessWithoutNullStreams,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (!isChildRunning(child)) return Promise.resolve(true);
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const finish = (exited: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.off('exit', onExit);
+      resolve(exited);
+    };
+    const onExit = () => finish(true);
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    timer.unref();
+    child.once('exit', onExit);
+  });
 }
 
 export class RiskServiceError extends Error {

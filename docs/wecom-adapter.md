@@ -123,7 +123,8 @@ wecom-channel-bridge
 | `WECOM_RISK_TIMEOUT_MS` | `180000` | 单次 risk-service 本地调用超时 |
 | `WECOM_RISK_STARTUP_TIMEOUT_MS` | `30000` | 常驻 Python bridge 启动后等待 `ready` 的最长时间；超时会终止卡住的进程并允许下一次调用重新启动 |
 | `WECOM_RISK_PRODUCT_CACHE_TTL_MS` | `3600000` | product-list refresh interval; a prior successful list remains usable if refresh fails |
-| `WECOM_RISK_ALLOWED_USERIDS` | — | optional comma-separated WeCom userid allowlist; empty inherits the bot's existing audience |
+| `WECOM_RISK_ALLOWED_USERIDS` | — | comma-separated WeCom userid allowlist for risk-query access control; when allowlist enforcement is enabled, an empty list locks risk-query access for everyone |
+| `USE_ALLOWED_LIST` | `1` | `1` enforces `WECOM_RISK_ALLOWED_USERIDS` fail-closed; `0` explicitly allows every user in the bot's WeCom audience to use risk queries |
 | `CODEX_BINARY` | `codex` | Codex executable path/name |
 
 When started from a project checkout, the adapter automatically loads `.env` from the current
@@ -165,6 +166,18 @@ one conversation, expire with the pending selection, and are consumed once. Expi
 receive a local retry prompt rather than falling through to Codex. A risk-looking request with
 missing parameters asks a deterministic follow-up instead of starting Codex. Messages with
 attachments and unrelated questions continue through Codex.
+
+Risk continuation state has a single owner: `RiskStateRegistry` stores pre-trade
+account/security/freeform/confirmation state, deterministic-query product/security/missing
+continuations, card callback state, and expiry markers. `WeComRiskRouter` is stateless across
+messages and returns any required continuation explicitly; product-list caching remains in
+`RiskDirectClient` rather than being duplicated in the router.
+
+The executable `src/wecom/cli.ts` keeps transport ingress, queue admission, Codex run lifecycle,
+and legacy run controls. `RiskInteractionController` owns WeCom-specific risk presentation,
+continuation/card execution, and selection delivery; `NavigationController` owns home/workspace,
+model/reasoning, and session-resume navigation. These controllers receive their dependencies
+explicitly and do not create another runtime or state owner.
 
 Every accepted text message gets an immediate standalone acknowledgement that echoes the user's
 input before queueing or calculation starts. A template-card choice receives the same treatment

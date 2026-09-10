@@ -6,6 +6,7 @@ import {dirname,join,resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {performance} from 'node:perf_hooks';
 import {runIntentChain} from './risk-live-intent-chain.mjs';
+import {stringifyEvidenceForPath} from './public-evidence.mjs';
 const arg=(k)=>process.argv[process.argv.indexOf(k)+1];
 for(const k of ['--root','--cases','--out'])if(!process.argv.includes(k))throw Error('Missing '+k);
 const root=resolve(arg('--root')),out=resolve(arg('--out')),after=join(root,'after');
@@ -31,10 +32,10 @@ try{
   try{metrics=await runIntentChain(api,client,c,{allowAI:false},join(out,'state'));}catch(e){error=e.code??e.name;metrics=e.chainMetrics??null;}
   const passed=c.expectFallback?error==='ai-fallback-required-not-executed'&&!methods.calculate_pretrade:!error;
   const row={commit,caseId:`strict-${i}`,utc,status:passed?'pass':'failed',expectedFallback:!!c.expectFallback,errorCategory:error??null,totalMs:performance.now()-t,backendRequests:methods,metrics};
-  rows.push(row);appendFileSync(join(out,'samples.jsonl'),JSON.stringify(row)+'\n');
+  rows.push(row);const samplePath=join(out,'samples.jsonl');appendFileSync(samplePath,stringifyEvidenceForPath(samplePath,row)+'\n');
   if(!passed)break;
  }
 }finally{await client.close();}
 const summary={kind:'candidate-only-live-strict-chain',aiRequests:0,complete:rows.length===config.cases.length,pass:rows.every(x=>x.status==='pass'),samples:rows.length,planned:config.cases.length,notRun:config.cases.length-rows.length,evidenceBoundary:'Real fixed candidate parser, client, confirmation registry and calculation. Expected fallback only proves handoff is required; no real AI, platform callback or before/after performance comparison.'};
-writeFileSync(join(out,'summary.json'),JSON.stringify(summary,null,2)+'\n');console.log(JSON.stringify(summary));
+const summaryPath=join(out,'summary.json');writeFileSync(summaryPath,stringifyEvidenceForPath(summaryPath,summary,2)+'\n');console.log(JSON.stringify(summary));
 if(!summary.complete||!summary.pass)process.exitCode=1;

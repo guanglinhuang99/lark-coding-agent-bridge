@@ -104,6 +104,33 @@ class DailyCacheTests(unittest.TestCase):
         pd.testing.assert_frame_equal(self.make_cache()('pqread', SQL, lower_case=False), frame)
         self.read.assert_called_once()
 
+    def test_polars_dataframe_roundtrip_preserves_schema(self):
+        try:
+            import polars as pl
+        except ImportError:
+            self.skipTest('polars unavailable')
+        frame = pl.DataFrame({
+            'amount': [Decimal('1.23'), None],
+            'qty': [1, 2],
+            'date': [date(2026, 9, 8), None],
+            'name': ['A', 'B'],
+        })
+        self.read.return_value = frame
+        self.assertTrue(self.cache('pqread', SQL, lower_case=False).equals(frame))
+        self.assertTrue(self.make_cache()('pqread', SQL, lower_case=False).equals(frame))
+        self.read.assert_called_once()
+
+    def test_legacy_polars_cache_decodes_late_non_null_columns(self):
+        try:
+            import polars as pl
+        except ImportError:
+            self.skipTest('polars unavailable')
+        rows = [{'issuer': None} for _ in range(559)] + [{'issuer': '厦门金圆投资集团有限公司'}]
+        legacy = ['polars_dataframe', bridge.DailyPQCache.encode(rows)]
+        frame = bridge.DailyPQCache.decode(legacy)
+        self.assertEqual(frame.schema['issuer'], pl.String)
+        self.assertEqual(frame[-1, 'issuer'], '厦门金圆投资集团有限公司')
+
     def test_errors_retry_and_empty_success_is_cached(self):
         self.read.side_effect = [RuntimeError('PQ unavailable'), []]
         with self.assertRaises(RuntimeError):

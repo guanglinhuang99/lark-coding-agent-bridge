@@ -22,7 +22,7 @@ describe('/授信', () => {
     const rows = pages[0]!.split('\n').filter((line) => line.startsWith('| 公司'));
     expect(rows).toHaveLength(2);
     expect(rows.every((line) => line.split('|').length === 9)).toBe(true);
-    expect(rows[0]).toBe('| 公司甲 | 10.00 | 12.00 | 0.00 | 未配置 | 0.00 | — |');
+    expect(rows[0]).toBe('| 公司甲 | 未配置 | 0.00 | — | 10.00 | 12.00 | 0.00 |');
     expect(pages[0]).toContain('2026-09-08 · 单位：万元');
     expect(pages[0]).toContain('超额占用：公司甲 · 集团内 · 2.00 万元');
   });
@@ -52,25 +52,40 @@ describe('/授信', () => {
 
   it('uses one batch request and delivers every page in order', async () => {
     const data = { date: '2026-09-08', reports: Array.from({ length: 12 }, (_, i) => report(`公司${i}`)) };
-    const service = { getCredits: vi.fn(async () => data) };
+    const service = { getCredit: vi.fn(), getCredits: vi.fn(async () => data) };
     const delivered: string[] = [];
     const finish = vi.fn(async (value: string) => { delivered.push(value); });
     const send = vi.fn(async (value: string) => { delivered.push(value); });
     await executeCreditCommand('甲、乙、甲', service, 1200, finish, send);
     expect(service.getCredits).toHaveBeenCalledOnce();
     expect(service.getCredits).toHaveBeenCalledWith(['甲', '乙']);
+    expect(service.getCredit).not.toHaveBeenCalled();
     expect(finish).toHaveBeenCalledOnce();
     expect(delivered).toEqual(formatCreditPages(data, 1200));
+  });
+
+  it('uses the single-entity bridge method and renders its report', async () => {
+    const data = { ...report('湖北集成电路产业投资基金股份有限公司'), date: '2026-09-08' };
+    const service = { getCredit: vi.fn(async () => data), getCredits: vi.fn() };
+    const finish = vi.fn(async (_value: string) => {});
+    await executeCreditCommand('湖北集成电路产业投资基金股份有限公司', service, 4000, finish, vi.fn());
+    expect(service.getCredit).toHaveBeenCalledWith('湖北集成电路产业投资基金股份有限公司');
+    expect(service.getCredits).not.toHaveBeenCalled();
+    expect(finish.mock.calls[0]![0]).toContain('| 湖北集成电路产业投资基金股份有限公司 |');
+    expect(finish.mock.calls[0]![0]).toContain('2026-09-08 · 单位：万元');
   });
 
   it('shows usage for empty input and fails closed when backend is unavailable', async () => {
     const finish = vi.fn(async (_value: string) => {});
     const send = vi.fn(async (_value: string) => {});
     await executeCreditCommand('、', undefined, 4000, finish, send);
-    expect(finish.mock.calls[0]![0]).toContain('/授信 <公司名称>');
+    expect(finish.mock.calls[0]![0]).toContain('/授信 <公司或证券名称>');
     await executeCreditCommand('甲', undefined, 4000, finish, send);
     expect(finish.mock.calls[1]![0]).toContain('服务暂不可用');
-    await executeCreditCommand('甲', { getCredits: async () => { throw new Error('secret'); } }, 4000, finish, send);
+    await executeCreditCommand('甲', {
+      getCredit: async () => { throw new Error('secret'); },
+      getCredits: async () => ({ reports: [] }),
+    }, 4000, finish, send);
     expect(finish.mock.calls[2]![0]).toContain('未将失败结果计为零');
     expect(finish.mock.calls[2]![0]).not.toContain('secret');
     expect(send).not.toHaveBeenCalled();
