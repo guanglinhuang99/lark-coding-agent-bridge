@@ -475,6 +475,29 @@ describe('CodexAdapter process contract', () => {
     );
   });
 
+  it('finishes a completed one-shot process without reclassifying it as interrupted', async () => {
+    const fake = await createFakeCodex({
+      lines: [{ type: 'turn.completed' }],
+      exitDelayMs: 5_000,
+    });
+    cleanup.push(fake.dir);
+
+    const run = new CodexAdapter({ binary: fake.path, profileStateDir: fake.dir }).run({
+      runId: 'run-finish',
+      prompt: 'finish',
+      cwd: await realpath(fake.dir),
+    });
+    const iterator = run.events[Symbol.asyncIterator]();
+
+    expect(await iterator.next()).toEqual({
+      done: false,
+      value: { type: 'done', terminationReason: 'normal' },
+    });
+    await run.finish?.();
+    expect(await run.waitForExit(1_000)).toBe(true);
+    await iterator.return?.();
+  });
+
   it('reports interrupted termination when stopped before a Codex terminal event', async () => {
     const fake = await createFakeCodex({
       lines: [{ type: 'thread.started', thread_id: 'thread-stop' }],

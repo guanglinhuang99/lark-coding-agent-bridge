@@ -167,6 +167,11 @@ export class CodexAdapter implements AgentAdapter {
     return {
       runId: opts.runId,
       events: createEventStream(child, stderrChunks, () => runtimeError, () => stopReason),
+      async finish() {
+        if (child.exitCode !== null || child.signalCode !== null) return;
+        log.info('agent', 'finish-sigterm', { pid: child.pid ?? null });
+        child.kill('SIGTERM');
+      },
       async stop() {
         if (child.exitCode !== null || child.signalCode !== null) return;
         stopReason = 'interrupted';

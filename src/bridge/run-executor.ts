@@ -140,6 +140,9 @@ export class RunExecutor {
       cleanupPromise = (async () => {
         try {
           if (waitForExit) {
+            if (terminal?.type === 'done' && terminal.terminationReason === 'normal') {
+              await run.finish?.();
+            }
             const exited = await run.waitForExit(this.postDoneExitGraceMs);
             if (!exited) {
               log.warn('run', 'post-done-exit-timeout', { ...dimensions, graceMs: this.postDoneExitGraceMs });

@@ -52,6 +52,12 @@ export interface AgentRunOptions {
 export interface AgentRun {
   readonly runId: string;
   readonly events: AsyncIterable<AgentEvent>;
+  /**
+   * Optional normal-completion cleanup invoked after a terminal event has
+   * already classified the run. Implementations may terminate a one-shot
+   * child process here without changing the run result to interrupted.
+   */
+  finish?(): Promise<void>;
   stop(): Promise<void>;
   /**
    * Wait up to `timeoutMs` for the agent process to exit on its own.

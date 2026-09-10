@@ -277,6 +277,35 @@ describe('RunExecutor', () => {
     expect(observedTimeouts).toEqual([5_000]);
   });
 
+  it('invokes normal finish before waiting after a successful terminal event', async () => {
+    const calls: string[] = [];
+    const agent: AgentAdapter = {
+      id: 'finish-probe',
+      displayName: 'Finish Probe',
+      async isAvailable() { return true; },
+      run(opts) {
+        return {
+          runId: opts.runId,
+          events: (async function* () {
+            yield { type: 'done' as const, terminationReason: 'normal' as const };
+          })(),
+          async finish() { calls.push('finish'); },
+          async stop() { calls.push('stop'); },
+          async waitForExit() { calls.push('wait'); return true; },
+        };
+      },
+    };
+    const h = await createHarness({ agent });
+    const execution = await h.executor.submit({
+      scopeId: 'scope-finish',
+      policy: policy(h.tmp.workspace),
+    });
+
+    await collect(execution.subscribe());
+
+    expect(calls).toEqual(['finish', 'wait']);
+  });
+
   it('stops the underlying process when it does not exit after a terminal event', async () => {
     const h = await createHarness({
       events: [{ type: 'done', terminationReason: 'normal' }],
