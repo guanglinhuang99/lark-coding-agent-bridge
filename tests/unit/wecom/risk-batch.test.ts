@@ -3,6 +3,7 @@ import type { RiskSecuritySuggestion, RiskService } from '../../../src/wecom/ris
 import { WeComRiskRouter } from '../../../src/wecom/risk/router';
 import {
   applySimpleRiskCorrection,
+  confirmationSummary,
   confirmedRiskAmount,
   mergeRiskIntentDraft,
   normalizeRiskDraft,
@@ -14,6 +15,8 @@ import {
 } from '../../../src/wecom/risk/intent';
 
 const product = '安联ESG纯债1号资产管理产品';
+const esg1Product = '安联资产ESG1号资产管理产品';
+const secondProduct = '安联全享多利6号资产管理产品';
 const securities: Record<string, RiskSecuritySuggestion> = {
   '102583394.IB': {
     name: '25深圳特发MTN003',
@@ -656,6 +659,179 @@ describe('batch router confirmation', () => {
       { action: 'subscription', market: 'primary' },
       { action: 'buy', market: 'secondary' },
     ]);
+  });
+});
+
+describe('multi-account pretrade batches', () => {
+  const text = [
+    '测算',
+    'ESG1号拟投资26粤铁建MTN005 4000万、26中银金租债03BC 4000w',
+    '全享多利6号拟投资26粤铁建MTN005 1000万、26中银金租债03BC 1000w',
+  ].join('\n');
+  const yue = { name: '26粤铁建MTN005', code: '102683578.IB', label: '26粤铁建MTN005 102683578.IB' };
+  const yueOther = { name: '26粤铁建MTN005', code: '102683579.IB', label: '26粤铁建MTN005 102683579.IB' };
+  const boc = { name: '26中银金租债03BC', code: '262680003.IB', label: '26中银金租债03BC 262680003.IB' };
+
+  function parsedDraft(): RiskAiDraft {
+    return parseRiskIntentOutputPartial(JSON.stringify({
+      accounts: [
+        {
+          account_query: 'ESG1号',
+          transactions: [
+            { action: 'buy', security_query: yue.name, amount_text: '4000万', source_text: text.split('\n')[1] },
+            { action: 'buy', security_query: boc.name, amount_text: '4000w', source_text: text.split('\n')[1] },
+          ],
+        },
+        {
+          account_query: '全享多利6号',
+          transactions: [
+            { action: 'buy', security_query: yue.name, amount_text: '1000万', source_text: text.split('\n')[2] },
+            { action: 'buy', security_query: boc.name, amount_text: '1000w', source_text: text.split('\n')[2] },
+          ],
+        },
+      ],
+    }), text);
+  }
+
+  it('parses two accounts with two transactions each in source order', () => {
+    const draft = parsedDraft();
+    expect(draft.accounts?.map(account => ({
+      account: account.accountQuery,
+      amounts: account.transactions.map(transaction => transaction.amountText),
+    }))).toEqual([
+      { account: 'ESG1号', amounts: ['4000万', '4000w'] },
+      { account: '全享多利6号', amounts: ['1000万', '1000w'] },
+    ]);
+  });
+
+  it('uses the deterministic path for the two-account line format without AI', async () => {
+    const traditionalText = text.replaceAll('粤', '粵');
+    const analyze = vi.fn(async () => parsedDraft());
+    const service = fakeService({
+      listProducts: vi.fn(async () => [esg1Product, secondProduct]),
+      searchSecurities: vi.fn(async (query: string) => query.includes('粤') || query.includes('粵') ? [yue] : [boc]),
+    });
+
+    const state = await resolveInitialRiskIntent(traditionalText, service, analyze);
+
+    expect(analyze).not.toHaveBeenCalled();
+    expect(state).toMatchObject({
+      stage: 'confirm',
+      draft: { accounts: [
+        { resolvedProduct: esg1Product, transactions: [{ amountText: '4000万' }, { amountText: '4000w' }] },
+        { resolvedProduct: secondProduct, transactions: [{ amountText: '1000万' }, { amountText: '1000w' }] },
+      ] },
+    });
+  });
+
+  it('rejects a model result that collapses multiple account blocks', async () => {
+    const aiText = `请协助核对以下交易\n${text}`;
+    const collapsed: RiskAiDraft = {
+      accountQuery: 'ESG1号', market: 'secondary',
+      transactions: parsedDraft().accounts![0]!.transactions,
+    };
+    const service = fakeService({ listProducts: vi.fn(async () => [esg1Product, secondProduct]) });
+
+    await expect(resolveInitialRiskIntent(aiText, service, async () => collapsed))
+      .rejects.toThrow('多账户交易清单未完整识别');
+  });
+
+  it('requires an account index for corrections and changes only the targeted account', () => {
+    const previous = parsedDraft();
+    expect(() => mergeRiskIntentDraft(previous, previous, '第1笔金额改为2000万'))
+      .toThrow('请指定账户');
+
+    const merged = mergeRiskIntentDraft(previous, previous, '第2个账户 第1笔金额改为2000万');
+
+    expect(merged.accounts?.[0]?.transactions.map(item => item.amountText)).toEqual(['4000万', '4000w']);
+    expect(merged.accounts?.[1]?.transactions.map(item => item.amountText)).toEqual(['2000万', '1000w']);
+  });
+
+  it('advances a security-disambiguation cursor across accounts', async () => {
+    const service = fakeService({
+      listProducts: vi.fn(async () => [esg1Product, secondProduct]),
+      searchSecurities: vi.fn(async (query: string) => query === yue.name ? [yue, yueOther] : [boc]),
+    });
+    const first = await normalizeRiskDraft(text, parsedDraft(), service);
+    expect(first).toMatchObject({ stage: 'security', accountIndex: 0, transactionIndex: 0, product: esg1Product });
+    if (first.stage !== 'security') throw new Error('expected first security selection');
+    const second = await selectRiskIntentSecurity(first, yue, service);
+    expect(second).toMatchObject({ stage: 'security', accountIndex: 1, transactionIndex: 0, product: secondProduct });
+    if (second.stage !== 'security') throw new Error('expected second security selection');
+    const confirmed = await selectRiskIntentSecurity(second, yue, service);
+    expect(confirmed).toMatchObject({
+      stage: 'confirm',
+      draft: { accounts: [
+        { resolvedProduct: esg1Product, transactions: [{ resolvedSecurity: { code: yue.code } }, { resolvedSecurity: { code: boc.code } }] },
+        { resolvedProduct: secondProduct, transactions: [{ resolvedSecurity: { code: yue.code } }, { resolvedSecurity: { code: boc.code } }] },
+      ] },
+    });
+  });
+
+  it('validates globally, then calculates each account once with its own two actions', async () => {
+    const calculatePretrade = vi.fn(async (selectedProduct: string) => ({
+      ...successfulCalculation(), product: selectedProduct,
+    }));
+    const service = fakeService({
+      listProducts: vi.fn(async () => [esg1Product, secondProduct]),
+      searchSecurities: vi.fn(async (query: string) => query === yue.name ? [yue] : [boc]),
+      calculatePretrade,
+    });
+    const state = await normalizeRiskDraft(text, parsedDraft(), service);
+    expect(state.stage).toBe('confirm');
+    if (state.stage !== 'confirm') throw new Error('expected confirmation');
+    expect(confirmationSummary(state)).toContain('多个账户、共4笔；按账户分别测算');
+
+    const result = await new WeComRiskRouter(service).executeConfirmed(state);
+
+    expect(result).toMatchObject({ handled: true, intent: 'pretrade_calc' });
+    expect(calculatePretrade).toHaveBeenCalledTimes(2);
+    expect(calculatePretrade).toHaveBeenNthCalledWith(1, esg1Product, [
+      { type: 'buy', market: 'secondary', amount: 0.4, security_name: yue.code },
+      { type: 'buy', market: 'secondary', amount: 0.4, security_name: boc.code },
+    ], undefined);
+    expect(calculatePretrade).toHaveBeenNthCalledWith(2, secondProduct, [
+      { type: 'buy', market: 'secondary', amount: 0.1, security_name: yue.code },
+      { type: 'buy', market: 'secondary', amount: 0.1, security_name: boc.code },
+    ], undefined);
+  });
+
+  it('continues with later accounts when one account returns a failed result', async () => {
+    const calculatePretrade = vi.fn(async (selectedProduct: string) => selectedProduct === esg1Product
+      ? { status: 'error', error: 'first account failed' }
+      : { ...successfulCalculation(), product: selectedProduct });
+    const service = fakeService({
+      listProducts: vi.fn(async () => [esg1Product, secondProduct]),
+      searchSecurities: vi.fn(async (query: string) => query === yue.name ? [yue] : [boc]),
+      calculatePretrade,
+    });
+    const state = await normalizeRiskDraft(text, parsedDraft(), service);
+    if (state.stage !== 'confirm') throw new Error('expected confirmation');
+
+    const result = await new WeComRiskRouter(service).executeConfirmed(state);
+
+    expect(calculatePretrade).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ handled: true, intent: 'pretrade_calc' });
+    if (!result.handled) throw new Error('expected handled result');
+    expect(result.markdown).toContain('1个成功，1个失败');
+    expect(result.markdown).toContain(`账户2：${secondProduct}`);
+  });
+
+  it('submits no account when validation fails in a later account', async () => {
+    const calculatePretrade = vi.fn(async () => successfulCalculation());
+    const service = fakeService({
+      listProducts: vi.fn(async () => [esg1Product, secondProduct]),
+      searchSecurities: vi.fn(async (query: string) => query === yue.name ? [yue] : [boc]),
+      calculatePretrade,
+    });
+    const state = await normalizeRiskDraft(text, parsedDraft(), service);
+    if (state.stage !== 'confirm' || !state.draft.accounts) throw new Error('expected confirmation');
+    state.draft.accounts[1]!.transactions[1]!.amountText = '金额待定';
+
+    const result = await new WeComRiskRouter(service).executeConfirmed(state);
+
+    expect(result).toMatchObject({ handled: true, intent: 'risk-error' });
+    expect(calculatePretrade).not.toHaveBeenCalled();
   });
 });
 

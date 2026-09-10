@@ -38,7 +38,7 @@ function setup() {
     }
   });
   mocks.spawn.mockImplementation(() => { queueMicrotask(() => child.stdout.write('{"type":"ready"}\n')); return child; });
-  const service = new RiskDirectClient({ pythonPath: '/fixture/python', serviceDir: '/fixture/service', stateDir: '/fixture/state', bridgePath: '/fixture/bridge' });
+  const service = new RiskDirectClient({ pythonPath: '/fixture/python', serviceDir: '/fixture/service', stateDir: '/fixture/state', bridgePath: '/fixture/bridge', intranetProbe: async () => true });
   return { service, counts };
 }
 it.skipIf(!process.env.RISK_BENCHMARK)('records controlled bridge benchmark (not live AI/database)', async () => {

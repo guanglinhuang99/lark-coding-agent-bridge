@@ -57,6 +57,7 @@ function client(
     timeoutMs: options.timeoutMs,
     startupTimeoutMs: options.startupTimeoutMs,
     onStage: options.onStage,
+    intranetProbe: async () => true,
   });
 }
 
@@ -309,6 +310,7 @@ describe('shared lookup cache and admission', () => {
     const service = new RiskDirectClient({
       pythonPath: '/test/python', serviceDir: '/test/service', stateDir: '/test/state',
       bridgePath: '/test/bridge', productCacheTtlMs: 100,
+      intranetProbe: async () => true,
     });
     try {
       const [a, b] = await Promise.all([service.listProducts(), service.listProducts()]);
@@ -350,11 +352,47 @@ describe('shared lookup cache and admission', () => {
     const service = new RiskDirectClient({
       pythonPath: '/test/python', serviceDir: '/test/service', stateDir: '/test/state',
       bridgePath: '/test/bridge', maxPendingCalls: 1,
+      intranetProbe: async () => true,
     });
     const first = service.getHoldings('产品A').catch(error => error);
     await new Promise(resolve => setImmediate(resolve));
     await expect(service.getHoldings('产品B')).rejects.toMatchObject({ code: 'direct-capacity' });
     await service.close();
     expect(await first).toMatchObject({ code: 'direct-process' });
+  });
+});
+
+describe('intranet availability gate', () => {
+  it('fails before starting the Python bridge when 10.8.11.57 is unavailable', async () => {
+    const intranetProbe = vi.fn(async () => false);
+    const service = new RiskDirectClient({
+      pythonPath: '/test/python', serviceDir: '/test/service', stateDir: '/test/state',
+      bridgePath: '/test/bridge', intranetProbe,
+    });
+
+    await expect(service.listProducts()).rejects.toMatchObject({
+      code: 'intranet-unavailable',
+    });
+    expect(intranetProbe).toHaveBeenCalledWith('10.8.11.57', 80, 1_500);
+    expect(childProcessMocks.spawn).not.toHaveBeenCalled();
+    await service.close();
+  });
+
+  it('checks connectivity before serving cached master data', async () => {
+    let available = true;
+    const intranetProbe = vi.fn(async () => available);
+    installBridge((request, child) => {
+      child.stdout.write(JSON.stringify({ id: request.id, type: 'result', data: { products: ['产品A'] } }) + '\n');
+    });
+    const service = new RiskDirectClient({
+      pythonPath: '/test/python', serviceDir: '/test/service', stateDir: '/test/state',
+      bridgePath: '/test/bridge', productCacheTtlMs: 60_000, intranetCacheTtlMs: 0, intranetProbe,
+    });
+
+    await expect(service.listProducts()).resolves.toEqual(['产品A']);
+    available = false;
+    await expect(service.listProducts()).rejects.toMatchObject({ code: 'intranet-unavailable' });
+    expect(intranetProbe).toHaveBeenCalledTimes(2);
+    await service.close();
   });
 });

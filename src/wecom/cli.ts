@@ -291,6 +291,9 @@ const riskStartupTimeoutMs = readPositiveInt(
   30_000,
 );
 const riskDirectWorkers = readPositiveInt(process.env.WECOM_RISK_DIRECT_WORKERS, 4);
+const riskIntranetHost = process.env.WECOM_RISK_INTRANET_HOST?.trim() || '10.8.11.57';
+const riskIntranetPort = readPositiveInt(process.env.WECOM_RISK_INTRANET_PORT, 80);
+const riskIntranetTimeoutMs = readPositiveInt(process.env.WECOM_RISK_INTRANET_TIMEOUT_MS, 1_500);
 const riskProductCacheTtlMs = readPositiveInt(
   process.env.WECOM_RISK_PRODUCT_CACHE_TTL_MS,
   60 * 60_000,
@@ -401,6 +404,9 @@ const riskClient = riskDirectEnabled
       timeoutMs: riskTimeoutMs,
       startupTimeoutMs: riskStartupTimeoutMs,
       workers: riskDirectWorkers,
+      intranetHost: riskIntranetHost,
+      intranetPort: riskIntranetPort,
+      intranetTimeoutMs: riskIntranetTimeoutMs,
       productCacheTtlMs: riskProductCacheTtlMs,
       onCall: ({ method, durationMs, outcome }) => {
         log.info('wecom-risk-call', 'completed', { method, durationMs, outcome });
@@ -1139,7 +1145,7 @@ async function executeConversationMessage(
                   : pendingIntent.draft.market;
               const normalized = await normalizeRiskDraft(
                 pendingIntent.originalText,
-                pendingIntent.draft.transactions
+                pendingIntent.draft.accounts || pendingIntent.draft.transactions
                   ? mergeRiskIntentDraft(pendingIntent.draft, revised, text)
                   : { ...revised, market },
                 riskClient,

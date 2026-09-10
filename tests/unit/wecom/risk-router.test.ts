@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { RiskSecuritySuggestion, RiskService } from '../../../src/wecom/risk/client';
+import { RiskServiceError, type RiskSecuritySuggestion, type RiskService } from '../../../src/wecom/risk/client';
 import { WeComRiskRouter } from '../../../src/wecom/risk/router';
 
 describe('WeCom stateless risk query router', () => {
@@ -182,6 +182,26 @@ describe('WeCom stateless risk query router', () => {
       expect(result.markdown).toContain('风险查询失败');
       expect(result.markdown).not.toContain('/private/backend');
     }
+  });
+
+  it('returns an explicit intranet message when the connectivity gate fails', async () => {
+    const searchSecurities = vi.fn(async () => []);
+    const router = new WeComRiskRouter(fakeService({
+      listProducts: async () => {
+        throw new RiskServiceError('cannot connect 10.8.11.57:80', 'intranet-unavailable');
+      },
+      searchSecurities,
+    }));
+
+    const result = await router.handle('single:offline', '安联ESG纯债1号持仓');
+
+    expect(result).toMatchObject({ handled: true, intent: 'risk-error' });
+    if (result.handled) {
+      expect(result.markdown).toContain('内网数据不可得');
+      expect(result.markdown).toContain('本次未查询 JYDB/PQ');
+      expect(result.markdown).not.toContain('10.8.11.57:80');
+    }
+    expect(searchSecurities).not.toHaveBeenCalled();
   });
 });
 

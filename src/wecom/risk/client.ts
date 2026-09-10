@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { createConnection } from 'node:net';
 import { createInterface, type Interface as ReadLineInterface } from 'node:readline';
 import type { RiskActionType } from './parser';
 
@@ -47,6 +48,11 @@ export interface RiskDirectClientOptions {
   productCacheTtlMs?: number;
   securityCacheTtlMs?: number;
   maxPendingCalls?: number;
+  intranetHost?: string;
+  intranetPort?: number;
+  intranetTimeoutMs?: number;
+  intranetCacheTtlMs?: number;
+  intranetProbe?: (host: string, port: number, timeoutMs: number) => Promise<boolean>;
   onCall?: (event: { method: string; durationMs: number; outcome: 'success' | 'error' | 'cache' | 'joined' }) => void;
 }
 
@@ -77,6 +83,8 @@ export class RiskDirectClient implements RiskService {
   private readonly pending = new Map<string, PendingCall>();
   private readonly cache = new Map<string, { expiresAt: number; value: Record<string, unknown> }>();
   private readonly lookups = new Map<string, Promise<Record<string, unknown>>>();
+  private intranetProbePromise?: Promise<void>;
+  private intranetAvailableUntil = 0;
   private cacheEpoch = 0;
 
   constructor(private readonly options: RiskDirectClientOptions) {
@@ -188,6 +196,7 @@ export class RiskDirectClient implements RiskService {
   }
 
   private async lookup(method: string, args: Record<string, unknown>, ttlMs: number): Promise<Record<string, unknown>> {
+    await this.ensureIntranetAvailable();
     const key = JSON.stringify([method, args]);
     const cached = this.cache.get(key);
     if (cached && cached.expiresAt > Date.now()) {
@@ -204,7 +213,7 @@ export class RiskDirectClient implements RiskService {
       throw new RiskServiceError('risk-service 当前查询较多', 'direct-capacity');
     }
     const epoch = this.cacheEpoch;
-    const promise = this.call(method, args);
+    const promise = this.call(method, args, undefined, this.timeoutMs, true);
     this.lookups.set(key, promise);
     try {
       const value = await promise;
@@ -225,8 +234,10 @@ export class RiskDirectClient implements RiskService {
     args: Record<string, unknown>,
     onProgress?: (message: string) => void,
     timeoutMs = this.timeoutMs,
+    intranetChecked = false,
   ): Promise<Record<string, unknown>> {
     const startedAt = Date.now();
+    if (!intranetChecked) await this.ensureIntranetAvailable();
     await this.ensureStarted();
     if (this.pending.size >= (this.options.maxPendingCalls ?? 32)) {
       throw new RiskServiceError('risk-service 当前任务较多', 'direct-capacity');
@@ -259,6 +270,37 @@ export class RiskDirectClient implements RiskService {
         pending.reject(new RiskServiceError(error.message, 'direct-process'));
       });
     });
+  }
+
+  private async ensureIntranetAvailable(): Promise<void> {
+    if (this.intranetAvailableUntil > Date.now()) return;
+    if (this.intranetProbePromise) return await this.intranetProbePromise;
+    const host = this.options.intranetHost ?? '10.8.11.57';
+    const port = this.options.intranetPort ?? 80;
+    const timeoutMs = this.options.intranetTimeoutMs ?? 1_500;
+    const probe = this.options.intranetProbe ?? probeTcpConnection;
+    const pending = (async () => {
+      let available = false;
+      try {
+        available = await probe(host, port, timeoutMs);
+      } catch {
+        available = false;
+      }
+      if (!available) {
+        this.intranetAvailableUntil = 0;
+        throw new RiskServiceError(
+          `公司内网不可用：无法连接 ${host}:${port}`,
+          'intranet-unavailable',
+        );
+      }
+      this.intranetAvailableUntil = Date.now() + (this.options.intranetCacheTtlMs ?? 0);
+    })();
+    this.intranetProbePromise = pending;
+    try {
+      await pending;
+    } finally {
+      if (this.intranetProbePromise === pending) this.intranetProbePromise = undefined;
+    }
   }
 
   private async ensureStarted(): Promise<void> {
@@ -384,6 +426,23 @@ export class RiskDirectClient implements RiskService {
     }
     if (!this.closing) this.options.onDiagnostic?.(failure.message);
   }
+}
+
+function probeTcpConnection(host: string, port: number, timeoutMs: number): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const socket = createConnection({ host, port });
+    let settled = false;
+    const finish = (available: boolean) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(available);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => finish(true));
+    socket.once('timeout', () => finish(false));
+    socket.once('error', () => finish(false));
+  });
 }
 
 function isChildRunning(

@@ -219,49 +219,80 @@ export class WeComRiskRouter {
     onProgress?: (progress: string) => void,
   ): Promise<RiskRouteResult> {
     try {
-      const transactions = state.draft.transactions ?? [{ ...state.draft, resolvedSecurity: state.security }];
-      if (!state.product || !transactions.length) {
+      const accounts = state.draft.accounts?.map(account => ({
+        product: account.resolvedProduct ?? '',
+        transactions: account.transactions,
+      })) ?? [{
+        product: state.product,
+        transactions: state.draft.transactions ?? [{ ...state.draft, resolvedSecurity: state.security }],
+      }];
+      if (!accounts.length || accounts.some(account => !account.product || !account.transactions.length)) {
         throw new RiskServiceError('交易信息尚未核验', 'unresolved-transaction');
       }
-      // Validate every leg before submitting anything: a batch is one scenario.
-      const notes: string[] = [];
-      const actions: RiskPretradeAction[] = transactions.map((draft, index) => {
-        const amount = confirmedRiskAmount(draft.amountText ?? '');
-        if (!amount) throw new RiskServiceError(`第${index + 1}笔交易规模无效`, 'invalid-amount');
-        if (draft.days !== undefined && (!Number.isSafeInteger(draft.days) || draft.days <= 0)) {
-          throw new RiskServiceError('期限无效', 'invalid-days');
-        }
-        const type = draft.action;
-        if (!type || !['buy', 'sell', 'subscription', 'redemption', 'repo', 'reverse_repo'].includes(type)) {
-          throw new RiskServiceError('交易信息尚未核验', 'unresolved-transaction');
-        }
-        const needsSecurity =
-          type === 'buy' || type === 'sell' || (type === 'subscription' && draft.market === 'primary');
-        if (needsSecurity && !draft.resolvedSecurity?.code) {
-          throw new RiskServiceError('交易信息尚未核验', 'unresolved-transaction');
-        }
-        const action: RiskPretradeAction = { type, market: draft.market };
-        if (needsSecurity) action.security_name = draft.resolvedSecurity!.code;
-        if (type === 'repo' || type === 'reverse_repo') {
-          if (amount.quantity !== undefined) throw new RiskServiceError('回购需要金额', 'invalid-amount');
-          action.amount = amount.amount;
-          if (draft.days !== undefined) action.days = draft.days;
-        } else if (amount.quantity !== undefined) {
-          if (type === 'buy' || type === 'sell') action.quantity = amount.quantity;
-          else action.shares = amount.quantity;
-        } else {
-          action.amount = amount.amount;
-        }
-        notes.push(`${state.draft.transactions ? `第${index + 1}笔：` : ''}${amount.note}`);
-        return action;
+      // Validate every account and leg before submitting anything.
+      const prepared = accounts.map((account, accountIndex) => {
+        const notes: string[] = [];
+        const actions = account.transactions.map((draft, index) => {
+          const amount = confirmedRiskAmount(draft.amountText ?? '');
+          const prefix = state.draft.accounts ? `第${accountIndex + 1}个账户第${index + 1}笔` : `第${index + 1}笔`;
+          if (!amount) throw new RiskServiceError(`${prefix}交易规模无效`, 'invalid-amount');
+          if (draft.days !== undefined && (!Number.isSafeInteger(draft.days) || draft.days <= 0)) {
+            throw new RiskServiceError('期限无效', 'invalid-days');
+          }
+          const type = draft.action;
+          if (!type || !['buy', 'sell', 'subscription', 'redemption', 'repo', 'reverse_repo'].includes(type)) {
+            throw new RiskServiceError('交易信息尚未核验', 'unresolved-transaction');
+          }
+          const needsSecurity =
+            type === 'buy' || type === 'sell' || (type === 'subscription' && draft.market === 'primary');
+          if (needsSecurity && !draft.resolvedSecurity?.code) {
+            throw new RiskServiceError('交易信息尚未核验', 'unresolved-transaction');
+          }
+          const action: RiskPretradeAction = { type, market: draft.market };
+          if (needsSecurity) action.security_name = draft.resolvedSecurity!.code;
+          if (type === 'repo' || type === 'reverse_repo') {
+            if (amount.quantity !== undefined) throw new RiskServiceError('回购需要金额', 'invalid-amount');
+            action.amount = amount.amount;
+            if (draft.days !== undefined) action.days = draft.days;
+          } else if (amount.quantity !== undefined) {
+            if (type === 'buy' || type === 'sell') action.quantity = amount.quantity;
+            else action.shares = amount.quantity;
+          } else {
+            action.amount = amount.amount;
+          }
+          notes.push(`${account.transactions.length > 1 ? `第${index + 1}笔：` : ''}${amount.note}`);
+          return action;
+        });
+        return { ...account, notes, actions };
       });
       await onProgress?.('正在提交投前测算…');
-      const result = await this.service.calculatePretrade(
-        state.product,
-        state.draft.transactions ? actions : actions[0]!,
-        onProgress,
-      );
-      return handled('pretrade_calc', formatCalculation(result, notes.join('；'), actions.length));
+      if (!state.draft.accounts) {
+        const item = prepared[0]!;
+        const result = await this.service.calculatePretrade(
+          item.product,
+          state.draft.transactions ? item.actions : item.actions[0]!,
+          onProgress,
+        );
+        return handled('pretrade_calc', formatCalculation(result, item.notes.join('；'), item.actions.length));
+      }
+      const sections: string[] = [];
+      let failures = 0;
+      for (let index = 0; index < prepared.length; index++) {
+        const item = prepared[index]!;
+        await onProgress?.(`正在测算第${index + 1}/${prepared.length}个账户：${item.product}…`);
+        try {
+          const result = await this.service.calculatePretrade(item.product, item.actions, onProgress);
+          if (result.status === 'error') failures += 1;
+          sections.push(`## 账户${index + 1}：${item.product}\n\n${formatCalculation(result, item.notes.join('；'), item.actions.length)}`);
+        } catch (error) {
+          failures += 1;
+          sections.push(`## 账户${index + 1}：${item.product}\n\n${formatRiskError(error)}`);
+        }
+      }
+      const summary = failures
+        ? `多个账户测算已完成：${prepared.length - failures}个成功，${failures}个失败；失败账户未影响其他账户继续测算。`
+        : `多个账户测算已完成：${prepared.length}个账户均已返回结果。`;
+      return handled('pretrade_calc', `${summary}\n\n${sections.join('\n\n---\n\n')}`);
     } catch (error) {
       return handled('risk-error', formatRiskError(error));
     }
@@ -526,6 +557,9 @@ function formatRiskError(error: unknown): string {
     }
     if (error.code === 'unresolved-transaction') {
       return '⚠️ **交易信息尚未核验**：请重新确认账户、证券和交易信息；本次未执行测算。';
+    }
+    if (error.code === 'intranet-unavailable') {
+      return '⚠️ **内网数据不可得**：当前无法连接公司内网，请先连接内网后重试；本次未查询 JYDB/PQ。';
     }
     return '⚠️ **风险查询失败**：暂时无法完成查询，请稍后重试。';
   }

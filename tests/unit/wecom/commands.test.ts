@@ -13,6 +13,10 @@ describe('WeCom command gate', () => {
       kind: 'risk-measurement',
       payload: '安联ESG纯债1号 买入 0.1亿元 019115.SH',
     });
+    expect(parseWeComCommand('测算\nESG1号拟投资26粤铁建MTN005 4000万')).toEqual({
+      kind: 'risk-measurement',
+      payload: 'ESG1号拟投资26粤铁建MTN005 4000万',
+    });
   });
 
   it('recognizes an empty risk command without treating it as a flow entry', () => {

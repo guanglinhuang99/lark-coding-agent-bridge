@@ -39,7 +39,7 @@ export function parseWeComCommand(text: string): WeComCommand {
   if (value.toLowerCase() === '/help') return { kind: 'help' };
   const creditMatch = /^\/授信(?:\s+([\s\S]*))?$/u.exec(value);
   if (creditMatch) return { kind: 'credit-query', payload: creditMatch[1]?.trim() ?? '' };
-  const riskMatch = /^\/测算(?:\s+([\s\S]*))?$/u.exec(value);
+  const riskMatch = /^\/?测算(?:\s+([\s\S]*))?$/u.exec(value);
   if (!riskMatch) return { kind: 'other' };
   return { kind: 'risk-measurement', payload: riskMatch[1]?.trim() ?? '' };
 }

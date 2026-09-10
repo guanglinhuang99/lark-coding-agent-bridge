@@ -36,6 +36,7 @@ import {
 import {
   buildIntentSelection,
   confirmationSummary,
+  normalizeRiskDraft,
   normalizeSecurity,
   selectRiskIntentSecurity,
   type RiskIntentState,
@@ -148,7 +149,7 @@ export class RiskInteractionController {
       return;
     }
     const selection = buildIntentSelection(state, Date.now() + 5 * 60_000);
-    if (state.stage === 'confirm' && state.draft.transactions) {
+    if (state.stage === 'confirm' && (state.draft.accounts || state.draft.transactions)) {
       const details = confirmationSummary(state);
       const chunks: string[] = [];
       let chunk = '';
@@ -168,10 +169,14 @@ export class RiskInteractionController {
       }
       if (chunk) chunks.push(chunk);
       await stream.finish(renderWeComNotice('请确认全部交易', [
-        `共${state.draft.transactions.length}笔，请核对下方全部明细后确认合并测算。`,
+        state.draft.accounts
+          ? `多个账户、共${state.draft.accounts.reduce((sum, account) => sum + account.transactions.length, 0)}笔；请核对后按账户分别测算。`
+          : `共${state.draft.transactions!.length}笔，请核对下方全部明细后确认合并测算。`,
       ]));
       for (const detail of chunks) await this.sendRiskMarkdown(body, detail);
-      selection.subTitle = `账户：${state.product}；共${state.draft.transactions.length}笔。请核对上方全部交易明细。`;
+      selection.subTitle = state.draft.accounts
+        ? `多个账户、共${state.draft.accounts.reduce((sum, account) => sum + account.transactions.length, 0)}笔；按账户分别测算。`
+        : `账户：${state.product}；共${state.draft.transactions!.length}笔。请核对上方全部交易明细。`;
     } else {
       await stream.finish(
         truncateUtf8(
@@ -205,20 +210,29 @@ export class RiskInteractionController {
         value === '__other_account__'
           ? {
               stage: 'freeform',
+              accountIndex: state.accountIndex,
               originalText: state.originalText,
               draft: state.draft,
               field: 'account',
             }
-          : await normalizeSecurity(
-              state.originalText,
-              { ...state.draft, accountQuery: value },
-              value,
-              riskClient,
-            );
+          : state.draft.accounts && state.accountIndex !== undefined
+            ? await normalizeRiskDraft(state.originalText, {
+                ...state.draft,
+                accounts: state.draft.accounts.map((account, index) => index === state.accountIndex
+                  ? { ...account, accountQuery: value, resolvedProduct: value }
+                  : account),
+              }, riskClient)
+            : await normalizeSecurity(
+                state.originalText,
+                { ...state.draft, accountQuery: value },
+                value,
+                riskClient,
+              );
     } else if (state.stage === 'security') {
       if (value === '__other_security__') {
         next = {
           stage: 'freeform',
+          accountIndex: state.accountIndex,
           transactionIndex: state.transactionIndex,
           originalText: state.originalText,
           draft: state.draft,
@@ -270,6 +284,7 @@ export class RiskInteractionController {
                 : 'other';
       next = {
         stage: 'freeform',
+        accountIndex: state.accountIndex,
         originalText: state.originalText,
         draft: state.draft,
         field,
@@ -614,7 +629,12 @@ export function isRiskIntentConfirmation(text: string): boolean {
 export function riskIntentInputPrompt(
   state: Extract<RiskIntentState, { stage: 'freeform' }>,
 ): string {
-  const prefix = state.transactionIndex === undefined ? '' : `第${state.transactionIndex + 1}笔：`;
+  const prefix = state.accountIndex === undefined
+    ? (state.transactionIndex === undefined ? '' : `第${state.transactionIndex + 1}笔：`)
+    : `第${state.accountIndex + 1}个账户${state.transactionIndex === undefined ? '' : `第${state.transactionIndex + 1}笔`}：`;
+  if (state.draft.accounts && state.field === 'other') {
+    return '请指定账户和交易序号，例如“第2个账户第1笔金额改为3000万”。';
+  }
   if (state.draft.transactions && state.field === 'other') {
     return `${prefix}请指定交易序号和修改内容，例如“第2笔金额改为3000万”。`;
   }
