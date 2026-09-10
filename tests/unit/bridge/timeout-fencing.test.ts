@@ -4,7 +4,7 @@ import { OperationRunner } from '../../../src/bridge/reliability';
 afterEach(() => vi.useRealTimers());
 
 describe('deadline cancellation and late-operation fencing', () => {
-  it('aborts cooperatively but never automatically overlaps a locally timed-out attempt', async () => {
+  it('aborts cooperatively and does not overlap a timed-out attempt before lingering recovery', async () => {
     vi.useFakeTimers();
     const runner = new OperationRunner();
     let release!: (value: string) => void;
@@ -19,6 +19,48 @@ describe('deadline cancellation and late-operation fencing', () => {
     expect(replacement).not.toHaveBeenCalled();
     release('late'); await Promise.resolve(); await Promise.resolve();
     await expect(runner.run('read', replacement)).resolves.toBe('new');
+  });
+
+  it('recovers idempotent operations whose timed-out promise never settles', async () => {
+    vi.useFakeTimers();
+    const runner = new OperationRunner();
+    const result = runner.run('read', () => new Promise<never>(() => {}), {
+      timeoutMs: 10,
+      maxAttempts: 1,
+      idempotent: true,
+      lingeringRecoveryMs: 20,
+    });
+    const rejected = expect(result).rejects.toMatchObject({ name: 'OperationTimeoutError' });
+    await vi.advanceTimersByTimeAsync(10); await rejected;
+
+    expect(runner.snapshot('read')).toEqual({ state: 'open', retryAfterMs: 20 });
+    const replacement = vi.fn(async () => 'fresh');
+    await expect(runner.run('read', replacement)).rejects.toMatchObject({ code: 'ECIRCUITOPEN' });
+    expect(replacement).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(19);
+    expect(runner.snapshot('read').state).toBe('open');
+    await vi.advanceTimersByTimeAsync(1);
+    expect(runner.snapshot('read')).toEqual({ state: 'closed', retryAfterMs: 0 });
+    await expect(runner.run('read', replacement)).resolves.toBe('fresh');
+  });
+
+  it('keeps timed-out non-idempotent operations fenced even when recovery is configured', async () => {
+    vi.useFakeTimers();
+    const runner = new OperationRunner();
+    const result = runner.run('write', () => new Promise<never>(() => {}), {
+      timeoutMs: 10,
+      maxAttempts: 1,
+      lingeringRecoveryMs: 20,
+    });
+    const rejected = expect(result).rejects.toMatchObject({ name: 'OperationTimeoutError' });
+    await vi.advanceTimersByTimeAsync(10); await rejected;
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(runner.snapshot('write')).toEqual({ state: 'open', retryAfterMs: 0 });
+    const replacement = vi.fn(async () => 'unsafe');
+    await expect(runner.run('write', replacement)).rejects.toMatchObject({ code: 'ECIRCUITOPEN' });
+    expect(replacement).not.toHaveBeenCalled();
   });
 
   it('does not let late success close a circuit opened by its timeout', async () => {

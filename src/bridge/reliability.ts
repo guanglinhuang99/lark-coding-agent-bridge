@@ -14,11 +14,22 @@ export interface OperationPolicy {
   idempotent?: boolean;
   circuitThreshold?: number;
   circuitResetMs?: number;
+  /**
+   * Maximum time an idempotent timed-out operation remains fenced after abort
+   * if the underlying promise ignores cancellation. Set to 0 to keep it fenced
+   * until the original promise settles. Ignored for non-idempotent operations.
+   */
+  lingeringRecoveryMs?: number;
 }
 
 interface CircuitState {
   failures: number;
   openedUntil: number;
+}
+
+interface LingeringEntry {
+  expiresAt: number;
+  timer?: NodeJS.Timeout;
 }
 
 interface ErrorLike {
@@ -58,7 +69,7 @@ export class CircuitOpenError extends Error {
  */
 export class OperationRunner {
   private readonly circuits = new Map<string, CircuitState>();
-  private readonly lingering = new Map<string, Set<object>>();
+  private readonly lingering = new Map<string, Map<object, LingeringEntry>>();
 
   constructor(private readonly now: () => number = () => Date.now()) {}
 
@@ -73,6 +84,9 @@ export class OperationRunner {
     const retryDelayMs = nonNegativeInt(policy.retryDelayMs, 250);
     const circuitThreshold = positiveInt(policy.circuitThreshold, 3);
     const circuitResetMs = positiveInt(policy.circuitResetMs, 30_000);
+    const lingeringRecoveryMs = idempotent
+      ? nonNegativeInt(policy.lingeringRecoveryMs, 60_000)
+      : 0;
 
     this.assertCircuit(operation);
     let lastError: unknown;
@@ -84,9 +98,7 @@ export class OperationRunner {
       const work = Promise.resolve().then(() => fn(controller.signal));
       const markSettled = () => {
         settled = true;
-        const pending = this.lingering.get(operation);
-        pending?.delete(token);
-        if (pending?.size === 0) this.lingering.delete(operation);
+        this.clearLingering(operation, token);
       };
       void work.then(markSettled, markSettled);
       try {
@@ -97,9 +109,7 @@ export class OperationRunner {
         lastError = err;
         const kind = failureKind(err);
         if (err instanceof OperationTimeoutError && !settled) {
-          const pending = this.lingering.get(operation) ?? new Set<object>();
-          pending.add(token);
-          this.lingering.set(operation, pending);
+          this.trackLingering(operation, token, lingeringRecoveryMs);
         }
         const retryable = !(err instanceof OperationTimeoutError) && idempotent &&
           isRetryableFailure(kind) && attempt < maxAttempts;
@@ -114,7 +124,15 @@ export class OperationRunner {
   }
 
   snapshot(operation: string): { state: 'closed' | 'open'; retryAfterMs: number } {
-    if (this.lingering.has(operation)) return { state: 'open', retryAfterMs: 0 };
+    const lingering = this.lingering.get(operation);
+    if (lingering?.size) {
+      let retryAfterMs = 0;
+      for (const entry of lingering.values()) {
+        if (!Number.isFinite(entry.expiresAt)) return { state: 'open', retryAfterMs: 0 };
+        retryAfterMs = Math.max(retryAfterMs, entry.expiresAt - this.now());
+      }
+      return { state: 'open', retryAfterMs: Math.max(0, retryAfterMs) };
+    }
     const state = this.circuits.get(operation);
     if (!state || state.openedUntil === 0) return { state: 'closed', retryAfterMs: 0 };
     const now = this.now();
@@ -144,6 +162,28 @@ export class OperationRunner {
       failures,
       openedUntil: failures >= threshold ? this.now() + resetMs : 0,
     });
+  }
+
+  private trackLingering(operation: string, token: object, recoveryMs: number): void {
+    const pending = this.lingering.get(operation) ?? new Map<object, LingeringEntry>();
+    const entry: LingeringEntry = {
+      expiresAt: recoveryMs > 0 ? this.now() + recoveryMs : Number.POSITIVE_INFINITY,
+    };
+    if (recoveryMs > 0) {
+      entry.timer = setTimeout(() => this.clearLingering(operation, token), recoveryMs);
+      entry.timer.unref?.();
+    }
+    pending.set(token, entry);
+    this.lingering.set(operation, pending);
+  }
+
+  private clearLingering(operation: string, token: object): void {
+    const pending = this.lingering.get(operation);
+    const entry = pending?.get(token);
+    if (!pending || !entry) return;
+    if (entry.timer) clearTimeout(entry.timer);
+    pending.delete(token);
+    if (pending.size === 0) this.lingering.delete(operation);
   }
 }
 

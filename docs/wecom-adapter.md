@@ -98,6 +98,7 @@ wecom-channel-bridge
 | `WECOM_RUN_QUEUE_MAX` | `4` | maximum number of messages waiting for a global run slot |
 | `WECOM_RUN_QUEUE_TIMEOUT_MS` | `5000` | maximum queue wait before the message is rejected with a retry notice |
 | `WECOM_CONVERSATION_QUEUE_MAX` | `5` | maximum number of follow-up messages queued behind the active task in one conversation |
+| `WECOM_CONVERSATION_QUEUE_GLOBAL_MAX` | `20` | maximum queued follow-up messages across all conversations; active items are not counted |
 | `WECOM_CONVERSATION_QUEUE_TIMEOUT_MS` | `120000` | maximum per-conversation wait; kept below the attachment URL validity window |
 | `WECOM_SHUTDOWN_TIMEOUT_MS` | `10000` | graceful cleanup deadline before process exit |
 | `WECOM_MAINTENANCE_INTERVAL_MS` | `86400000` | interval for session, media-cache, and log cleanup (24 hours) |

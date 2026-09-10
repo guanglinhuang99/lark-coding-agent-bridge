@@ -6,16 +6,18 @@ export {
   type FailureKind as WeComFailureKind,
   type OperationPolicy as WeComOperationPolicy,
 } from '../bridge/reliability';
-type WeComQueueReason = 'queue-full' | 'queue-timeout' | 'shutting-down';
+type WeComRunQueueReason = 'queue-full' | 'queue-timeout' | 'shutting-down';
+type WeComConversationQueueReason = WeComRunQueueReason | 'global-queue-full';
 
-export function capacityNotice(reason: WeComQueueReason): string {
+export function capacityNotice(reason: WeComRunQueueReason): string {
   if (reason === 'queue-full') return '任务队列已满';
   if (reason === 'queue-timeout') return '排队等待超时';
   return '服务正在停止';
 }
 
-export function conversationQueueNotice(reason: WeComQueueReason): string {
+export function conversationQueueNotice(reason: WeComConversationQueueReason): string {
   if (reason === 'queue-full') return '当前会话队列已满';
+  if (reason === 'global-queue-full') return '系统等待队列已满，请稍后重新发送';
   if (reason === 'queue-timeout') return '等待时间过长，消息已从队列移除，请重新发送';
   return '服务正在停止';
 }

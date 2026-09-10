@@ -343,6 +343,53 @@ describe('WeCom runtime contracts', () => {
     await Promise.all([firstA.completion, firstB.completion, queuedA.completion]);
   });
 
+  it('bounds queued follow-ups across conversations and frees global capacity on cancellation', async () => {
+    const queue = new WeComConversationQueue(3, 1_000, { maxQueuedTotal: 2 });
+    let releaseA: (() => void) | undefined;
+    let releaseB: (() => void) | undefined;
+    const firstA = queue.submit(
+      'group:chat-a',
+      () => new Promise<void>((resolve) => {
+        releaseA = resolve;
+      }),
+    );
+    const firstB = queue.submit(
+      'group:chat-b',
+      () => new Promise<void>((resolve) => {
+        releaseB = resolve;
+      }),
+    );
+    const queuedA = queue.submit('group:chat-a', async () => {});
+    const queuedB = queue.submit('group:chat-b', async () => {});
+
+    expect(queue.snapshot()).toEqual({ active: 2, queued: 2 });
+    expect(() => queue.submit('group:chat-a', async () => {})).toThrow(
+      expect.objectContaining<Partial<WeComConversationQueueError>>({
+        reason: 'global-queue-full',
+      }),
+    );
+
+    const cancelled = expect(queuedA.completion).rejects.toThrow('cancelled');
+    expect(queuedA.cancel()).toBe(true);
+    await cancelled;
+    expect(queue.snapshot()).toEqual({ active: 2, queued: 1 });
+
+    const replacementA = queue.submit('group:chat-a', async () => {});
+    expect(replacementA).toMatchObject({ queued: true, position: 1 });
+    expect(queue.snapshot()).toEqual({ active: 2, queued: 2 });
+
+    await Promise.resolve();
+    releaseA?.();
+    releaseB?.();
+    await Promise.all([
+      firstA.completion,
+      firstB.completion,
+      queuedB.completion,
+      replacementA.completion,
+    ]);
+    expect(queue.snapshot()).toEqual({ active: 0, queued: 0 });
+  });
+
   it('continues with the next conversation item after a task fails', async () => {
     const queue = new WeComConversationQueue(1, 1_000);
     const order: string[] = [];

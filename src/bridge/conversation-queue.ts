@@ -1,4 +1,8 @@
-export type ConversationQueueReason = 'queue-full' | 'queue-timeout' | 'shutting-down';
+export type ConversationQueueReason =
+  | 'queue-full'
+  | 'global-queue-full'
+  | 'queue-timeout'
+  | 'shutting-down';
 
 export class ConversationQueueError extends Error {
   override readonly name = 'ConversationQueueError';
@@ -28,15 +32,28 @@ export interface ConversationSubmission {
   cancel(reason?: unknown): boolean;
 }
 
+export interface ConversationQueueOptions {
+  /** Maximum queued follow-ups across all conversations. Active items are not counted. */
+  maxQueuedTotal?: number;
+}
+
 /** Serialize work per conversation while allowing different conversations to run independently. */
 export class ConversationQueue {
   private readonly lanes = new Map<string, ConversationLane>();
   private closed = false;
+  private queuedTotal = 0;
+  private readonly maxQueuedTotal: number;
 
   constructor(
     private readonly maxQueuedPerConversation: number,
     private readonly queueTimeoutMs: number,
-  ) {}
+    options: ConversationQueueOptions = {},
+  ) {
+    this.maxQueuedTotal = options.maxQueuedTotal ?? Number.POSITIVE_INFINITY;
+    if (!(this.maxQueuedTotal >= 0)) {
+      throw new RangeError('Conversation global queue limit must be non-negative');
+    }
+  }
 
   submit(key: string, task: () => Promise<void>): ConversationSubmission {
     if (this.closed) throw new ConversationQueueError('shutting-down');
@@ -58,8 +75,12 @@ export class ConversationQueue {
     if (lane.queued.length >= this.maxQueuedPerConversation) {
       throw new ConversationQueueError('queue-full');
     }
+    if (this.queuedTotal >= this.maxQueuedTotal) {
+      throw new ConversationQueueError('global-queue-full');
+    }
 
     lane.queued.push(entry);
+    this.queuedTotal++;
     const position = lane.queued.length;
     entry.timer = setTimeout(() => {
       if (!this.removeQueued(key, entry)) return;
@@ -78,9 +99,7 @@ export class ConversationQueue {
   }
 
   snapshot(): { active: number; queued: number } {
-    let queued = 0;
-    for (const lane of this.lanes.values()) queued += lane.queued.length;
-    return { active: this.lanes.size, queued };
+    return { active: this.lanes.size, queued: this.queuedTotal };
   }
 
   close(): void {
@@ -92,6 +111,7 @@ export class ConversationQueue {
         entry.reject(new ConversationQueueError('shutting-down'));
       }
     }
+    this.queuedTotal = 0;
   }
 
   private submission(
@@ -120,6 +140,7 @@ export class ConversationQueue {
     const index = lane.queued.indexOf(entry);
     if (index < 0) return false;
     lane.queued.splice(index, 1);
+    this.queuedTotal--;
     if (entry.timer) clearTimeout(entry.timer);
     return true;
   }
@@ -141,6 +162,7 @@ export class ConversationQueue {
       this.lanes.delete(key);
       return;
     }
+    this.queuedTotal--;
     lane.active = next;
     this.start(key, next);
   }
