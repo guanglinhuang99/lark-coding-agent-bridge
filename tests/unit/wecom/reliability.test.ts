@@ -4,6 +4,7 @@ import {
   WeComOperationRunner,
   WeComOperationTimeoutError,
   classifyTask,
+  conversationQueueNotice,
   failureKind,
 } from '../../../src/wecom/reliability';
 
@@ -63,6 +64,12 @@ describe('WeComOperationRunner', () => {
       WeComCircuitOpenError,
     );
     expect(failureKind(new WeComCircuitOpenError('x', 10))).toBe('circuit-open');
+  });
+
+  it('renders a distinct notice when the process-wide conversation queue is full', () => {
+    expect(conversationQueueNotice('global-queue-full')).toBe(
+      '系统等待队列已满，请稍后重新发送',
+    );
   });
 
   it('classifies task labels without retaining message content', () => {

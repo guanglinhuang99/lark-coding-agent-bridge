@@ -232,6 +232,10 @@ const maxConcurrentRuns = readPositiveInt(process.env.WECOM_MAX_CONCURRENT_RUNS,
 const maxQueuedRuns = readPositiveInt(process.env.WECOM_RUN_QUEUE_MAX, 4);
 const runQueueTimeoutMs = readPositiveInt(process.env.WECOM_RUN_QUEUE_TIMEOUT_MS, 5_000);
 const conversationQueueMax = readPositiveInt(process.env.WECOM_CONVERSATION_QUEUE_MAX, 5);
+const conversationQueueGlobalMax = readPositiveInt(
+  process.env.WECOM_CONVERSATION_QUEUE_GLOBAL_MAX,
+  20,
+);
 const conversationQueueTimeoutMs = readPositiveInt(
   process.env.WECOM_CONVERSATION_QUEUE_TIMEOUT_MS,
   2 * 60 * 1000,
@@ -340,6 +344,7 @@ const messageDeduplicator = new WeComMessageDeduplicator(
 const conversationQueue = new WeComConversationQueue(
   conversationQueueMax,
   conversationQueueTimeoutMs,
+  { maxQueuedTotal: conversationQueueGlobalMax },
 );
 const runGate = new WeComRunGate(maxConcurrentRuns, maxQueuedRuns, runQueueTimeoutMs);
 const healthStore = new WeComHealthStore(healthFile);
