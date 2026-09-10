@@ -246,6 +246,37 @@ describe('RunExecutor', () => {
     expect(run.waitForExitCalls).toBe(1);
   });
 
+  it('forwards the configured post-done grace to the underlying run', async () => {
+    const observedTimeouts: number[] = [];
+    const agent: AgentAdapter = {
+      id: 'grace-probe',
+      displayName: 'Grace Probe',
+      async isAvailable() { return true; },
+      run(opts) {
+        return {
+          runId: opts.runId,
+          events: (async function* () {
+            yield { type: 'done' as const, terminationReason: 'normal' as const };
+          })(),
+          async stop() {},
+          async waitForExit(timeoutMs) {
+            observedTimeouts.push(timeoutMs);
+            return true;
+          },
+        };
+      },
+    };
+    const h = await createHarness({ agent, postDoneExitGraceMs: 5_000 });
+    const execution = await h.executor.submit({
+      scopeId: 'scope-grace',
+      policy: policy(h.tmp.workspace),
+    });
+
+    await collect(execution.subscribe());
+
+    expect(observedTimeouts).toEqual([5_000]);
+  });
+
   it('stops the underlying process when it does not exit after a terminal event', async () => {
     const h = await createHarness({
       events: [{ type: 'done', terminationReason: 'normal' }],
@@ -271,6 +302,7 @@ async function createHarness(options: {
   waitForExit?: boolean | readonly boolean[];
   poolCap?: number;
   agent?: AgentAdapter;
+  postDoneExitGraceMs?: number;
 }): Promise<{
   tmp: TmpProfile;
   agent: FakeAgentAdapter;
@@ -300,7 +332,7 @@ async function createHarness(options: {
       activeRuns,
       createRunId: () => `run-${nextRun++}`,
       now: () => 1000,
-      postDoneExitGraceMs: 10,
+      postDoneExitGraceMs: options.postDoneExitGraceMs ?? 10,
     }),
   };
 }

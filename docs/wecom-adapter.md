@@ -97,6 +97,7 @@ wecom-channel-bridge
 | `WECOM_MAX_CONCURRENT_RUNS` | `2` | maximum Codex runs or attachment-startup tasks admitted process-wide |
 | `WECOM_RUN_QUEUE_MAX` | `4` | maximum number of messages waiting for a global run slot |
 | `WECOM_RUN_QUEUE_TIMEOUT_MS` | `5000` | maximum queue wait before the message is rejected with a retry notice |
+| `WECOM_CODEX_POST_DONE_EXIT_GRACE_MS` | `5000` | grace period after a terminal Codex event for the child process to exit naturally before the bridge logs `run.post-done-exit-timeout` and stops it |
 | `WECOM_CONVERSATION_QUEUE_MAX` | `5` | maximum number of follow-up messages queued behind the active task in one conversation |
 | `WECOM_CONVERSATION_QUEUE_GLOBAL_MAX` | `20` | maximum queued follow-up messages across all conversations; active items are not counted |
 | `WECOM_CONVERSATION_QUEUE_TIMEOUT_MS` | `120000` | maximum per-conversation wait; kept below the attachment URL validity window |

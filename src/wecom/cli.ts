@@ -231,6 +231,10 @@ const messageDedupeMaxEntries = readPositiveInt(
 const maxConcurrentRuns = readPositiveInt(process.env.WECOM_MAX_CONCURRENT_RUNS, 2);
 const maxQueuedRuns = readPositiveInt(process.env.WECOM_RUN_QUEUE_MAX, 4);
 const runQueueTimeoutMs = readPositiveInt(process.env.WECOM_RUN_QUEUE_TIMEOUT_MS, 5_000);
+const codexPostDoneExitGraceMs = readPositiveInt(
+  process.env.WECOM_CODEX_POST_DONE_EXIT_GRACE_MS,
+  5_000,
+);
 const conversationQueueMax = readPositiveInt(process.env.WECOM_CONVERSATION_QUEUE_MAX, 5);
 const conversationQueueGlobalMax = readPositiveInt(
   process.env.WECOM_CONVERSATION_QUEUE_GLOBAL_MAX,
@@ -363,7 +367,12 @@ const codex = new CodexAdapter({
   sandbox,
 });
 const agentRuns = new ActiveRuns();
-const runExecutor = new RunExecutor({ agent: codex, pool: runGate.pool, activeRuns: agentRuns });
+const runExecutor = new RunExecutor({
+  agent: codex,
+  pool: runGate.pool,
+  activeRuns: agentRuns,
+  postDoneExitGraceMs: codexPostDoneExitGraceMs,
+});
 // Extraction has its own minimal adapter but shares admission and process shutdown tracking.
 const riskIntentWorkspace = path.join(stateDir, 'risk-intent-workspace');
 await mkdir(riskIntentWorkspace, { recursive: true });
@@ -377,6 +386,7 @@ const riskIntentExecutor = new RunExecutor({
   }),
   pool: runGate.pool,
   activeRuns: agentRuns,
+  postDoneExitGraceMs: codexPostDoneExitGraceMs,
 });
 const riskDirectEnabled = Boolean(
   riskPython && existsSync(riskServiceDir) && existsSync(riskBridgePath) && existsSync(riskPython),
