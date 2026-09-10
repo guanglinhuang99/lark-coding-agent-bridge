@@ -54,6 +54,7 @@ export interface RiskDirectClientOptions {
   intranetCacheTtlMs?: number;
   intranetProbe?: (host: string, port: number, timeoutMs: number) => Promise<boolean>;
   onCall?: (event: { method: string; durationMs: number; outcome: 'success' | 'error' | 'cache' | 'joined' }) => void;
+  onStartup?: (timings: Record<string, number>) => void;
 }
 
 export interface RiskStageEvent {
@@ -147,6 +148,10 @@ export class RiskDirectClient implements RiskService {
       );
       throw error;
     }
+  }
+
+  async prewarm(): Promise<void> {
+    await this.ensureStarted();
   }
 
   async close(): Promise<void> {
@@ -369,6 +374,11 @@ export class RiskDirectClient implements RiskService {
     const message = parseJson(line);
     if (!isRecord(message)) return;
     if (message.type === 'ready') {
+      const startupTimings = numberRecord(message.startup_timings);
+      if (startupTimings) {
+        try { this.options.onStartup?.(startupTimings); }
+        catch { /* Diagnostics cannot affect readiness. */ }
+      }
       this.ready = true;
       this.startResolve?.();
       this.startResolve = undefined;
@@ -538,4 +548,12 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function stringValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function numberRecord(value: unknown): Record<string, number> | undefined {
+  if (!isRecord(value)) return undefined;
+  const entries = Object.entries(value).filter(
+    (entry): entry is [string, number] => typeof entry[1] === 'number' && Number.isFinite(entry[1]),
+  );
+  return entries.length ? Object.fromEntries(entries) : undefined;
 }

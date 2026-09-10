@@ -5,8 +5,11 @@ from __future__ import annotations
 
 import argparse
 import base64
+import copy
+from collections import OrderedDict
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from functools import lru_cache, wraps
 import hashlib
 from zoneinfo import ZoneInfo
 import sqlite3
@@ -42,6 +45,85 @@ def json_default(value: Any) -> Any:
     return str(value)
 
 
+def memoize_short_text(function: Callable[[Any], str], max_entries: int = 4096,
+                       max_chars: int = 256) -> Callable[[Any], str]:
+    """Bound repeated pure string conversions, not data reads or risk decisions.
+
+    Exact built-in strings only: mutable inputs, custom __str__ implementations
+    and long strings retain the original behavior and are never stored.
+    """
+    if getattr(function, "__risk_text_memoized__", False) is True:
+        return function
+    cached = lru_cache(maxsize=max(0, max_entries))(function)
+
+    @wraps(function)
+    def convert(value: Any) -> str:
+        if type(value) is str and len(value) <= max_chars:
+            return cached(value)
+        return function(value)
+
+    convert.cache_info = cached.cache_info
+    convert.cache_clear = cached.cache_clear
+    convert.__risk_text_memoized__ = True
+    return convert
+
+
+def install_text_memoization(checker: Any) -> None:
+    # These functions depend only on their input, not the alias table, holdings,
+    # rating/market data, rules, date or settings. Do not cache canonical alias
+    # resolution: its mapping can change while the process remains alive.
+    for name in ("clean_text", "normalize_product_name"):
+        function = getattr(checker, name, None)
+        if callable(function):
+            setattr(checker, name, memoize_short_text(function))
+
+
+class CallTimingProbe:
+    """Thread-safe aggregate timings for selected backend functions.
+
+    The probe records only function labels, counts and durations; it never stores
+    arguments, SQL, product names, securities or returned business data.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._totals: dict[str, dict[str, Any]] = {}
+
+    def wrap(self, name: str, function: Callable[..., Any]) -> Callable[..., Any]:
+        original = getattr(function, "__risk_timing_original__", function)
+
+        @wraps(original)
+        def measured(*args, **kwargs):
+            started = time.perf_counter()
+            try:
+                return original(*args, **kwargs)
+            finally:
+                duration_ms = (time.perf_counter() - started) * 1000
+                with self._lock:
+                    row = self._totals.setdefault(name, {"count": 0, "total_ms": 0.0})
+                    row["count"] += 1
+                    row["total_ms"] += duration_ms
+
+        measured.__risk_timing_original__ = original
+        return measured
+
+    def snapshot(self) -> dict[str, dict[str, Any]]:
+        with self._lock:
+            return {name: dict(row) for name, row in self._totals.items()}
+
+    def since(self, before: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        after = self.snapshot()
+        result: dict[str, dict[str, Any]] = {}
+        for name in set(before) | set(after):
+            prior = before.get(name, {})
+            current = after.get(name, {})
+            count = int(current.get("count", 0)) - int(prior.get("count", 0))
+            total_ms = float(current.get("total_ms", 0.0)) - float(prior.get("total_ms", 0.0))
+            if count > 0:
+                result[name] = {"count": count, "total_ms": round(total_ms, 3)}
+        return result
+
+
 class DailyPQCache:
     """Persist successful PQ reads per Shanghai calendar day and exact query.
 
@@ -49,10 +131,24 @@ class DailyPQCache:
     parameters and connection are part of the key; other database reads bypass it.
     """
 
-    def __init__(self, path: Path, read: Callable[..., Any], clock=None) -> None:
+    def __init__(
+        self,
+        path: Path,
+        read: Callable[..., Any],
+        clock=None,
+        memory_max_entries: int = 16,
+        memory_max_bytes: int = 64 * 1024 * 1024,
+    ) -> None:
         self.path = path
         self.read = read
         self.clock = clock or time.time
+        self._metrics_lock = threading.Lock()
+        self._metrics: dict[str, dict[str, Any]] = {}
+        self._memory_lock = threading.Lock()
+        self._memory_max_entries = max(0, memory_max_entries)
+        self._memory_max_bytes = max(0, memory_max_bytes)
+        self._memory_bytes = 0
+        self._memory: OrderedDict[str, tuple[float, int, Any]] = OrderedDict()
         path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(path) as db:
             db.execute("CREATE TABLE IF NOT EXISTS pq_reads (key TEXT PRIMARY KEY, expires_at REAL, payload TEXT)")
@@ -69,10 +165,18 @@ class DailyPQCache:
         try:
             import pandas as pd
             if isinstance(value, pd.DataFrame):
-                return ["dataframe", DailyPQCache.encode({
-                    "split": value.to_dict(orient="split"),
-                    "dtypes": [str(dtype) for dtype in value.dtypes],
-                })]
+                # Keep scalar JSON encoding in the C encoder instead of recursively
+                # wrapping every cell in Python. The old "dataframe" decoder stays
+                # below so today's cache can be upgraded without invalidation.
+                payload = json.dumps(
+                    {
+                        "split": value.to_dict(orient="split"),
+                        "dtypes": [str(dtype) for dtype in value.dtypes],
+                    },
+                    ensure_ascii=False,
+                    default=DailyPQCache._dataframe_json_default,
+                )
+                return ["dataframe_json_v2", payload]
         except ImportError:
             pass
         try:
@@ -99,11 +203,55 @@ class DailyPQCache:
         raise TypeError(f"Unsupported PQ value: {type(value).__name__}")
 
     @staticmethod
+    def _dataframe_json_default(value: Any) -> Any:
+        tag = "__wecom_pq_cache_type_v2__"
+        if type(value).__module__.startswith("pandas.") and type(value).__name__ in {"NAType", "NaTType"}:
+            return {tag: "pandas_null", "value": type(value).__name__}
+        if isinstance(value, datetime):
+            return {tag: "datetime", "value": value.isoformat()}
+        if isinstance(value, date):
+            return {tag: "date", "value": value.isoformat()}
+        if isinstance(value, Decimal):
+            return {tag: "decimal", "value": str(value)}
+        if isinstance(value, bytes):
+            return {tag: "bytes", "value": base64.b64encode(value).decode("ascii")}
+        item = getattr(value, "item", None)
+        if callable(item):
+            converted = item()
+            if converted is not value:
+                return converted
+        raise TypeError(f"Unsupported pandas cache value: {type(value).__name__}")
+
+    @staticmethod
+    def _dataframe_json_object_hook(value: dict[str, Any]) -> Any:
+        tag = value.get("__wecom_pq_cache_type_v2__")
+        item = value.get("value")
+        if tag == "pandas_null":
+            import pandas as pd
+            return pd.NA if item == "NAType" else pd.NaT
+        if tag == "datetime":
+            return datetime.fromisoformat(str(item))
+        if tag == "date":
+            return date.fromisoformat(str(item))
+        if tag == "decimal":
+            return Decimal(str(item))
+        if tag == "bytes":
+            return base64.b64decode(str(item))
+        return value
+
+    @staticmethod
     def decode(value):
         kind, item = value
         if kind == "pandas_null":
             import pandas as pd
             return pd.NA if item == "NAType" else pd.NaT
+        if kind == "dataframe_json_v2":
+            import pandas as pd
+            data = json.loads(item, object_hook=DailyPQCache._dataframe_json_object_hook)
+            frame = pd.DataFrame(**data["split"])
+            for column, dtype in zip(frame.columns, data["dtypes"]):
+                frame[column] = frame[column].astype(dtype)
+            return frame
         if kind == "dataframe":
             import pandas as pd
             data = DailyPQCache.decode(item)
@@ -128,26 +276,107 @@ class DailyPQCache:
                 "decimal": Decimal, "bytes": base64.b64decode,
                 "value": lambda v: v}[kind](item)
 
+    def _memory_get(self, key: str, now: float) -> tuple[bool, Any]:
+        with self._memory_lock:
+            entry = self._memory.get(key)
+            if entry is None:
+                return False, None
+            expires_at, size, value = entry
+            if expires_at <= now:
+                self._memory.pop(key, None)
+                self._memory_bytes -= size
+                return False, None
+            self._memory.move_to_end(key)
+            return True, copy.deepcopy(value)
+
+    def _memory_put(self, key: str, expires_at: float, payload_bytes: int, value: Any) -> None:
+        if (
+            self._memory_max_entries <= 0
+            or self._memory_max_bytes <= 0
+            or payload_bytes > self._memory_max_bytes
+        ):
+            return
+        stored = copy.deepcopy(value)
+        with self._memory_lock:
+            previous = self._memory.pop(key, None)
+            if previous is not None:
+                self._memory_bytes -= previous[1]
+            self._memory[key] = (expires_at, payload_bytes, stored)
+            self._memory_bytes += payload_bytes
+            while (
+                len(self._memory) > self._memory_max_entries
+                or self._memory_bytes > self._memory_max_bytes
+            ):
+                _old_key, (_expires_at, size, _value) = self._memory.popitem(last=False)
+                self._memory_bytes -= size
+
+    def _record_metric(self, outcome: str, started: float, backend_ms: float = 0.0) -> None:
+        total_ms = (time.perf_counter() - started) * 1000
+        with self._metrics_lock:
+            row = self._metrics.setdefault(
+                outcome,
+                {"count": 0, "total_ms": 0.0, "backend_ms": 0.0},
+            )
+            row["count"] += 1
+            row["total_ms"] += total_ms
+            row["backend_ms"] += backend_ms
+
+    def snapshot_metrics(self) -> dict[str, dict[str, Any]]:
+        with self._metrics_lock:
+            return {name: dict(row) for name, row in self._metrics.items()}
+
+    def metrics_since(self, before: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        after = self.snapshot_metrics()
+        result: dict[str, dict[str, Any]] = {}
+        for name in set(before) | set(after):
+            prior = before.get(name, {})
+            current = after.get(name, {})
+            count = int(current.get("count", 0)) - int(prior.get("count", 0))
+            if count <= 0:
+                continue
+            result[name] = {
+                "count": count,
+                "total_ms": round(
+                    float(current.get("total_ms", 0.0)) - float(prior.get("total_ms", 0.0)),
+                    3,
+                ),
+                "backend_ms": round(
+                    float(current.get("backend_ms", 0.0)) - float(prior.get("backend_ms", 0.0)),
+                    3,
+                ),
+            }
+        return result
+
     def __call__(self, connection, sql, *args, **kwargs):
         if str(connection).strip().casefold() != "pqread":
             return self.read(connection, sql, *args, **kwargs)
+        metric_started = time.perf_counter()
         # Preserve SQL literals exactly, including whitespace within names.
         key = hashlib.sha256(json.dumps(self.encode(
             [connection, sql, args, sorted(kwargs.items())]
         ), ensure_ascii=False).encode()).hexdigest()
         owner = secrets.token_hex(16)
         started_at = self.clock()
+        memory_hit, memory_value = self._memory_get(key, started_at)
+        if memory_hit:
+            self._record_metric("memory_hit", metric_started)
+            return memory_value
         poll_delay = 0.05
+        waited = False
         while True:
             # Cache hits never acquire SQLite's write lock, so an unrelated slow
             # database miss cannot stall already-cached queries.
             with sqlite3.connect(self.path, timeout=180) as db:
                 cached = db.execute(
-                    "SELECT payload FROM pq_reads WHERE key=? AND expires_at>?",
+                    "SELECT expires_at, payload FROM pq_reads WHERE key=? AND expires_at>?",
                     (key, self.clock()),
                 ).fetchone()
             if cached:
-                return self.decode(json.loads(cached[0]))
+                payload = cached[1]
+                value = self.decode(json.loads(payload))
+                self._memory_put(key, float(cached[0]), len(payload.encode("utf-8")), value)
+                self._record_metric("joined" if waited else "hit", metric_started)
+                return value
 
             # Claim only this exact key. The write transaction is intentionally
             # short; the remote database call happens after it has committed.
@@ -155,9 +384,13 @@ class DailyPQCache:
                 db.execute("BEGIN IMMEDIATE")
                 now = self.clock()
                 db.execute("DELETE FROM pq_reads WHERE expires_at <= ?", (now,))
-                cached = db.execute("SELECT payload FROM pq_reads WHERE key=?", (key,)).fetchone()
+                cached = db.execute("SELECT expires_at, payload FROM pq_reads WHERE key=?", (key,)).fetchone()
                 if cached:
-                    return self.decode(json.loads(cached[0]))
+                    payload = cached[1]
+                    value = self.decode(json.loads(payload))
+                    self._memory_put(key, float(cached[0]), len(payload.encode("utf-8")), value)
+                    self._record_metric("joined" if waited else "hit", metric_started)
+                    return value
                 db.execute("DELETE FROM pq_inflight WHERE expires_at <= ?", (now,))
                 claimed = db.execute(
                     "INSERT OR IGNORE INTO pq_inflight VALUES (?, ?, ?)",
@@ -165,26 +398,36 @@ class DailyPQCache:
                 ).rowcount == 1
             if claimed:
                 break
+            waited = True
             time.sleep(poll_delay)
             poll_delay = min(poll_delay * 2, 0.5)
 
+        backend_started = time.perf_counter()
         try:
             rows = self.read(connection, sql, *args, **kwargs)
+            backend_ms = (time.perf_counter() - backend_started) * 1000
             payload = json.dumps(self.encode(rows), ensure_ascii=False)
             # Expire at midnight of the day this read began, even if the
             # database response arrives after midnight.
             local_now = datetime.fromtimestamp(started_at, ZoneInfo("Asia/Shanghai"))
             midnight = datetime.combine(local_now.date() + timedelta(days=1),
                                         datetime.min.time(), tzinfo=ZoneInfo("Asia/Shanghai"))
+            expires_at = midnight.timestamp()
             with sqlite3.connect(self.path, timeout=180) as db:
                 db.execute("BEGIN IMMEDIATE")
                 db.execute(
                     "INSERT OR REPLACE INTO pq_reads VALUES (?, ?, ?)",
-                    (key, midnight.timestamp(), payload),
+                    (key, expires_at, payload),
                 )
                 db.execute("DELETE FROM pq_inflight WHERE key=? AND owner=?", (key, owner))
-            return self.decode(json.loads(payload))
+            # Persist the encoded form as L2. The L1 holds an isolated decoded copy,
+            # so repeated reads in this process avoid SQLite and dataframe rebuilds.
+            value = copy.deepcopy(rows)
+            self._memory_put(key, expires_at, len(payload.encode("utf-8")), value)
+            self._record_metric("miss", metric_started, backend_ms)
+            return value
         except Exception:
+            self._record_metric("error", metric_started)
             with sqlite3.connect(self.path, timeout=180) as db:
                 db.execute("DELETE FROM pq_inflight WHERE key=? AND owner=?", (key, owner))
             raise
@@ -225,18 +468,52 @@ class DirectRiskService:
             if source not in sys.path:
                 sys.path.insert(0, source)
 
-        import azpy
+        startup_started = time.perf_counter()
+        startup_timings: dict[str, float] = {}
 
-        azpy.db_read = DailyPQCache(
+        stage_started = time.perf_counter()
+        import azpy
+        startup_timings["import_azpy_ms"] = (time.perf_counter() - stage_started) * 1000
+
+        stage_started = time.perf_counter()
+        self._pq_cache = DailyPQCache(
             state_dir / "pq-reads-daily.sqlite3", azpy.db_read,
         )
+        azpy.db_read = self._pq_cache
+        startup_timings["pq_cache_init_ms"] = (time.perf_counter() - stage_started) * 1000
+
+        stage_started = time.perf_counter()
         import check_portfolio_limits as checker
+        startup_timings["import_checker_ms"] = (time.perf_counter() - stage_started) * 1000
+        stage_started = time.perf_counter()
         import credit_query
+        startup_timings["import_credit_ms"] = (time.perf_counter() - stage_started) * 1000
+        stage_started = time.perf_counter()
         import portfolio_limits_web as web
+        startup_timings["import_web_ms"] = (time.perf_counter() - stage_started) * 1000
 
         self.checker = checker
         self.credit_query = credit_query
         self.web = web
+        install_text_memoization(self.checker)
+        self._timing_probe = CallTimingProbe()
+        for owner, function_name, metric_name in (
+            (self.web, "resolve_pretrade_product_name", "resolve_product"),
+            (self.checker, "latest_holding_date_for_product", "latest_holding_date"),
+            (self.checker, "fetch_holdings", "fetch_holdings"),
+            (getattr(self.web, "pretrade_scenario", self.web),
+             "run_pretrade_measurement", "run_pretrade_measurement"),
+            (self.checker, "prepare_full_check_context", "limit_prepare"),
+            (self.checker, "evaluate_full_check_context", "limit_evaluate"),
+            (self.checker, "run_full_check_pair", "limit_pair"),
+        ):
+            function = getattr(owner, function_name, None)
+            if callable(function):
+                setattr(owner, function_name, self._timing_probe.wrap(metric_name, function))
+        startup_timings["total_ms"] = (time.perf_counter() - startup_started) * 1000
+        self.startup_timings = {
+            name: round(duration_ms, 3) for name, duration_ms in startup_timings.items()
+        }
         self._related_container: Any | None = None
         self._related_lock = threading.Lock()
 
@@ -512,9 +789,18 @@ class DirectRiskService:
             actions = raw_action
         else:
             raise ValueError("测算场景必须是对象")
+
+        total_started = time.perf_counter()
+        timing_probe = getattr(self, "_timing_probe", None)
+        pq_cache = getattr(self, "_pq_cache", None)
+        function_before = timing_probe.snapshot() if timing_probe else {}
+        pq_before = pq_cache.snapshot_metrics() if pq_cache else {}
+        submit_started = time.perf_counter()
         run = self.web.start_pretrade_run({"product": product, "actions": actions})
+        submit_ms = (time.perf_counter() - submit_started) * 1000
         run_id = str(run["id"])
         last_progress = ""
+        poll_started = time.perf_counter()
         deadline = time.monotonic() + 180
         while time.monotonic() < deadline:
             with self.web.PRETRADE_RUNS_LOCK:
@@ -527,6 +813,17 @@ class DirectRiskService:
                 progress(message)
             if current.get("status") in {"success", "error"}:
                 current.pop("traceback", None)
+                bridge_timings: dict[str, Any] = {
+                    "total_ms": round((time.perf_counter() - total_started) * 1000, 3),
+                    "submit_ms": round(submit_ms, 3),
+                    "poll_ms": round((time.perf_counter() - poll_started) * 1000, 3),
+                    "attribution": "process_aggregate_window",
+                }
+                if timing_probe:
+                    bridge_timings["functions"] = timing_probe.since(function_before)
+                if pq_cache:
+                    bridge_timings["pq"] = pq_cache.metrics_since(pq_before)
+                current["bridge_timings"] = bridge_timings
                 return current
             time.sleep(0.1)
         raise TimeoutError("risk-service 本地测算超过180秒")
@@ -628,7 +925,7 @@ def main() -> int:
     parser.add_argument("--workers", type=int, default=4)
     args = parser.parse_args()
     service = DirectRiskService(args.service_dir, args.state_dir)
-    write_message({"type": "ready"})
+    write_message({"type": "ready", "startup_timings": service.startup_timings})
     with ThreadPoolExecutor(max_workers=max(1, min(args.workers, 8))) as executor:
         dispatcher = RequestDispatcher(service, executor)
         for line in sys.stdin:

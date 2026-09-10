@@ -87,6 +87,12 @@ export class WeComRiskRouter {
     onProgress?: (progress: string) => void,
   ): Promise<RiskRouteResult> {
     try {
+      // Product-independent queries should not pay the product-ledger cold-start cost.
+      // Parse once without products; only load master products if routing or matching needs them.
+      const independent = parseRiskMessage(text, []);
+      if (independent.kind === 'search_securities' || independent.kind === 'query_credit') {
+        return await this.execute(independent, [], onProgress);
+      }
       const products = await this.loadProducts();
       const intent = parseRiskMessage(text, products);
       if (intent.kind === 'pretrade_calc') return { handled: false };

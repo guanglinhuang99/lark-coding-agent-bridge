@@ -295,6 +295,10 @@ const riskDirectWorkers = readPositiveInt(process.env.WECOM_RISK_DIRECT_WORKERS,
 const riskIntranetHost = process.env.WECOM_RISK_INTRANET_HOST?.trim() || '10.8.11.57';
 const riskIntranetPort = readPositiveInt(process.env.WECOM_RISK_INTRANET_PORT, 80);
 const riskIntranetTimeoutMs = readPositiveInt(process.env.WECOM_RISK_INTRANET_TIMEOUT_MS, 1_500);
+const riskIntranetCacheTtlMs = readPositiveInt(
+  process.env.WECOM_RISK_INTRANET_CACHE_TTL_MS,
+  60_000,
+);
 const riskProductCacheTtlMs = readPositiveInt(
   process.env.WECOM_RISK_PRODUCT_CACHE_TTL_MS,
   60 * 60_000,
@@ -408,6 +412,7 @@ const riskClient = riskDirectEnabled
       intranetHost: riskIntranetHost,
       intranetPort: riskIntranetPort,
       intranetTimeoutMs: riskIntranetTimeoutMs,
+      intranetCacheTtlMs: riskIntranetCacheTtlMs,
       productCacheTtlMs: riskProductCacheTtlMs,
       onCall: ({ method, durationMs, outcome }) => {
         log.info('wecom-risk-call', 'completed', { method, durationMs, outcome });
@@ -417,6 +422,12 @@ const riskClient = riskDirectEnabled
       onStage: ({ stage, durationMs, outcome }) => {
         reportMetric('wecom_risk_stage_ms', durationMs, { stage, outcome });
         log.info('wecom-risk-stage', 'completed', { stage, durationMs, outcome });
+      },
+      onStartup: (timings) => {
+        log.info('wecom-risk-startup', 'completed', { timings });
+        for (const [stage, durationMs] of Object.entries(timings)) {
+          reportMetric('wecom_risk_startup_ms', durationMs, { stage });
+        }
       },
       onDiagnostic: (line) => {
         log.warn('wecom-risk-direct', 'python', {
@@ -429,7 +440,10 @@ const riskRouter = riskClient ? new WeComRiskRouter(riskClient) : undefined;
 const riskSelectionTasks = new RiskSelectionTaskRegistry();
 const riskStates = new RiskStateRegistry();
 let riskWarmup: Promise<void> | undefined;
-const riskSelectionCardDelayMs = 800;
+const riskSelectionCardDelayMs = readPositiveInt(
+  process.env.WECOM_RISK_SELECTION_CARD_DELAY_MS,
+  200,
+);
 
 if (!riskDirectEnabled) {
   const reasons = [
@@ -445,6 +459,10 @@ if (!riskDirectEnabled) {
   console.warn(`WeCom risk fast path disabled: ${reasons.join('; ')}`);
 }
 
+// Start the expensive Python/data warmup as soon as the daemon is initialized.
+// The WebSocket/Codex startup can proceed in parallel, and authenticated retries
+// remain idempotent through riskWarmup plus the client lookup cache.
+warmRiskService();
 await codex.prepareRun();
 
 const client = new WSClient({ botId, secret, requestTimeout: requestTimeoutMs });
@@ -2319,7 +2337,8 @@ function isRiskUserAllowed(userid: string | undefined): boolean {
 function warmRiskService(): void {
   if (!riskClient || riskWarmup || riskAccessLocked) return;
   const startedAt = Date.now();
-  riskWarmup = riskClient.listProducts()
+  riskWarmup = riskClient.prewarm()
+    .then(() => riskClient.listProducts())
     .then((products) => {
       const durationMs = Date.now() - startedAt;
       log.info('wecom-risk', 'warmup-completed', { durationMs, products: products.length });

@@ -90,7 +90,7 @@ export class RiskInteractionController {
   private readonly selectionCardDelayMs: number;
 
   constructor(private readonly deps: RiskInteractionDependencies) {
-    this.selectionCardDelayMs = deps.selectionCardDelayMs ?? 800;
+    this.selectionCardDelayMs = deps.selectionCardDelayMs ?? 200;
   }
 
   async executeQueryMessage(
@@ -460,7 +460,9 @@ export class RiskInteractionController {
     if (!riskRouter) return;
     try {
       const execute = async () => {
-        await this.deps.refreshHealth();
+        // Health persistence is observability, not a prerequisite for risk execution.
+        // Do not put its atomic file write on the user-visible critical path.
+        void this.deps.refreshHealth();
         const progressRelay = new RiskProgressRelay(
           (progress) =>
             progressTarget?.kind === 'stream'
@@ -553,7 +555,7 @@ export class RiskInteractionController {
         await this.sendRiskMarkdown(body, content);
       }
     } finally {
-      await this.deps.refreshHealth();
+      void this.deps.refreshHealth();
     }
   }
 

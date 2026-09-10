@@ -154,6 +154,20 @@ describe('WeCom stateless risk query router', () => {
     expect(listProducts).toHaveBeenCalledTimes(2);
   });
 
+  it('does not load products for product-independent security search and credit queries', async () => {
+    const listProducts = vi.fn(async () => ['安联ESG纯债1号资产管理产品']);
+    const searchSecurities = vi.fn(async () => []);
+    const getCredit = vi.fn(async () => ({}));
+    const router = new WeComRiskRouter(fakeService({ listProducts, searchSecurities, getCredit }));
+
+    await router.handle('single:search-fast', '搜索证券 国债0115');
+    await router.handle('single:credit-fast', '赣锋锂业授信额度');
+
+    expect(searchSecurities).toHaveBeenCalledOnce();
+    expect(getCredit).toHaveBeenCalledWith('赣锋锂业');
+    expect(listProducts).not.toHaveBeenCalled();
+  });
+
   it('reports explicit progress for holdings and credit queries', async () => {
     const holdingsProgress: string[] = [];
     const creditProgress: string[] = [];

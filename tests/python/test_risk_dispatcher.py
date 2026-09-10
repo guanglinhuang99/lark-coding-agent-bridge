@@ -65,6 +65,10 @@ class DispatcherTests(unittest.TestCase):
         self.assertEqual(len(web.payloads), 1)
         self.assertEqual(web.payloads[0], {"product": "ESG1号", "actions": actions})
         self.assertEqual(result["result"]["actions"], actions)
+        self.assertIn("bridge_timings", result)
+        self.assertGreaterEqual(result["bridge_timings"]["total_ms"], 0)
+        self.assertGreaterEqual(result["bridge_timings"]["submit_ms"], 0)
+        self.assertGreaterEqual(result["bridge_timings"]["poll_ms"], 0)
 
     def test_pretrade_preserves_legacy_single_action_submission(self):
         web = FakePretradeWeb()

@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "task": "wecom-risk-cpu-acceptance-20260910",
+  "verdict": "BLOCKED",
+  "baseline_head": "ddb99f650394e470c56bc214d77ec6b1af6adf9c",
+  "hashes": {
+    "r3_bridge_sha256": "6ef23820198c3285e707fd5411ad5e11c1e41d37b18c9d08bf378a8c093f7d16",
+    "candidate_bridge_sha256": "cce6da1375c782050c3fe830ab3ac900e7ad4f713b0d06a1507f7ec282f5c389"
+  },
+  "preconditions": {
+    "vpn_doctor": {
+      "exit_code": 0,
+      "ready": false,
+      "category": "permission_denied_route_inspection"
+    },
+    "intranet_http_probe": {
+      "exit_code": 7,
+      "reachable": false,
+      "category": "local_proxy_refused_before_target"
+    }
+  },
+  "matrix": {
+    "get_holdings": "BLOCKED_NOT_RUN",
+    "search_securities": "BLOCKED_NOT_RUN",
+    "get_credit": "BLOCKED_NOT_RUN",
+    "calculate_pretrade_single_buy": "BLOCKED_NOT_RUN",
+    "calculate_pretrade_changed_amount": "BLOCKED_NOT_RUN",
+    "calculate_pretrade_two_leg_buy": "BLOCKED_NOT_RUN"
+  },
+  "semantic_comparison": "NOT_PERFORMED",
+  "local_validation": {
+    "isolated_ci_local_equivalent": "NOT_RUN",
+    "python_unittest": "NOT_RUN",
+    "reason": "mandatory live precondition permission barrier"
+  },
+  "safety": {
+    "production_mutation": false,
+    "live_orders": false,
+    "messages_sent": false,
+    "credentials_read": false,
+    "owned_test_processes_started": 0,
+    "owned_test_processes_left_alive": 0
+  },
+  "process_state": {
+    "wecom": { "pid_before": 64122, "pid_after": 64122, "runs_before": 1, "runs_after": 1 },
+    "risk_bridge": { "pid_before": 64125, "pid_after": 64125 },
+    "lark": { "pid_before": 36940, "pid_after": 36940, "runs_before": 1, "runs_after": 1 }
+  },
+  "private_raw_evidence_dir": null,
+  "isolated_snapshot_dir": null,
+  "native_wecom_e2e_verified": false,
+  "production_cutover_allowed": false,
+  "independent_local_validation": {
+    "executor": "MCPX after bounded Codex subtask",
+    "snapshot": "/private/tmp/wecom-risk-cpu-validation-COvQbq",
+    "matching_regular_source_files": 624,
+    "exit_code": 0,
+    "test_files_passed": 162,
+    "tests_passed": 1199,
+    "controlled_benchmark_skipped": 1,
+    "python_tests": 40,
+    "python_exit_code": 0,
+    "web_build": "PASS",
+    "typecheck": "PASS",
+    "server_build": "PASS",
+    "diff_check": "PASS"
+  },
+  "unloaded_package": {
+    "path": "/Users/guanglin/.lark-channel/releases/wecom-risk-cpu-20260910-cce6da13",
+    "status": "PREPARED_NOT_DEPLOYED",
+    "runtime_dependencies_resolved": 8,
+    "javascript_syntax": "PASS",
+    "python_ast": "PASS",
+    "plist_syntax": "PASS",
+    "rollback_release": "wecom-risk-perf-20260910-f69e76dd-r3",
+    "rollback_plist_sha256": "5d96bb0ee9e34deed18d603c1591ade7630c51734f7239ef45e008b4272842fc"
+  },
+  "durable_private_evidence": {
+    "path": "/Users/guanglin/.lark-channel/acceptance/risk-cpu-20260910-cce6da13",
+    "copied_files": 107,
+    "copy_hashes_verified": true,
+    "historical_simulation_payloads": 93,
+    "new_live_simulations": 0
+  }
+}

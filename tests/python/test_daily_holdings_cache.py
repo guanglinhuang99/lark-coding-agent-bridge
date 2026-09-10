@@ -27,8 +27,13 @@ class DailyCacheTests(unittest.TestCase):
         self.read = Mock(return_value=self.rows)
         self.cache = self.make_cache()
 
-    def make_cache(self):
-        return bridge.DailyPQCache(self.path, self.read, lambda: self.now)
+    def make_cache(self, memory_max_entries=16):
+        return bridge.DailyPQCache(
+            self.path,
+            self.read,
+            lambda: self.now,
+            memory_max_entries=memory_max_entries,
+        )
 
     def test_shared_instances_concurrent_and_restart(self):
         caches = [self.make_cache() for _ in range(4)]
@@ -100,6 +105,8 @@ class DailyCacheTests(unittest.TestCase):
                               'date': [pd.Timestamp('2026-09-08'), pd.NaT],
                               'nullable': pd.Series([1, pd.NA], dtype='Int64')})
         self.read.return_value = frame
+        encoded = bridge.DailyPQCache.encode(frame)
+        self.assertEqual(encoded[0], 'dataframe_json_v2')
         pd.testing.assert_frame_equal(self.cache('pqread', SQL, lower_case=False), frame)
         pd.testing.assert_frame_equal(self.make_cache()('pqread', SQL, lower_case=False), frame)
         self.read.assert_called_once()
@@ -138,6 +145,41 @@ class DailyCacheTests(unittest.TestCase):
         self.assertEqual(self.cache('pqread', SQL), [])
         self.assertEqual(self.cache('pqread', SQL), [])
         self.assertEqual(self.read.call_count, 2)
+
+    def test_metrics_distinguish_backend_miss_from_memory_and_persistent_hits(self):
+        before = self.cache.snapshot_metrics()
+        self.cache('pqread', SQL)
+        self.cache('pqread', SQL)
+        delta = self.cache.metrics_since(before)
+        self.assertEqual(delta['miss']['count'], 1)
+        self.assertEqual(delta['memory_hit']['count'], 1)
+        self.assertGreaterEqual(delta['miss']['backend_ms'], 0)
+        self.assertEqual(delta['memory_hit']['backend_ms'], 0)
+
+        restarted = self.make_cache(memory_max_entries=0)
+        before = restarted.snapshot_metrics()
+        self.assertEqual(restarted('pqread', SQL), self.rows)
+        delta = restarted.metrics_since(before)
+        self.assertEqual(delta['hit']['count'], 1)
+        self.assertEqual(delta['hit']['backend_ms'], 0)
+
+    def test_memory_hit_returns_an_isolated_copy(self):
+        first = self.cache('pqread', SQL)
+        first[0]['amount'] = 9
+        self.assertEqual(self.cache('pqread', SQL), self.rows)
+        self.assertEqual(self.read.call_count, 1)
+
+    def test_legacy_dataframe_payload_still_decodes(self):
+        try:
+            import pandas as pd
+        except ImportError:
+            self.skipTest('pandas unavailable')
+        frame = pd.DataFrame({'amount': [Decimal('1.23')], 'date': [pd.Timestamp('2026-09-08')]})
+        legacy = ['dataframe', bridge.DailyPQCache.encode({
+            'split': frame.to_dict(orient='split'),
+            'dtypes': [str(dtype) for dtype in frame.dtypes],
+        })]
+        pd.testing.assert_frame_equal(bridge.DailyPQCache.decode(legacy), frame)
 
     def test_non_pq_bypass(self):
         for _ in range(2):
