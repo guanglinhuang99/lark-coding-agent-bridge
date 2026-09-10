@@ -36,7 +36,7 @@ describe('credit CLI dispatch', () => {
     const api = setup();
     const before = api.riskStates.getPretrade('conversation');
     const stream = { finish: vi.fn(async (_content: string) => true) };
-    await api.execute({ body: { from: { userid: 'u1' } } }, 'conversation', '/授信 公司甲', [], stream, true, false, 'task', false);
+    await api.execute({ body: { from: { userid: 'u1' } } }, 'conversation', '/授信 公司甲', [], stream, true, false, false, 'task', false);
     expect(api.riskClient.getCredit).toHaveBeenCalledWith('公司甲');
     expect(api.riskClient.getCredits).not.toHaveBeenCalled();
     expect(api.riskRouter.handle).not.toHaveBeenCalled();
@@ -47,7 +47,7 @@ describe('credit CLI dispatch', () => {
   it('enforces the existing risk access gate before querying credit', async () => {
     const api = setup();
     const stream = { finish: vi.fn(async (_content: string) => true) };
-    await api.execute({ body: { from: { userid: 'u1' } } }, 'conversation', '/授信 公司甲', [], stream, false, true, 'task', false);
+    await api.execute({ body: { from: { userid: 'u1' } } }, 'conversation', '/授信 公司甲', [], stream, false, true, false, 'task', false);
     expect(api.riskClient.getCredit).not.toHaveBeenCalled();
     expect(api.riskClient.getCredits).not.toHaveBeenCalled();
     expect(stream.finish.mock.calls[0]?.[0]).toContain('没有风险限额查询权限');

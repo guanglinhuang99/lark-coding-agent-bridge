@@ -125,6 +125,7 @@ import { NavigationController } from './navigation-controller';
 import { executeCreditCommand } from './risk/credit-command';
 import {
   parseWeComCommand,
+  shouldFallbackRiskCommandToIntent,
   shouldUseRiskFastPath,
   WECOM_HELP_LINES,
   WECOM_RISK_USAGE_LINES,
@@ -658,6 +659,7 @@ async function handleMessage<T extends BaseMessage>(
   const key = capturedScope ?? sessionStore.captureScope(conversationKey(body));
   const scopedWorkspace = sessionStore.workspaceFor(key);
   const parsedCommand = parseWeComCommand(text);
+  const explicitRiskCommand = parsedCommand.kind === 'risk-measurement';
   if (durableTaskId) {
     const task = classifyTask(text, {
       hasAttachments: mediaInputs.length > 0,
@@ -676,10 +678,6 @@ async function handleMessage<T extends BaseMessage>(
     return;
   }
   if (parsedCommand.kind === 'risk-measurement') {
-    if (!parsedCommand.payload) {
-      await replyOnce(frame, '风险限额测算用法', WECOM_RISK_USAGE_LINES);
-      return;
-    }
     text = parsedCommand.payload;
   }
   const command = text.toLowerCase();
@@ -812,10 +810,12 @@ async function handleMessage<T extends BaseMessage>(
   }
 
   const hasActiveRiskState = riskStates.hasPendingOrExpired(key);
+  const pretradeIntentCandidate = isPretradeIntentCandidate(text);
   const riskCandidate = shouldUseRiskFastPath(
     parsedCommand,
     hasActiveRiskState,
     mediaInputs.length > 0,
+    pretradeIntentCandidate,
   );
   const riskAccessDenied = riskCandidate && !isRiskUserAllowed(body.from?.userid);
   const useRiskFastPath = riskCandidate && !riskAccessDenied;
@@ -824,6 +824,8 @@ async function handleMessage<T extends BaseMessage>(
   }
   const acknowledgement = text
     ? renderWeComAcknowledgement('input', text)
+    : explicitRiskCommand
+      ? renderWeComAcknowledgement('input', '测算')
     : `收到，您发送的 ${mediaInputs.length} 个附件已收到。`;
   await new WeComStreamReply(client, frame, generateReqId('ack'))
     .finish(truncateUtf8(acknowledgement, streamMaxBytes))
@@ -852,6 +854,7 @@ async function handleMessage<T extends BaseMessage>(
         stream,
         useRiskFastPath,
         riskAccessDenied,
+        explicitRiskCommand,
         controlTaskId,
         controlCardAttached,
         durableTaskId,
@@ -971,6 +974,7 @@ async function executeConversationMessage(
   stream: WeComStreamReply,
   useRiskFastPath: boolean,
   riskAccessDenied: boolean,
+  explicitRiskCommand: boolean,
   controlTaskId: string,
   controlCardAttached: boolean,
   durableTaskId?: string,
@@ -1010,11 +1014,13 @@ async function executeConversationMessage(
           return;
         }
         if (useRiskFastPath && riskRouter && riskClient) {
+          const pretradeIntentCandidate = isPretradeIntentCandidate(text);
           const expiredRiskState = riskStates.consumeExpired(key);
           if (
             expiredRiskState &&
             !isRiskCandidate(text) &&
-            !isPretradeIntentCandidate(text)
+            !pretradeIntentCandidate &&
+            !explicitRiskCommand
           ) {
             riskSelectionTasks.clearConversation(key);
             riskStates.clearTasksForConversation(key);
@@ -1030,7 +1036,11 @@ async function executeConversationMessage(
           }
 
           const pendingQuery = riskStates.getQuery(key);
-          if (pendingQuery) {
+          if (pendingQuery && explicitRiskCommand) {
+            riskSelectionTasks.clearConversation(key);
+            riskStates.clearTasksForConversation(key);
+            riskStates.delete(key);
+          } else if (pendingQuery) {
             riskSelectionTasks.clearConversation(key);
             riskStates.clearTasksForConversation(key);
             const queryHandled = await riskInteraction.executeQueryMessage(
@@ -1041,7 +1051,7 @@ async function executeConversationMessage(
             );
             if (queryHandled) return;
             riskStates.delete(key);
-            if (isPretradeIntentCandidate(text)) {
+            if (pretradeIntentCandidate || explicitRiskCommand) {
               await startRiskIntentFlow(body, key, text, stream);
               return;
             }
@@ -1050,7 +1060,7 @@ async function executeConversationMessage(
           const pendingIntent = riskStates.getPretrade(key);
           if (
             pendingIntent &&
-            isPretradeIntentCandidate(text) &&
+            (pretradeIntentCandidate || explicitRiskCommand) &&
             !isRiskIntentCorrection(text)
           ) {
             await startRiskIntentFlow(body, key, text, stream);
@@ -1188,20 +1198,32 @@ async function executeConversationMessage(
             await revisePendingRiskConfirmation(body, key, text, stream, pendingIntent);
             return;
           }
-          if (!pendingIntent && isPretradeIntentCandidate(text)) {
+          if (!pendingIntent && pretradeIntentCandidate) {
+            await startRiskIntentFlow(body, key, text, stream);
+            return;
+          }
+          if (!pretradeIntentCandidate) {
+            const queryHandled = await riskInteraction.executeQueryMessage(
+              body,
+              key,
+              stream,
+              async (onProgress) => {
+                const result = await riskRouter.handle(key, text, onProgress);
+                return shouldFallbackRiskCommandToIntent(explicitRiskCommand, result)
+                  ? { handled: false }
+                  : result;
+              },
+            );
+            if (queryHandled) return;
+          }
+          if (explicitRiskCommand) {
             await startRiskIntentFlow(body, key, text, stream);
             return;
           }
         }
-        if (useRiskFastPath && riskRouter && !isPretradeIntentCandidate(text)) {
-          riskSelectionTasks.clearConversation(key);
-          riskStates.clearTasksForConversation(key);
-          if (await riskInteraction.executeQueryMessage(
-            body,
-            key,
-            stream,
-            (onProgress) => riskRouter.handle(key, text, onProgress),
-          )) return;
+        if (explicitRiskCommand || isPretradeIntentCandidate(text)) {
+          await startRiskIntentFlow(body, key, text, stream);
+          return;
         }
         const attachments = await resolveAttachments(mediaInputs);
         const prompt = buildWeComAgentPrompt(
@@ -1251,6 +1273,7 @@ async function executeConversationMessage(
     await refreshHealth();
   }
 }
+
 
 function isWorkspaceScope(value: string): boolean {
   return /^(?:group|single):workspace-v1:/u.test(value);
@@ -1384,7 +1407,15 @@ async function startRiskIntentFlow(
   text: string,
   stream: WeComStreamReply,
 ): Promise<void> {
-  if (!riskClient) return;
+  if (!riskClient) {
+    await stream.finish(
+      renderWeComNotice('风险查询暂时不可用', ['风险数据服务尚未就绪；本次未进入普通聊天。'], {
+        status: 'error',
+        eyebrow: 'RISK · WECOM',
+      }),
+    );
+    return;
+  }
   riskSelectionTasks.clearConversation(key);
   riskStates.clearTasksForConversation(key);
   await stream.update(
@@ -1426,7 +1457,7 @@ async function startRiskIntentFlow(
     }
     log.fail('wecom-risk-intent', error, { step: 'analysis' });
     await stream.finish(
-      renderWeComNotice('风险查询暂时不可用', ['暂时无法解析交易信息，请稍后重试。'], {
+      renderWeComNotice('交易信息无法确认', ['请补充或修正账户、证券、交易动作和金额；本次未进入普通聊天。'], {
         status: 'error',
         eyebrow: 'RISK · WECOM',
       }),

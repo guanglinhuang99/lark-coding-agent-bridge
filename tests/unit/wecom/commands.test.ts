@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   parseWeComCommand,
+  isRiskIntentFlowRequired,
+  shouldFallbackRiskCommandToIntent,
   shouldUseRiskFastPath,
   WECOM_COMMAND_HINT,
   WECOM_HELP_LINES,
@@ -19,10 +21,11 @@ describe('WeCom command gate', () => {
     });
   });
 
-  it('recognizes an empty risk command without treating it as a flow entry', () => {
+  it('recognizes an empty risk command as a mandatory risk-flow entry', () => {
     const command = parseWeComCommand('/测算');
     expect(command).toEqual({ kind: 'risk-measurement', payload: '' });
-    expect(shouldUseRiskFastPath(command, false, false)).toBe(false);
+    expect(shouldUseRiskFastPath(command, false, false)).toBe(true);
+    expect(isRiskIntentFlowRequired(command, false)).toBe(true);
     expect(WECOM_RISK_USAGE_LINES.join('\n')).toContain('/测算 <交易或查询文本>');
   });
 
@@ -31,6 +34,16 @@ describe('WeCom command gate', () => {
     expect(command).toEqual({ kind: 'other' });
     expect(shouldUseRiskFastPath(command, false, false)).toBe(false);
     expect(shouldUseRiskFastPath(command, true, false)).toBe(true);
+  });
+
+  it('keeps explicit commands and natural-language trades out of ordinary chat', () => {
+    expect(isRiskIntentFlowRequired(parseWeComCommand('测算 模糊交易描述'), false)).toBe(true);
+    expect(isRiskIntentFlowRequired(parseWeComCommand('ESG1号拟投一只债'), true)).toBe(true);
+    expect(shouldUseRiskFastPath(parseWeComCommand('ESG1号投债券'), false, false, true)).toBe(true);
+    expect(shouldFallbackRiskCommandToIntent(
+      true,
+      { handled: true, intent: 'unknown-risk' },
+    )).toBe(true);
   });
 
   it('supports help discovery and reliability shortcuts', () => {

@@ -9,6 +9,7 @@ import {
   normalizeRiskDraft,
   parseRiskIntentOutputPartial,
   resolveInitialRiskIntent,
+  RiskIntentClarificationError,
   selectRiskIntentSecurity,
   type RiskAiDraft,
   type RiskIntentState,
@@ -722,6 +723,65 @@ describe('multi-account pretrade batches', () => {
         { resolvedProduct: secondProduct, transactions: [{ amountText: '1000万' }, { amountText: '1000w' }] },
       ] },
     });
+  });
+
+  it.each(['拟投', '投'])('uses AI fallback for multi-account “%s” input and continues to confirmation', async (verb) => {
+    const fallbackText = [
+      '测算',
+      `ESG1号${verb}26粤铁建MTN005 4000万、26中银金租债03BC 4000w`,
+      `全享多利6号${verb}26粤铁建MTN005 1000万、26中银金租债03BC 1000w`,
+    ].join('\n');
+    const aiDraft = parsedDraft();
+    aiDraft.accounts = aiDraft.accounts?.map((account, accountIndex) => ({
+      ...account,
+      transactions: account.transactions.map(transaction => ({
+        ...transaction,
+        sourceText: fallbackText.split('\n')[accountIndex + 1],
+      })),
+    }));
+    const analyze = vi.fn(async () => aiDraft);
+    const searchSecurities = vi.fn(async (query: string) => query === yue.name ? [yue] : [boc]);
+    const service = fakeService({
+      listProducts: vi.fn(async () => [esg1Product, secondProduct]),
+      searchSecurities,
+    });
+
+    const state = await resolveInitialRiskIntent(fallbackText, service, analyze);
+
+    expect(analyze).toHaveBeenCalledOnce();
+    expect(searchSecurities).toHaveBeenCalledTimes(4);
+    expect(state).toMatchObject({
+      stage: 'confirm',
+      draft: {
+        accounts: [
+          { resolvedProduct: esg1Product, transactions: [{ amountText: '4000万' }, { amountText: '4000w' }] },
+          { resolvedProduct: secondProduct, transactions: [{ amountText: '1000万' }, { amountText: '1000w' }] },
+        ],
+      },
+    });
+  });
+
+  it('keeps an AI extraction failure inside the risk flow as a clarification error', async () => {
+    const fallbackText = [
+      '/测算',
+      'ESG1号拟投26粤铁建MTN005 4000万、26中银金租债03BC 4000w',
+      '全享多利6号拟投26粤铁建MTN005 1000万、26中银金租债03BC 1000w',
+    ].join('\n');
+    const analyze = vi.fn(async (): Promise<RiskAiDraft> => {
+      throw new RiskIntentClarificationError(['交易信息无法确认']);
+    });
+    const searchSecurities = vi.fn(async () => [yue]);
+    const service = fakeService({
+      listProducts: vi.fn(async () => [esg1Product, secondProduct]),
+      searchSecurities,
+    });
+
+    await expect(resolveInitialRiskIntent(fallbackText, service, analyze)).rejects.toMatchObject({
+      name: 'RiskIntentClarificationError',
+      missing: ['交易信息无法确认'],
+    });
+    expect(analyze).toHaveBeenCalledOnce();
+    expect(searchSecurities).not.toHaveBeenCalled();
   });
 
   it('rejects a model result that collapses multiple account blocks', async () => {

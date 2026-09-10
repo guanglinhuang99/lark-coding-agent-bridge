@@ -48,11 +48,25 @@ export function shouldUseRiskFastPath(
   command: WeComCommand,
   hasActiveRiskState: boolean,
   hasAttachments: boolean,
+  pretradeIntentCandidate = false,
 ): boolean {
   if (command.kind === 'credit-query') return Boolean(command.payload);
-  if (hasAttachments && !hasActiveRiskState) return false;
-  return (
-    hasActiveRiskState ||
-    (command.kind === 'risk-measurement' && Boolean(command.payload))
-  );
+  const intentRequired = isRiskIntentFlowRequired(command, pretradeIntentCandidate);
+  if (hasAttachments && !hasActiveRiskState && !intentRequired) return false;
+  return hasActiveRiskState || intentRequired;
+}
+
+/** Explicit measurement commands and natural-language trades must never fall through to chat. */
+export function isRiskIntentFlowRequired(
+  command: WeComCommand,
+  pretradeIntentCandidate: boolean,
+): boolean {
+  return command.kind === 'risk-measurement' || pretradeIntentCandidate;
+}
+
+export function shouldFallbackRiskCommandToIntent(
+  explicitRiskCommand: boolean,
+  result: { handled: boolean; intent?: string },
+): boolean {
+  return explicitRiskCommand && result.handled && result.intent === 'unknown-risk';
 }

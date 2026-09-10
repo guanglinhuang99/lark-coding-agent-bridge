@@ -483,6 +483,8 @@ describe('AI pretrade intent normalization', () => {
     expect(isPretradeIntentCandidate('ESG纯债1号买1000万国债')).toBe(true);
     expect(isPretradeIntentCandidate('ESG纯债1号申购0.1')).toBe(true);
     expect(isPretradeIntentCandidate('ESG纯债1号正回购1亿7天')).toBe(true);
+    expect(isPretradeIntentCandidate('ESG1号拟投26粤铁建MTN005 1000万')).toBe(true);
+    expect(isPretradeIntentCandidate('ESG1号投26粤铁建MTN005 1000万')).toBe(true);
   });
 
   it('infers an omitted account from the text before the action', () => {

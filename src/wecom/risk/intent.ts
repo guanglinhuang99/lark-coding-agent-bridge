@@ -168,7 +168,9 @@ export function applySimpleRiskCorrection(
 
 export function isPretradeIntentCandidate(text: string): boolean {
   if (/能不能买|是否能买|可以买吗|可不可以买|禁投|关联方证券/.test(text)) return false;
-  if (!findAction(text) && !/拟投资/.test(text)) return false;
+  const hasTradeExpression = Boolean(findAction(text)) ||
+    /拟投(?:资)?|投(?!资(?:限制|范围|比例|规则)|研|诉|票)/.test(text);
+  if (!hasTradeExpression) return false;
   return (
     /(?:安联|产品|资产管理|资管|账户|证券|债券|股票|国债|基金|回购|一级|二级)/.test(text) ||
     /(?:金额|数量|\d+(?:\.\d+)?\s*(?:亿|万|元|块|股|手|张|份))/.test(text) ||
@@ -937,7 +939,9 @@ function assertInitialTransactionCoverage(text: string, draft: RiskAiDraft): voi
   const codes = [...new Set(text.match(/\b\d{6,12}\.(?:IB|SH|SZ)\b/gi)?.map(code => code.toUpperCase()))];
   const items = draft.accounts?.flatMap(account => account.transactions) ?? draft.transactions ?? [draft];
   const codedLines = text.split(/\r?\n/).filter(line => /^\s*\d+[、.)）]/.test(line) && /\b\d{6,12}\.(?:IB|SH|SZ)\b/i.test(line));
-  const accountLines = text.split(/\r?\n/).filter(line => /拟投资/.test(line));
+  const accountLines = text.split(/\r?\n/).filter(line =>
+    /拟投(?:资)?|投(?!资(?:限制|范围|比例|规则)|研|诉|票)/.test(line),
+  );
   const statedAmounts = accountLines.flatMap(line => line.match(/\d+(?:\.\d+)?\s*(?:亿元|万元|亿|万|元|[wW])/gu) ?? []);
   if (accountLines.length > 1 && (!draft.accounts || draft.accounts.length !== accountLines.length || statedAmounts.length > items.length)) {
     throw new RiskIntentClarificationError(['多账户交易清单未完整识别，请按账户逐笔列明证券和金额']);
