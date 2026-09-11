@@ -25,6 +25,7 @@ class FakeChild extends EventEmitter {
 
 function installBridge(
   handler: (request: Record<string, unknown>, child: FakeChild) => void,
+  ready: Record<string, unknown> = { type: 'ready' },
 ): FakeChild {
   const child = new FakeChild();
   let input = '';
@@ -38,7 +39,7 @@ function installBridge(
     }
   });
   childProcessMocks.spawn.mockReturnValue(child);
-  queueMicrotask(() => child.stdout.write('{"type":"ready"}\n'));
+  queueMicrotask(() => child.stdout.write(`${JSON.stringify(ready)}\n`));
   return child;
 }
 
@@ -47,6 +48,8 @@ function client(
     timeoutMs?: number;
     startupTimeoutMs?: number;
     onStage?: ReturnType<typeof vi.fn>;
+    onStartup?: ReturnType<typeof vi.fn>;
+    onBusinessCapabilities?: ReturnType<typeof vi.fn>;
   } = {},
 ) {
   return new RiskDirectClient({
@@ -57,6 +60,8 @@ function client(
     timeoutMs: options.timeoutMs,
     startupTimeoutMs: options.startupTimeoutMs,
     onStage: options.onStage,
+    onStartup: options.onStartup,
+    onBusinessCapabilities: options.onBusinessCapabilities,
     intranetProbe: async () => true,
   });
 }
@@ -91,6 +96,52 @@ describe('riskservice direct client', () => {
     expect(requests[0]).toMatchObject({ method: 'get_credits', args: { entities: ['公司甲', '公司乙'] } });
     await service.close();
   });
+  it('reports sanitized startup timing metadata from the bridge ready event', async () => {
+    const onStartup = vi.fn();
+    installBridge(
+      (request, child) => {
+        child.stdout.write(`${JSON.stringify({ id: request.id, type: 'result', data: { products: ['产品A'] } })}\n`);
+      },
+      { type: 'ready', startup_timings: { import_azpy_ms: 12.5, total_ms: 18.75, ignored: 'x' } },
+    );
+    const service = client({ onStartup });
+
+    await expect(service.listProducts()).resolves.toEqual(['产品A']);
+    expect(onStartup).toHaveBeenCalledWith({ import_azpy_ms: 12.5, total_ms: 18.75 });
+    await service.close();
+  });
+
+  it('reports only the fixed shared business capability shape', async () => {
+    const onBusinessCapabilities = vi.fn();
+    installBridge(
+      (request, child) => {
+        child.stdout.write(`${JSON.stringify({ id: request.id, type: 'result', data: { products: ['产品A'] } })}\n`);
+      },
+      {
+        type: 'ready',
+        business_capabilities: {
+          shared_text_memoization: 'optimized',
+          functions: {
+            clean_text: { optimized: true, max_entries: 4096, ignored: 'x' },
+            normalize_product_name: { optimized: true, max_entries: 4096 },
+          },
+          ignored: 'x',
+        },
+      },
+    );
+    const service = client({ onBusinessCapabilities });
+
+    await expect(service.listProducts()).resolves.toEqual(['产品A']);
+    expect(onBusinessCapabilities).toHaveBeenCalledWith({
+      sharedTextMemoization: 'optimized',
+      functions: {
+        clean_text: { optimized: true, maxEntries: 4096 },
+        normalize_product_name: { optimized: true, maxEntries: 4096 },
+      },
+    });
+    await service.close();
+  });
+
   it('reads structured content from the persistent local process', async () => {
     installBridge((request, child) => {
       child.stdout.write(
@@ -362,7 +413,51 @@ describe('shared lookup cache and admission', () => {
   });
 });
 
+describe('closed runtime admission', () => {
+  it('never reopens an explicitly closed client through prewarm', async () => {
+    const child = installBridge(() => {});
+    const service = client();
+    await service.close();
+    try {
+      await expect(service.prewarm()).rejects.toMatchObject({ code: 'direct-process' });
+      expect(childProcessMocks.spawn).not.toHaveBeenCalled();
+      expect(service.runtimeStatus()).toEqual({ ready: false });
+    } finally { await service.close(); child.stdout.destroy(); }
+  });
+  it.each(['listProducts', 'getHoldings'] as const)('rejects a %s call when its intranet probe completes after close', async method => {
+    let resolveProbe!: (ready: boolean) => void;
+    const probe = new Promise<boolean>(resolve => { resolveProbe = resolve; });
+    const child = installBridge((request, process) => {
+      process.stdout.write(JSON.stringify({ id: request.id, type: 'result', data: { products: ['产品A'], holdings: [] } }) + '\n');
+    });
+    const service = new RiskDirectClient({ pythonPath: '/test/python', serviceDir: '/test/service',
+      stateDir: '/test/state', bridgePath: '/test/bridge', intranetProbe: () => probe });
+    const pending = (method === 'listProducts' ? service.listProducts() : service.getHoldings('产品A'))
+      .then(value => ({ value }), error => ({ error }));
+    await service.close();
+    resolveProbe(true);
+    try {
+      expect(await pending).toMatchObject({ error: { code: 'direct-process' } });
+      expect(childProcessMocks.spawn).not.toHaveBeenCalled();
+    } finally { await service.close(); child.stdout.destroy(); }
+  });
+});
+
 describe('intranet availability gate', () => {
+  it('can prewarm the local Python bridge without probing the intranet', async () => {
+    const intranetProbe = vi.fn(async () => false);
+    installBridge(() => {});
+    const service = new RiskDirectClient({
+      pythonPath: '/test/python', serviceDir: '/test/service', stateDir: '/test/state',
+      bridgePath: '/test/bridge', intranetProbe,
+    });
+
+    await expect(service.prewarm()).resolves.toBeUndefined();
+    expect(childProcessMocks.spawn).toHaveBeenCalledTimes(1);
+    expect(intranetProbe).not.toHaveBeenCalled();
+    await service.close();
+  });
+
   it('fails before starting the Python bridge when 10.8.11.57 is unavailable', async () => {
     const intranetProbe = vi.fn(async () => false);
     const service = new RiskDirectClient({
@@ -378,7 +473,23 @@ describe('intranet availability gate', () => {
     await service.close();
   });
 
-  it('checks connectivity before serving cached master data', async () => {
+  it('reuses a successful intranet probe within the configured positive TTL', async () => {
+    const intranetProbe = vi.fn(async () => true);
+    installBridge((request, child) => {
+      child.stdout.write(JSON.stringify({ id: request.id, type: 'result', data: { holdings: [] } }) + '\n');
+    });
+    const service = new RiskDirectClient({
+      pythonPath: '/test/python', serviceDir: '/test/service', stateDir: '/test/state',
+      bridgePath: '/test/bridge', intranetCacheTtlMs: 60_000, intranetProbe,
+    });
+
+    await service.getHoldings('产品A');
+    await service.getHoldings('产品B');
+    expect(intranetProbe).toHaveBeenCalledTimes(1);
+    await service.close();
+  });
+
+  it('checks connectivity before serving cached master data when positive TTL is disabled', async () => {
     let available = true;
     const intranetProbe = vi.fn(async () => available);
     installBridge((request, child) => {

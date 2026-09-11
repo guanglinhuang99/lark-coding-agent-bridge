@@ -62,12 +62,14 @@ describe('batch risk interaction presentation and selection', () => {
   it('keeps the leg index when Other is chosen for an ambiguous security', async () => {
     const api = setup();
     const execute = vi.spyOn(api.controller, 'executeSelection');
+    const current = pending();
+    api.states.setPretrade('conversation', current);
     await api.controller.handleIntentChoice(
       {} as never,
       {},
       'conversation',
       'task',
-      pending(),
+      current,
       '__other_security__',
       '其他',
     );
@@ -84,6 +86,7 @@ describe('batch risk interaction presentation and selection', () => {
     const schedule = vi.spyOn(api.controller, 'scheduleSelectionCard').mockImplementation(() => {});
     const execute = vi.spyOn(api.controller, 'executeSelection');
     const state = pending();
+    api.states.setPretrade('conversation', state);
     await api.controller.handleIntentChoice(
       {} as never,
       {},

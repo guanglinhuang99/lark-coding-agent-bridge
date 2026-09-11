@@ -1,5 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { writeFileAtomic } from '../platform/atomic-write';
+import type { RiskDirectRuntimeStatus } from './risk/client';
+import type { RiskBusinessSnapshot } from '../runtime/risk-business';
 
 export type WeComHealthPhase =
   | 'starting'
@@ -24,6 +26,10 @@ export interface WeComHealthSnapshot {
     enabled: boolean;
     serviceDirConfigured: boolean;
     pythonConfigured: boolean;
+    runtime?: RiskDirectRuntimeStatus;
+    warmup?: RiskBusinessSnapshot['warmup'];
+    accessEnabled?: boolean;
+    intent?: RiskBusinessSnapshot['intent'];
     reason?: string;
   };
 }

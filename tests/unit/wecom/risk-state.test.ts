@@ -69,6 +69,19 @@ describe('RiskStateRegistry', () => {
     expect(states.consumeExpired('chat')).toBe(false);
   });
 
+  it('enforces deadlines even before the timer callback has run', () => {
+    let now = 1000;
+    const states = new RiskStateRegistry(() => now, 100);
+    states.setPretrade('chat', pretrade);
+    states.registerTask('card', 'chat', pretrade, 1100);
+    now = 1100; // Advance wall clock only, deliberately do not execute timer callbacks.
+    expect(states.getConversation('chat')).toBeUndefined();
+    expect(states.has('chat')).toBe(false);
+    expect(states.getTask('card')).toBeUndefined();
+    expect(states.consumeExpired('chat')).toBe(true);
+    states.dispose();
+  });
+
   it('clears conversation and card continuation state together', () => {
     const states = new RiskStateRegistry(() => 1_000);
     states.setQuery('chat', query);

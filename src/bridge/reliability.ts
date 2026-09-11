@@ -212,7 +212,7 @@ function isRetryableFailure(kind: FailureKind): boolean {
   return kind === 'timeout' || kind === 'network' || kind === 'rate-limit' || kind === 'http-5xx';
 }
 
-async function withTimeout<T>(operation: string, timeoutMs: number, promise: Promise<T>, abort: () => void): Promise<T> {
+export async function withTimeout<T>(operation: string, timeoutMs: number, promise: Promise<T>, abort: () => void): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {

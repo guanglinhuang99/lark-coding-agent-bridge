@@ -15,6 +15,7 @@ interface Waiter {
   resolve: (permit: RunPermit) => void;
   reject: (error: Error) => void;
   timer?: NodeJS.Timeout;
+  detachAbort?: () => void;
 }
 
 /** Instance-local FIFO admission shared by both bridges; never a global singleton. */
@@ -33,23 +34,36 @@ export class ProcessPool {
       throw new RangeError('Pool queue limits must be non-negative');
     }
   }
-  async acquire(): Promise<RunPermit> {
+  async acquire(signal?: AbortSignal): Promise<RunPermit> {
+    signal?.throwIfAborted();
     if (this.closed) throw new RunCapacityError('shutting-down');
     this.drain();
     if (!this.waiters.length && this.active < this.limit()) return this.allocate();
     if (this.waiters.length >= this.maxQueued) throw new RunCapacityError('queue-full');
     return new Promise<RunPermit>((resolve, reject) => {
       const waiter: Waiter = { resolve, reject };
+      const abort = () => {
+        const index = this.waiters.indexOf(waiter);
+        if (index < 0) return;
+        this.waiters.splice(index, 1);
+        if (waiter.timer) clearTimeout(waiter.timer);
+        waiter.detachAbort?.();
+        reject(signal?.reason ?? new Error('Run admission cancelled'));
+      };
+      signal?.addEventListener('abort', abort, { once: true });
+      waiter.detachAbort = () => signal?.removeEventListener('abort', abort);
       if (this.queueTimeoutMs > 0) {
         waiter.timer = setTimeout(() => {
           const index = this.waiters.indexOf(waiter);
           if (index < 0) return;
           this.waiters.splice(index, 1);
+          waiter.detachAbort?.();
           reject(new RunCapacityError('queue-timeout'));
         }, this.queueTimeoutMs);
         waiter.timer.unref?.();
       }
       this.waiters.push(waiter);
+      if (signal?.aborted) abort();
       reportMetric('pool_waiting', this.waiters.length);
     });
   }
@@ -90,6 +104,7 @@ export class ProcessPool {
     this.closed = true;
     for (const waiter of this.waiters.splice(0)) {
       if (waiter.timer) clearTimeout(waiter.timer);
+      waiter.detachAbort?.();
       waiter.reject(new RunCapacityError('shutting-down'));
     }
   }
@@ -125,6 +140,7 @@ export class ProcessPool {
     while (!this.closed && this.waiters.length && this.active < this.limit()) {
       const waiter = this.waiters.shift()!;
       if (waiter.timer) clearTimeout(waiter.timer);
+      waiter.detachAbort?.();
       waiter.resolve(this.allocate());
     }
   }

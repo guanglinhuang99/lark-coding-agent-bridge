@@ -4,16 +4,25 @@ import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 import { parseWeComCommand } from '../../../src/wecom/commands';
 import { executeCreditCommand } from '../../../src/wecom/risk/credit-command';
+import { RiskApplication, type RiskReply } from '../../../src/business/risk/application';
+import { RiskStateRegistry } from '../../../src/business/risk/state';
+import { RiskProgressRelay } from '../../../src/business/risk/progress';
+import { truncateUtf8 } from '../../../src/wecom/presentation';
 
 function setup() {
   const source = readFileSync('src/wecom/cli.ts', 'utf8');
   const block = source.slice(source.indexOf('async function executeConversationMessage('), source.indexOf('function isWorkspaceScope('));
-  const states = new Map([['conversation', { stage: 'confirm', draft: { accountQuery: '原交易' } }]]);
-  const riskStates = {
-    getPretrade: (key: string) => states.get(key),
-  };
+  const riskStates = new RiskStateRegistry();
+  riskStates.setPretrade('conversation', { stage: 'confirm', originalText: '原交易', product: '原交易',
+    draft: { accountQuery: '原交易', action: 'subscription', amountText: '1000万', market: 'secondary' } });
   const context: any = {
     Date, Buffer, parseWeComCommand, executeCreditCommand, startingRuns: new Set(),
+    RiskProgressRelay, truncateUtf8, isRiskUserAllowed: () => true,
+    riskKeyFor: (key: string) => key,
+    riskInteraction: { renderReply: async (_body: unknown, _key: string, stream: any, reply: RiskReply) => {
+      if (reply.handled && reply.kind === 'pages') await stream.finish(reply.pages[0]);
+    } },
+    RiskIntentInterruptedError: class extends Error {},
     withReservation: async (_set: unknown, _key: string, fn: () => Promise<void>) => fn(),
     runGate: { run: async (fn: () => Promise<void>) => fn() },
     refreshHealth: vi.fn(async () => {}), reportMetric: vi.fn(), log: { info: vi.fn() },
@@ -25,6 +34,7 @@ function setup() {
     streamMaxBytes: 4000, messageTarget: () => 'target', client: { sendMessage: vi.fn() },
     renderWeComNotice: (title: string, lines: string[]) => [title, ...lines].join('\n'),
   };
+  context.riskApplication = new RiskApplication({ service: context.riskClient, router: context.riskRouter, states: riskStates });
   vm.runInNewContext(ts.transpileModule(block + '\nglobalThis.execute = executeConversationMessage;', {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   }).outputText, context);

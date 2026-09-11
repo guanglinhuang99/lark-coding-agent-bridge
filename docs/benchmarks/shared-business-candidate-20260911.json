@@ -1,0 +1,31 @@
+{
+  "schema": "shared-business-candidate/v1",
+  "source_commit": "6e70f4d24ffd35e8d31d3ba98fef5fc86186991b",
+  "source_tree": "d0939e67d3f5d68bf193262fd0015f221d37f324",
+  "branch": "refactor/shared-business-core",
+  "validated_at_utc": "2026-09-11T04:34:02Z",
+  "status": "CLEAN_CHECKOUT_VALIDATION_PASS",
+  "production_cutover_allowed": false,
+  "native_channel_acceptance": "NOT_RUN",
+  "github_push": "NOT_DONE",
+  "node": "v24.19.0",
+  "dependencies": "existing node_modules symlink; installation and other operating systems not revalidated",
+  "tests": {
+    "typescript": {"passed": 1305, "skipped": 1, "failed": 0},
+    "python": {"passed": 26, "skipped": 22, "failed": 0, "skip_reasons": {"external_credit_backend": 9, "shared_text_backend": 11, "polars": 2}}
+  },
+  "checks": {
+    "web_build": "PASS",
+    "typecheck": "PASS",
+    "server_build": "PASS",
+    "javascript_syntax": "PASS",
+    "python_asset_parity": "PASS",
+    "git_diff_check": "PASS"
+  },
+  "sha256": {
+    "dist/cli.js": "e0cbae145518ebf28caf17b3bee4078b5ded75e4cf8c3dcc9f69cb10c95fbd01",
+    "dist/wecom.js": "6f2c0108f77906ccc7277b9cd4d6d6a575531b5b581603a2b85158c387688697",
+    "dist/index.js": "5f765804b81cb7acdb74631d27f54a6ec1cb0db99a411635e7908f26eb54530f",
+    "dist/risk/direct_bridge.py": "0c87e1bf23d9cf4504a6dc2650beb40db77445611a4d38fbbc1432fd636645bc"
+  }
+}

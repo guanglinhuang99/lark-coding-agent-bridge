@@ -41,6 +41,7 @@ import {
 import { resolveAppSecret } from '../config/secret-resolver';
 import { log, reportMetric, withTrace } from '../core/logger';
 import { MediaCache, type LocalAttachment } from '../media/cache';
+import { createLarkRiskAdapter, type LarkRiskAdapter } from './risk-adapter';
 import {
   toPolicyAttachment,
   toPromptAttachment,
@@ -171,11 +172,13 @@ function stringifyArgs(args: unknown[]): string {
 }
 
 export interface BridgeChannel {
+  riskStatus?: LarkRiskAdapter['snapshot'];
   channel: LarkChannel;
   disconnect(): Promise<void>;
 }
 
 export interface StartChannelDeps {
+  riskAdapter?: LarkRiskAdapter;
   taskLedger?: TaskLedger;
   cfg: AppConfig;
   agent: AgentAdapter;
@@ -287,6 +290,11 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   };
 
   const channel = createLarkChannel(opts);
+  const riskAdapter = deps.riskAdapter ?? createLarkRiskAdapter({
+    channel, identity: bridgeIdentity, pool, activeRuns,
+    stateDir: deps.appPaths?.sessionsFile ? dirname(deps.appPaths.sessionsFile)
+      : join(deps.appPaths?.mediaDir ?? process.cwd(), 'risk-runtime'),
+  });
   const media = new MediaCache(channel, deps.appPaths?.mediaDir);
 
   // Pending → run handoff: while a run is active on a chat, block its pending
@@ -374,6 +382,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           logThreadModeOverride,
           executor,
           pool,
+          riskAdapter,
         }),
       ).catch((err) => log.fail('intake', err));
     },
@@ -433,6 +442,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         log.info('ws', 'reconnected');
       }
       consecutiveReconnects = 0;
+      void riskAdapter.start?.().catch(error => log.fail('risk-runtime', error, { step: 'reconnect' }));
     },
     // Classify common WS errors into the `network` phase so /doctor and grep
     // can find them without scanning generic `ws.fail` entries.
@@ -490,7 +500,15 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     controls.meeting = meetingManager;
   }
 
-  await channel.connect();
+  // Common prewarm policy runs independently of platform connection latency.
+  void riskAdapter.start?.().catch(error => log.fail('risk-runtime', error, { step: 'startup' }));
+  try {
+    await channel.connect();
+  } catch (error) {
+    await riskAdapter.close().catch(cleanupError => log.fail('risk-runtime', cleanupError, { step: 'startup-close' }));
+    throw error;
+  }
+  void riskAdapter.start?.().catch(error => log.fail('risk-runtime', error, { step: 'connected' }));
   const ownerRefresh = createOwnerRefreshController({
     controls,
     source: channel,
@@ -533,6 +551,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
 
   return {
     channel,
+    riskStatus: riskAdapter.snapshot,
     disconnect: async () => {
       activeRuns.pauseNewRuns('bridge-disconnect');
       ownerRefresh.stop();
@@ -548,6 +567,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       const [disconnectResult, stopAllResult, ...flushResults] = await Promise.allSettled([
         channel.disconnect(),
         activeRuns.stopAll(),
+        riskAdapter.close(),
         sessions.flush(),
         sessionCatalog?.flush(),
         callbackNonceStore?.flush(),
@@ -652,6 +672,7 @@ interface IntakeDeps {
   logThreadModeOverride: LogThreadModeOverride;
   executor: RunExecutor;
   pool: ProcessPool;
+  riskAdapter?: LarkRiskAdapter;
 }
 
 type LogThreadModeOverride = (input: {
@@ -661,6 +682,8 @@ type LogThreadModeOverride = (input: {
 }) => void;
 
 async function intakeMessage(deps: IntakeDeps): Promise<void> {
+  // No state created after arrival may be approved by this message, even if scope lookup yields.
+  const riskArrival = deps.riskAdapter?.markArrival?.();
   const {
     channel,
     agent,
@@ -782,6 +805,10 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     return;
   }
 
+  const businessWorkspace = workspaces.cwdFor(scope) ?? controls.profileConfig.workspaces.default;
+  // Capture the server-owned draft before any durable receipt write can yield.
+  const riskIngress = deps.riskAdapter?.capture?.(emsg, scope, businessWorkspace, riskArrival);
+  try {
   try {
     const claim = await deps.inbound?.accept(emsg);
     if (claim && !claim.accepted) {
@@ -795,6 +822,11 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     return;
   }
   try {
+  // Business commands run after authentication and durable deduplication, before generic chat.
+  if (await deps.riskAdapter?.handle(emsg, scope, businessWorkspace, riskIngress)) {
+    await deps.inbound?.finish([emsg], 'done');
+    return;
+  }
   const handled = await tryHandleCommand({
     channel,
     msg: emsg,
@@ -831,6 +863,10 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
   } catch (err) {
     await deps.inbound?.finish([emsg], 'failed').catch((failure) => log.fail('inbound-ledger', failure));
     throw err;
+  }
+  } finally {
+    // Includes rejected duplicates and failed writes; application release is idempotent.
+    riskIngress?.release();
   }
 }
 
