@@ -5,16 +5,20 @@ import type { RiskIntentState } from '../../../src/wecom/risk/intent';
 import { RiskInteractionController } from '../../../src/wecom/risk/interaction';
 import type { WeComRiskRouter } from '../../../src/wecom/risk/router';
 import { RiskStateRegistry } from '../../../src/wecom/risk/state';
+import { renderWeComRiskOutput } from '../../../src/wecom/presentation';
 
 function controllerFor(result: Record<string, unknown>) {
   const riskRouter = {
     executeConfirmed: vi.fn(async () => result),
     continue: vi.fn(async () => result),
   } as unknown as WeComRiskRouter;
+  const states = new RiskStateRegistry();
+  states.setPretrade('conversation', confirmed);
+  const sent: string[] = [];
   const controller = new RiskInteractionController({
     riskClient: {} as RiskService,
     riskRouter,
-    riskStates: new RiskStateRegistry(),
+    riskStates: states,
     riskSelectionTasks: new RiskSelectionTaskRegistry(),
     conversationQueue: { submit: vi.fn() } as never,
     runGate: { run: async <T>(fn: () => Promise<T>) => fn() },
@@ -23,11 +27,11 @@ function controllerFor(result: Record<string, unknown>) {
     refreshHealth: vi.fn(async () => {}),
     isRiskUserAllowed: () => true,
     updateTemplateCard: vi.fn(async () => {}),
-    sendMarkdownMessage: vi.fn(async () => {}),
+    sendMarkdownMessage: vi.fn(async (_body, content: string) => { sent.push(content); }),
     sendControlCardMessage: vi.fn(async () => {}),
     createRiskTaskId: () => 'risk-test',
   });
-  return { controller, riskRouter };
+  return { controller, riskRouter, states, sent };
 }
 
 const confirmed: Extract<RiskIntentState, { stage: 'confirm' }> = {
@@ -43,13 +47,31 @@ const confirmed: Extract<RiskIntentState, { stage: 'confirm' }> = {
 };
 
 describe('risk terminal status', () => {
+  it.each([false, true])('keeps every byte of long business results (confirmed=%s)', async confirmedResult => {
+    const { controller, states, sent } = controllerFor({});
+    const markdown = '结果行🙂：1000万元\n'.repeat(1200) + '唯一末尾：完整结果';
+    const streamed: string[] = [];
+    const before = states.getPretrade('conversation');
+    await controller.renderReply({}, 'conversation', {
+      update: async () => {}, finish: async content => { streamed.push(content); },
+    }, { handled: true, kind: 'result', confirmed: confirmedResult,
+      result: { handled: true, intent: 'query_holdings', markdown } });
+    const pages = confirmedResult ? sent : [...streamed, ...sent];
+    expect(pages.length).toBeGreaterThan(1);
+    expect(pages.every(page => Buffer.byteLength(page) <= 4000)).toBe(true);
+    expect(pages.join('')).toBe(renderWeComRiskOutput(markdown, false));
+    expect(pages.join('')).toContain('唯一末尾：完整结果');
+    expect(states.getPretrade('conversation')).toBe(before);
+    states.dispose();
+  });
+
   it('does not announce completion when the handled result is a risk error', async () => {
     const { controller } = controllerFor({
       handled: true,
       intent: 'risk-error',
       markdown: '⚠️ 交易规模无效：本次未执行测算。',
     });
-    const sendRouteResult = vi.spyOn(controller, 'sendRouteResult').mockResolvedValue();
+    const sendResult = vi.spyOn(controller, 'sendRiskMarkdown').mockResolvedValue();
     const stream = { update: vi.fn(async () => {}), finish: vi.fn(async () => {}) };
 
     await controller.executeSelection(
@@ -64,6 +86,7 @@ describe('risk terminal status', () => {
     const terminal = (stream.finish.mock.calls as unknown as Array<[string]>)[0]?.[0] ?? '';
     expect(terminal).toContain('风险限额测算失败');
     expect(terminal).not.toContain('风险限额测算完成');
-    expect(sendRouteResult).toHaveBeenCalledOnce();
+    expect(sendResult).toHaveBeenCalledOnce();
+    expect(sendResult.mock.calls[0]?.[1]).toContain('本次未执行测算');
   });
 });

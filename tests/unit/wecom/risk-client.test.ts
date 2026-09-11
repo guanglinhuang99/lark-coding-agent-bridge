@@ -49,6 +49,7 @@ function client(
     startupTimeoutMs?: number;
     onStage?: ReturnType<typeof vi.fn>;
     onStartup?: ReturnType<typeof vi.fn>;
+    onBusinessCapabilities?: ReturnType<typeof vi.fn>;
   } = {},
 ) {
   return new RiskDirectClient({
@@ -60,6 +61,7 @@ function client(
     startupTimeoutMs: options.startupTimeoutMs,
     onStage: options.onStage,
     onStartup: options.onStartup,
+    onBusinessCapabilities: options.onBusinessCapabilities,
     intranetProbe: async () => true,
   });
 }
@@ -106,6 +108,37 @@ describe('riskservice direct client', () => {
 
     await expect(service.listProducts()).resolves.toEqual(['产品A']);
     expect(onStartup).toHaveBeenCalledWith({ import_azpy_ms: 12.5, total_ms: 18.75 });
+    await service.close();
+  });
+
+  it('reports only the fixed shared business capability shape', async () => {
+    const onBusinessCapabilities = vi.fn();
+    installBridge(
+      (request, child) => {
+        child.stdout.write(`${JSON.stringify({ id: request.id, type: 'result', data: { products: ['产品A'] } })}\n`);
+      },
+      {
+        type: 'ready',
+        business_capabilities: {
+          shared_text_memoization: 'optimized',
+          functions: {
+            clean_text: { optimized: true, max_entries: 4096, ignored: 'x' },
+            normalize_product_name: { optimized: true, max_entries: 4096 },
+          },
+          ignored: 'x',
+        },
+      },
+    );
+    const service = client({ onBusinessCapabilities });
+
+    await expect(service.listProducts()).resolves.toEqual(['产品A']);
+    expect(onBusinessCapabilities).toHaveBeenCalledWith({
+      sharedTextMemoization: 'optimized',
+      functions: {
+        clean_text: { optimized: true, maxEntries: 4096 },
+        normalize_product_name: { optimized: true, maxEntries: 4096 },
+      },
+    });
     await service.close();
   });
 
@@ -377,6 +410,36 @@ describe('shared lookup cache and admission', () => {
     await expect(service.getHoldings('产品B')).rejects.toMatchObject({ code: 'direct-capacity' });
     await service.close();
     expect(await first).toMatchObject({ code: 'direct-process' });
+  });
+});
+
+describe('closed runtime admission', () => {
+  it('never reopens an explicitly closed client through prewarm', async () => {
+    const child = installBridge(() => {});
+    const service = client();
+    await service.close();
+    try {
+      await expect(service.prewarm()).rejects.toMatchObject({ code: 'direct-process' });
+      expect(childProcessMocks.spawn).not.toHaveBeenCalled();
+      expect(service.runtimeStatus()).toEqual({ ready: false });
+    } finally { await service.close(); child.stdout.destroy(); }
+  });
+  it.each(['listProducts', 'getHoldings'] as const)('rejects a %s call when its intranet probe completes after close', async method => {
+    let resolveProbe!: (ready: boolean) => void;
+    const probe = new Promise<boolean>(resolve => { resolveProbe = resolve; });
+    const child = installBridge((request, process) => {
+      process.stdout.write(JSON.stringify({ id: request.id, type: 'result', data: { products: ['产品A'], holdings: [] } }) + '\n');
+    });
+    const service = new RiskDirectClient({ pythonPath: '/test/python', serviceDir: '/test/service',
+      stateDir: '/test/state', bridgePath: '/test/bridge', intranetProbe: () => probe });
+    const pending = (method === 'listProducts' ? service.listProducts() : service.getHoldings('产品A'))
+      .then(value => ({ value }), error => ({ error }));
+    await service.close();
+    resolveProbe(true);
+    try {
+      expect(await pending).toMatchObject({ error: { code: 'direct-process' } });
+      expect(childProcessMocks.spawn).not.toHaveBeenCalled();
+    } finally { await service.close(); child.stdout.destroy(); }
   });
 });
 

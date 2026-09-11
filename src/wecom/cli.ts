@@ -97,13 +97,12 @@ import {
   type ConversationAgentPreferences,
 } from './agent-preferences';
 import type { NormalizedAttachment } from '../media/attachment';
-import { RiskDirectClient } from './risk/client';
-import { WeComRiskRouter } from './risk/router';
-import { isRiskCandidate } from './risk/parser';
-import { RiskStateRegistry } from './risk/state';
+import { createRiskBusinessRuntime } from '../runtime/risk-business';
+import type { RiskIngress } from '../business/risk/application';
+import { RiskProgressRelay } from '../business/risk/progress';
+import { businessConversationKey, businessConversationScope } from '../business/identity';
 import { RiskSelectionTaskRegistry } from './risk/card';
 import {
-  isRiskIntentConfirmation,
   RiskInteractionController,
 } from './risk/interaction';
 import {
@@ -122,29 +121,11 @@ import {
   type WeComCardPurpose,
 } from './card-routing';
 import { NavigationController } from './navigation-controller';
-import { executeCreditCommand } from './risk/credit-command';
 import {
   parseWeComCommand,
-  shouldFallbackRiskCommandToIntent,
-  shouldUseRiskFastPath,
   WECOM_HELP_LINES,
-  WECOM_RISK_USAGE_LINES,
   WECOM_CREDIT_USAGE_LINES,
 } from './commands';
-import {
-  applyDirectRiskIntentInput,
-  buildRiskIntentPrompt,
-  resolveInitialRiskIntent,
-  applySimpleRiskCorrection,
-  isPretradeIntentCandidate,
-  isRiskIntentCorrection,
-  mergeRiskIntentDraft,
-  normalizeRiskDraft,
-  parseRiskIntentOutputPartial,
-  RiskIntentClarificationError,
-  type RiskAiDraft,
-  type RiskIntentState,
-} from './risk/intent';
 import { WeComTaskStore } from './task-store';
 import {
   WeComOperationRunner,
@@ -208,7 +189,6 @@ const sandbox = readSandbox(process.env.WECOM_CODEX_SANDBOX);
 const {
   codexModel: model,
   codexReasoningEffort,
-  riskIntentModel,
 } = resolveWeComModelConfig(process.env);
 const configuredModelAllowlist = readWeComModelAllowlist(
   process.env.WECOM_CODEX_MODEL_OPTIONS,
@@ -279,30 +259,7 @@ const artifactOptions = {
   maxFileBytes: readPositiveInt(process.env.WECOM_OUTPUT_MAX_FILE_BYTES, 25 * 1024 * 1024),
   maxTotalBytes: readPositiveInt(process.env.WECOM_OUTPUT_MAX_BYTES, 50 * 1024 * 1024),
 };
-const configuredRiskServiceDir = process.env.WECOM_RISK_SERVICE_DIR?.trim();
-const riskServiceDir = path.resolve(configuredRiskServiceDir || path.join(process.cwd(), 'risk-service'));
-const riskBridgePath = path.resolve(
-  process.env.WECOM_RISK_BRIDGE_PATH?.trim() ||
-    path.join(process.cwd(), 'src/wecom/risk/direct_bridge.py'),
-);
-const riskPython = process.env.WECOM_RISK_PYTHON?.trim();
-const riskTimeoutMs = readPositiveInt(process.env.WECOM_RISK_TIMEOUT_MS, 180_000);
-const riskStartupTimeoutMs = readPositiveInt(
-  process.env.WECOM_RISK_STARTUP_TIMEOUT_MS,
-  30_000,
-);
-const riskDirectWorkers = readPositiveInt(process.env.WECOM_RISK_DIRECT_WORKERS, 4);
-const riskIntranetHost = process.env.WECOM_RISK_INTRANET_HOST?.trim() || '10.8.11.57';
-const riskIntranetPort = readPositiveInt(process.env.WECOM_RISK_INTRANET_PORT, 80);
-const riskIntranetTimeoutMs = readPositiveInt(process.env.WECOM_RISK_INTRANET_TIMEOUT_MS, 1_500);
-const riskIntranetCacheTtlMs = readPositiveInt(
-  process.env.WECOM_RISK_INTRANET_CACHE_TTL_MS,
-  60_000,
-);
-const riskProductCacheTtlMs = readPositiveInt(
-  process.env.WECOM_RISK_PRODUCT_CACHE_TTL_MS,
-  60 * 60_000,
-);
+const configuredRiskServiceDir = (process.env.RISK_SERVICE_DIR ?? process.env.WECOM_RISK_SERVICE_DIR)?.trim();
 const riskAllowedUserIds = new Set(
   (process.env.WECOM_RISK_ALLOWED_USERIDS ?? '')
     .replaceAll('，', ',')
@@ -364,7 +321,6 @@ let healthPhase: WeComHealthPhase = 'starting';
 let connected = false;
 let reconnectAttempt: number | undefined;
 let lastHealthError: string | undefined;
-await refreshHealth();
 
 const codex = new CodexAdapter({
   binary: process.env.CODEX_BINARY?.trim() || 'codex',
@@ -381,93 +337,62 @@ const runExecutor = new RunExecutor({
   activeRuns: agentRuns,
   postDoneExitGraceMs: codexPostDoneExitGraceMs,
 });
-// Extraction has its own minimal adapter but shares admission and process shutdown tracking.
-const riskIntentWorkspace = path.join(stateDir, 'risk-intent-workspace');
-await mkdir(riskIntentWorkspace, { recursive: true });
-const riskIntentExecutor = new RunExecutor({
-  agent: new CodexAdapter({
-    binary: process.env.CODEX_BINARY?.trim() || 'codex',
-    profileStateDir: stateDir,
-    inheritCodexHome: true,
-    purpose: 'risk-intent',
-    sandbox: 'read-only',
-  }),
-  pool: runGate.pool,
-  activeRuns: agentRuns,
-  postDoneExitGraceMs: codexPostDoneExitGraceMs,
-});
-const riskDirectEnabled = Boolean(
-  riskPython && existsSync(riskServiceDir) && existsSync(riskBridgePath) && existsSync(riskPython),
-);
-const riskPythonPath = riskDirectEnabled ? riskPython! : undefined;
-const riskClient = riskDirectEnabled
-  ? new RiskDirectClient({
-      pythonPath: riskPythonPath!,
-      serviceDir: riskServiceDir,
-      stateDir: path.join(stateDir, 'risk-service'),
-      bridgePath: riskBridgePath,
-      timeoutMs: riskTimeoutMs,
-      startupTimeoutMs: riskStartupTimeoutMs,
-      workers: riskDirectWorkers,
-      intranetHost: riskIntranetHost,
-      intranetPort: riskIntranetPort,
-      intranetTimeoutMs: riskIntranetTimeoutMs,
-      intranetCacheTtlMs: riskIntranetCacheTtlMs,
-      productCacheTtlMs: riskProductCacheTtlMs,
-      onCall: ({ method, durationMs, outcome }) => {
-        log.info('wecom-risk-call', 'completed', { method, durationMs, outcome });
-        reportMetric('wecom_risk_call_ms', durationMs, { method, outcome });
-        reportMetric('wecom_risk_call_total', 1, { method, outcome });
-      },
-      onStage: ({ stage, durationMs, outcome }) => {
-        reportMetric('wecom_risk_stage_ms', durationMs, { stage, outcome });
-        log.info('wecom-risk-stage', 'completed', { stage, durationMs, outcome });
-      },
-      onStartup: (timings) => {
-        log.info('wecom-risk-startup', 'completed', { timings });
-        for (const [stage, durationMs] of Object.entries(timings)) {
-          reportMetric('wecom_risk_startup_ms', durationMs, { stage });
-        }
-      },
-      onDiagnostic: (line) => {
-        log.warn('wecom-risk-direct', 'python', {
-          message: redactDiagnosticText(line),
-        });
-      },
-    })
-  : undefined;
-const riskRouter = riskClient ? new WeComRiskRouter(riskClient) : undefined;
 const riskSelectionTasks = new RiskSelectionTaskRegistry();
-const riskStates = new RiskStateRegistry();
-let riskWarmup: Promise<void> | undefined;
+const riskRuntime = createRiskBusinessRuntime({
+  identity: { channel: 'wecom', accountId: botId, instanceId: stateDir },
+  stateDir, pool: runGate.pool, activeRuns: agentRuns,
+  env: process.env, legacyPrefix: 'WECOM',
+  accessEnabled: () => !riskAccessLocked,
+  invalidateSelections: key => riskSelectionTasks.clearConversation(key),
+  // These callbacks only project shared execution into the WeCom control UI.
+  intentLifecycle: {
+    starting: ({ key }) => { riskIntentRunsStarting.add(businessConversationScope(key)); },
+    started: ({ key, originalText }, run) => {
+      const scope = businessConversationScope(key);
+      const active: ActiveRunRecord = { run, state: freshRunState(), prompt: originalText, taskId: createRiskTaskId() };
+      activeRuns.set(scope, active);
+      return () => { if (activeRuns.get(scope) === active) activeRuns.delete(scope); };
+    },
+    settled: ({ key }) => {
+      const scope = businessConversationScope(key);
+      riskIntentRunsStarting.delete(scope);
+      riskIntentStopRequests.delete(scope);
+    },
+  },
+});
+const riskClient = riskRuntime.client;
+const riskApplication = riskRuntime.application;
+const riskRouter = riskApplication.router;
+const riskStates = riskApplication.states;
+const riskDirectEnabled = Boolean(riskClient);
+const riskPython = riskRuntime.config.pythonPath;
+const riskKeyFor = (key: string, userId: string | undefined) => businessConversationKey(
+  { channel: 'wecom', accountId: botId, instanceId: stateDir }, key, userId || '__missing_actor__',
+);
 const riskSelectionCardDelayMs = readPositiveInt(
   process.env.WECOM_RISK_SELECTION_CARD_DELAY_MS,
   200,
 );
 
-if (!riskDirectEnabled) {
-  const reasons = [
-    !riskPython ? 'WECOM_RISK_PYTHON is not configured' : undefined,
-    !existsSync(riskServiceDir)
-      ? configuredRiskServiceDir
-        ? `WECOM_RISK_SERVICE_DIR does not exist: ${riskServiceDir}`
-        : `local risk-service fallback does not exist: ${riskServiceDir}`
-      : undefined,
-    !existsSync(riskBridgePath) ? `risk bridge does not exist: ${riskBridgePath}` : undefined,
-    riskPython && !existsSync(riskPython) ? `risk Python does not exist: ${riskPython}` : undefined,
-  ].filter((item): item is string => Boolean(item));
-  console.warn(`WeCom risk fast path disabled: ${reasons.join('; ')}`);
-}
+// The health snapshot reads the risk client and enablement state.
+// Initialize both before the first heartbeat (including unbundled execution).
+await refreshHealth();
 
-// Start the expensive Python/data warmup as soon as the daemon is initialized.
-// The WebSocket/Codex startup can proceed in parallel, and authenticated retries
-// remain idempotent through riskWarmup plus the client lookup cache.
-warmRiskService();
-await codex.prepareRun();
+if (!riskDirectEnabled) console.warn(`WeCom risk fast path disabled: ${riskRuntime.snapshot().reason}`);
+
+// Initialization, reconnect warmup and shutdown have the same owner in both channels.
+void riskRuntime.start();
+try {
+  await codex.prepareRun();
+} catch (error) {
+  await riskRuntime.close().catch(cleanupError => log.fail('risk-runtime', cleanupError));
+  throw error;
+}
 
 const client = new WSClient({ botId, secret, requestTimeout: requestTimeoutMs });
 const mediaStore = new WeComMediaStore(client, mediaDir);
 const riskInteraction = new RiskInteractionController({
+  application: riskApplication,
   riskClient,
   riskRouter,
   riskStates,
@@ -525,7 +450,7 @@ client.on('authenticated', () => {
   lastHealthError = undefined;
   log.info('ws', 'authenticated', { sandbox });
   void refreshHealth();
-  warmRiskService();
+  void riskRuntime.start();
   console.log(`✓ WeCom bot authenticated; workspace=${workspace}; sandbox=${sandbox}`);
 });
 client.on('reconnecting', (attempt: number) => {
@@ -764,7 +689,7 @@ async function handleMessage<T extends BaseMessage>(
       return;
     }
     riskSelectionTasks.clearConversation(key);
-    riskStates.clearConversation(key);
+    riskApplication.cancelScope(key);
     navigationCards.clearConversation(key);
     await sessionStore.clear(key);
     await replyControl(
@@ -827,14 +752,12 @@ async function handleMessage<T extends BaseMessage>(
     return;
   }
 
-  const hasActiveRiskState = riskStates.hasPendingOrExpired(key);
-  const pretradeIntentCandidate = isPretradeIntentCandidate(text);
-  const riskCandidate = shouldUseRiskFastPath(
-    parsedCommand,
-    hasActiveRiskState,
-    mediaInputs.length > 0,
-    pretradeIntentCandidate,
-  );
+  const riskIngress = riskApplication.capture({
+    key: riskKeyFor(key, body.from?.userid), text, explicitMeasurement: explicitRiskCommand,
+    authorized: isRiskUserAllowed(body.from?.userid), hasAttachments: mediaInputs.length > 0,
+  });
+  try {
+  const riskCandidate = riskIngress.accepted;
   const riskAccessDenied = riskCandidate && !isRiskUserAllowed(body.from?.userid);
   const useRiskFastPath = riskCandidate && !riskAccessDenied;
   if (durableTaskId && useRiskFastPath) {
@@ -876,6 +799,7 @@ async function handleMessage<T extends BaseMessage>(
         controlTaskId,
         controlCardAttached,
         durableTaskId,
+        riskIngress,
       );
     });
   } catch (err) {
@@ -982,6 +906,9 @@ async function handleMessage<T extends BaseMessage>(
     ).catch(() => {});
     await deliverErrorCard(frame, err.reason === 'queue-timeout' ? 'queue-timeout' : 'queue-full');
   }
+  } finally {
+    riskIngress.release();
+  }
 }
 
 async function executeConversationMessage(
@@ -996,6 +923,7 @@ async function executeConversationMessage(
   controlTaskId: string,
   controlCardAttached: boolean,
   durableTaskId?: string,
+  riskIngress?: RiskIngress,
 ): Promise<void> {
   const submittedAt = Date.now();
   try {
@@ -1018,229 +946,20 @@ async function executeConversationMessage(
           );
           return;
         }
-        const creditCommand = parseWeComCommand(text);
-        if (useRiskFastPath && creditCommand.kind === 'credit-query') {
-          await executeCreditCommand(
-            creditCommand.payload, riskClient, streamMaxBytes,
-            async (content) => { await stream.finish(content); },
-            async (content) => {
-              await client.sendMessage(messageTarget(body), {
-                msgtype: 'markdown', markdown: { content },
-              });
-            },
-          );
-          return;
-        }
-        if (useRiskFastPath && riskRouter && riskClient) {
-          const pretradeIntentCandidate = isPretradeIntentCandidate(text);
-          const expiredRiskState = riskStates.consumeExpired(key);
-          if (
-            expiredRiskState &&
-            !isRiskCandidate(text) &&
-            !pretradeIntentCandidate &&
-            !explicitRiskCommand
-          ) {
-            riskSelectionTasks.clearConversation(key);
-            riskStates.clearTasksForConversation(key);
-            await stream.finish(
-              renderWeComNotice('之前的风险选择已过期', [
-                '请重新发送完整交易或风险查询。',
-              ], {
-                status: 'warning',
-                eyebrow: 'RISK · WECOM',
-              }),
-            );
-            return;
-          }
-
-          const pendingQuery = riskStates.getQuery(key);
-          if (pendingQuery && explicitRiskCommand) {
-            riskSelectionTasks.clearConversation(key);
-            riskStates.clearTasksForConversation(key);
-            riskStates.delete(key);
-          } else if (pendingQuery) {
-            riskSelectionTasks.clearConversation(key);
-            riskStates.clearTasksForConversation(key);
-            const queryHandled = await riskInteraction.executeQueryMessage(
-              body,
-              key,
-              stream,
-              (onProgress) => riskRouter.continue(pendingQuery, text, onProgress),
-            );
-            if (queryHandled) return;
-            riskStates.delete(key);
-            if (pretradeIntentCandidate || explicitRiskCommand) {
-              await startRiskIntentFlow(body, key, text, stream);
-              return;
-            }
-          }
-
-          const pendingIntent = riskStates.getPretrade(key);
-          if (
-            pendingIntent &&
-            (pretradeIntentCandidate || explicitRiskCommand) &&
-            !isRiskIntentCorrection(text)
-          ) {
-            await startRiskIntentFlow(body, key, text, stream);
-            return;
-          }
-          const acceptsDirectInput =
-            pendingIntent?.stage === 'account' ||
-            pendingIntent?.stage === 'security' ||
-            (pendingIntent?.stage === 'freeform' &&
-              (pendingIntent.field === 'account' ||
-                pendingIntent.field === 'security' ||
-                pendingIntent.field === 'amount'));
-          if (pendingIntent && acceptsDirectInput) {
-            riskStates.delete(key);
-            riskSelectionTasks.clearConversation(key);
-            riskStates.clearTasksForConversation(key);
-            const normalized = await applyDirectRiskIntentInput(pendingIntent, text, riskClient);
-            if (!normalized) {
-              riskStates.setPretrade(key, pendingIntent);
-              await stream.finish(
-                renderWeComNotice(
-                  '需要修正输入',
-                  [
-                    pendingIntent.stage === 'freeform' && pendingIntent.field === 'amount'
-                      ? '请输入正确的金额或数量（含单位）。'
-                      : '请输入有效的修正内容。',
-                  ],
-                  { status: 'warning', eyebrow: 'RISK · WECOM' },
-                ),
-              );
-              return;
-            }
-            riskStates.setPretrade(key, normalized);
-            await riskInteraction.finishIntentState(body, key, stream, normalized);
-            return;
-          }
-          if (pendingIntent?.stage === 'freeform') {
-            riskStates.delete(key);
-            if (pendingIntent.field === 'market' && pendingIntent.product) {
-              const market = /一级/.test(text)
-                ? 'primary'
-                : /二级/.test(text)
-                  ? 'secondary'
-                  : undefined;
-              if (!market) {
-                riskStates.setPretrade(key, pendingIntent);
-                await stream.finish(
-                  renderWeComNotice('需要选择交易市场', ['请输入“一级”或“二级”。'], {
-                    status: 'warning',
-                    eyebrow: 'RISK · WECOM',
-                  }),
-                );
-                return;
-              }
-              if (!pendingIntent.draft.action || !pendingIntent.draft.amountText) {
-                const normalized = await normalizeRiskDraft(
-                  pendingIntent.originalText,
-                  { ...pendingIntent.draft, market },
-                  riskClient,
-                );
-                riskStates.setPretrade(key, normalized);
-                await riskInteraction.finishIntentState(body, key, stream, normalized);
-                return;
-              }
-              const normalized: RiskIntentState = {
-                stage: 'confirm',
-                originalText: pendingIntent.originalText,
-                draft: {
-                  ...pendingIntent.draft,
-                  action: pendingIntent.draft.action,
-                  amountText: pendingIntent.draft.amountText,
-                  market,
-                },
-                product: pendingIntent.product,
-                ...(pendingIntent.security ? { security: pendingIntent.security } : {}),
-              };
-              riskStates.setPretrade(key, normalized);
-              await riskInteraction.finishIntentState(body, key, stream, normalized);
-              return;
-            }
-            try {
-              const revised = await analyzeRiskDraft(
-                key,
-                pendingIntent.originalText,
-                pendingIntent.draft,
-                text,
-              );
-              const market = /一级/.test(text)
-                ? 'primary'
-                : /二级/.test(text)
-                  ? 'secondary'
-                  : pendingIntent.draft.market;
-              const normalized = await normalizeRiskDraft(
-                pendingIntent.originalText,
-                pendingIntent.draft.accounts || pendingIntent.draft.transactions
-                  ? mergeRiskIntentDraft(pendingIntent.draft, revised, text)
-                  : { ...revised, market },
-                riskClient,
-              );
-              riskStates.setPretrade(key, normalized);
-              await riskInteraction.finishIntentState(body, key, stream, normalized);
-              return;
-            } catch (error) {
-              riskStates.setPretrade(key, pendingIntent);
-              if (error instanceof RiskIntentClarificationError) {
-                await stream.finish(renderWeComNotice('请明确修改内容', error.missing, {
-                  status: 'warning', eyebrow: 'RISK · WECOM',
-                }));
-                return;
-              }
-              throw error;
-            }
-          }
-
-          if (pendingIntent?.stage === 'confirm' && isRiskIntentConfirmation(text)) {
-            riskStates.delete(key);
-            riskSelectionTasks.clearConversation(key);
-            riskStates.clearTasksForConversation(key);
-            await stream.update(
-              truncateUtf8(
-                renderWeComNotice('已确认交易信息', ['正在执行投资限额测算。']),
-                streamMaxBytes,
-              ),
-            );
-            await riskInteraction.executeSelection(
-              body,
-              key,
-              { kind: 'pretrade', state: pendingIntent },
-              true,
-              { kind: 'stream', stream },
-            );
-            return;
-          }
-          if (pendingIntent?.stage === 'confirm') {
-            await revisePendingRiskConfirmation(body, key, text, stream, pendingIntent);
-            return;
-          }
-          if (!pendingIntent && pretradeIntentCandidate) {
-            await startRiskIntentFlow(body, key, text, stream);
-            return;
-          }
-          if (!pretradeIntentCandidate) {
-            const queryHandled = await riskInteraction.executeQueryMessage(
-              body,
-              key,
-              stream,
-              async (onProgress) => {
-                const result = await riskRouter.handle(key, text, onProgress);
-                return shouldFallbackRiskCommandToIntent(explicitRiskCommand, result)
-                  ? { handled: false }
-                  : result;
-              },
-            );
-            if (queryHandled) return;
-          }
-          if (explicitRiskCommand) {
-            await startRiskIntentFlow(body, key, text, stream);
-            return;
-          }
-        }
-        if (explicitRiskCommand || isPretradeIntentCandidate(text)) {
-          await startRiskIntentFlow(body, key, text, stream);
+        const progress = new RiskProgressRelay(async (message) => {
+          await stream.update(truncateUtf8(renderWeComNotice('风险查询处理中', [message]), streamMaxBytes));
+        }, (error) => log.fail('wecom-risk-progress', error), { includeStageCount: true, coalesce: true });
+        const businessKey = riskKeyFor(key, body.from?.userid);
+        const reply = await riskApplication.handle({
+          key: businessKey, text, explicitMeasurement: explicitRiskCommand,
+          authorized: isRiskUserAllowed(body.from?.userid),
+          hasAttachments: mediaInputs.length > 0,
+          maxMessageBytes: streamMaxBytes,
+          onProgress: (message) => progress.push(message),
+        }, riskIngress);
+        await progress.finish();
+        if (reply.handled) {
+          await riskInteraction.renderReply(body, businessKey, stream, reply);
           return;
         }
         const attachments = await resolveAttachments(mediaInputs);
@@ -1298,6 +1017,7 @@ function isWorkspaceScope(value: string): boolean {
 }
 
 function requestRiskIntentStop(key: string): void {
+  riskApplication.cancelScope(key);
   if (riskIntentRunsStarting.has(key)) riskIntentStopRequests.add(key);
 }
 
@@ -1315,217 +1035,6 @@ async function finishRiskIntentStopped(stream: WeComStreamReply): Promise<void> 
       eyebrow: 'RISK · WECOM',
     }),
   ).catch(() => {});
-}
-
-async function analyzeRiskDraft(
-  key: string,
-  originalText: string,
-  previous?: RiskAiDraft,
-  correction?: string,
-): Promise<RiskAiDraft> {
-  const startedAt = Date.now();
-  let firstOutputReported = false;
-  riskIntentRunsStarting.add(key);
-  let run: AgentRun | undefined;
-  let output = '';
-  try {
-    run = await startWeComAgentRun(riskIntentExecutor, {
-      runId: randomUUID(),
-      prompt: buildRiskIntentPrompt(originalText, previous, correction),
-      cwd: riskIntentWorkspace,
-      model: riskIntentModel,
-      reasoningEffort: 'low',
-      sandbox: 'read-only',
-    }, `risk-intent:${randomUUID()}`, runGate.currentPermit());
-    if (riskIntentStopRequests.has(key)) {
-      await run.stop().catch(() => {});
-      throw new RiskIntentInterruptedError();
-    }
-    const active: ActiveRunRecord = {
-      run,
-      state: freshRunState(),
-      prompt: originalText,
-      taskId: createRiskTaskId(),
-    };
-    return await withActiveRun(activeRuns, key, active, async () => {
-      for await (const event of run!.events) {
-        if (active.state.terminal === 'interrupted' || riskIntentStopRequests.has(key)) {
-          throw new RiskIntentInterruptedError();
-        }
-        if (event.type === 'usage') {
-          const usage = { inputTokens: event.inputTokens, cachedInputTokens: event.cachedInputTokens,
-            outputTokens: event.outputTokens, reasoningOutputTokens: event.reasoningOutputTokens };
-          for (const [field, value] of Object.entries(usage)) {
-            if (value !== undefined) reportMetric(`wecom_risk_intent_${field}`, value, { model: riskIntentModel });
-          }
-          log.info('wecom-risk-intent', 'usage', { model: riskIntentModel, ...usage });
-          continue;
-        }
-        if (event.type === 'done') {
-          if (event.terminationReason === 'interrupted') throw new RiskIntentInterruptedError();
-          if (event.terminationReason !== 'normal') {
-            throw new Error(`risk intent terminated: ${event.terminationReason}`);
-          }
-          continue;
-        }
-        if (event.type === 'error') {
-          if (event.terminationReason === 'interrupted') throw new RiskIntentInterruptedError();
-          throw new Error(event.message);
-        }
-        if (
-          !firstOutputReported &&
-          ((event.type === 'text' && Boolean(event.delta)) ||
-            (event.type === 'final_text' && Boolean(event.content)))
-        ) {
-          firstOutputReported = true;
-          const ttftMs = Date.now() - startedAt;
-          reportMetric('wecom_risk_intent_ttft_ms', ttftMs, { model: riskIntentModel });
-          log.info('wecom-risk-intent', 'first-output', { model: riskIntentModel, ttftMs });
-        }
-        if (event.type === 'text' && event.delta) output += event.delta;
-        if (event.type === 'final_text' && event.content) output = event.content;
-      }
-      await run!.waitForExit(1500).catch(() => false);
-      if (active.state.terminal === 'interrupted' || riskIntentStopRequests.has(key)) {
-        throw new RiskIntentInterruptedError();
-      }
-      const draft = parseRiskIntentOutputPartial(
-        output,
-        correction ? `${originalText} ${correction}` : originalText,
-      );
-      const durationMs = Date.now() - startedAt;
-      reportMetric('wecom_risk_intent_ms', durationMs, { model: riskIntentModel, outcome: 'ok' });
-      log.info('wecom-risk-intent', 'completed', {
-        model: riskIntentModel,
-        durationMs,
-        outcome: 'ok',
-      });
-      return draft;
-    });
-  } catch (error) {
-    const durationMs = Date.now() - startedAt;
-    const outcome = error instanceof RiskIntentInterruptedError ? 'interrupted' : 'failed';
-    reportMetric('wecom_risk_intent_ms', durationMs, { model: riskIntentModel, outcome });
-    log.info('wecom-risk-intent', 'completed', {
-      model: riskIntentModel,
-      durationMs,
-      outcome,
-    });
-    await run?.stop().catch(() => {});
-    throw error;
-  } finally {
-    riskIntentRunsStarting.delete(key);
-    riskIntentStopRequests.delete(key);
-  }
-}
-
-async function startRiskIntentFlow(
-  body: ConversationBody,
-  key: string,
-  text: string,
-  stream: WeComStreamReply,
-): Promise<void> {
-  if (!riskClient) {
-    await stream.finish(
-      renderWeComNotice('风险查询暂时不可用', ['风险数据服务尚未就绪；本次未进入普通聊天。'], {
-        status: 'error',
-        eyebrow: 'RISK · WECOM',
-      }),
-    );
-    return;
-  }
-  riskSelectionTasks.clearConversation(key);
-  riskStates.clearTasksForConversation(key);
-  await stream.update(
-    truncateUtf8(
-      renderWeComNotice('正在核对交易信息', [
-        '正在提取账户、操作、标的和交易规模。',
-      ]),
-      streamMaxBytes,
-    ),
-  );
-  try {
-    const startedAt = Date.now();
-    let usedAi = false;
-    const normalized = await resolveInitialRiskIntent(text, riskClient, async () => {
-      usedAi = true;
-      await stream.update(truncateUtf8(
-        renderWeComNotice('正在理解交易意图', ['正在提取账户、操作、标的和交易规模。']),
-        streamMaxBytes,
-      ));
-      return analyzeRiskDraft(key, text);
-    });
-    log.info('wecom-risk-prepare', 'completed', { durationMs: Date.now() - startedAt, path: usedAi ? 'ai' : 'direct' });
-    reportMetric('wecom_risk_prepare_ms', Date.now() - startedAt, { path: usedAi ? 'ai' : 'direct' });
-    riskStates.setPretrade(key, normalized);
-    await riskInteraction.finishIntentState(body, key, stream, normalized);
-  } catch (error) {
-    if (error instanceof RiskIntentInterruptedError) {
-      await finishRiskIntentStopped(stream);
-      return;
-    }
-    if (error instanceof RiskIntentClarificationError) {
-      await stream.finish(
-        renderWeComNotice('需要补充交易信息', [`缺少：${error.missing.join('、')}`], {
-          status: 'warning',
-          eyebrow: 'RISK · WECOM',
-        }),
-      );
-      return;
-    }
-    log.fail('wecom-risk-intent', error, { step: 'analysis' });
-    await stream.finish(
-      renderWeComNotice('交易信息无法确认', ['请补充或修正账户、证券、交易动作和金额；本次未进入普通聊天。'], {
-        status: 'error',
-        eyebrow: 'RISK · WECOM',
-      }),
-    );
-  }
-}
-
-async function revisePendingRiskConfirmation(
-  body: ConversationBody,
-  key: string,
-  correction: string,
-  stream: WeComStreamReply,
-  pending: Extract<RiskIntentState, { stage: 'confirm' }>,
-): Promise<void> {
-  if (!riskClient) return;
-  riskSelectionTasks.clearConversation(key);
-  riskStates.clearTasksForConversation(key);
-  try {
-    await stream.update(
-      truncateUtf8(
-        renderWeComNotice('正在核对交易修正', ['正在保留未修改字段并重新核对交易信息。']),
-        streamMaxBytes,
-      ),
-    );
-    const direct = applySimpleRiskCorrection(pending, correction);
-    const normalized = direct ?? await (async () => {
-      const revised = await analyzeRiskDraft(key, pending.originalText, pending.draft, correction);
-      const merged = mergeRiskIntentDraft(pending.draft, revised, correction);
-      return normalizeRiskDraft(`${pending.originalText} ${correction}`, merged, riskClient);
-    })();
-    reportMetric('wecom_risk_correction_total', 1, { path: direct ? 'direct' : 'ai' });
-    riskStates.setPretrade(key, normalized);
-    await riskInteraction.finishIntentState(body, key, stream, normalized);
-  } catch (error) {
-    if (error instanceof RiskIntentInterruptedError) {
-      riskStates.setPretrade(key, pending);
-      await finishRiskIntentStopped(stream);
-      return;
-    }
-    riskStates.setPretrade(key, pending);
-    const detail = error instanceof RiskIntentClarificationError
-      ? `仍需补充：${error.missing.join('、')}`
-      : '修正未应用，请直接修改金额、证券或产品后重试。';
-    await stream.finish(
-      renderWeComNotice('需要重新确认交易信息', [detail], {
-        status: 'warning',
-        eyebrow: 'RISK · WECOM',
-      }),
-    ).catch(() => {});
-  }
 }
 
 async function runCodexPrompt(
@@ -1797,7 +1306,7 @@ async function handleTemplateCardEvent(frame: TemplateCardEventFrame): Promise<v
     return;
   }
   if (purpose === 'risk') {
-    await riskInteraction.handleSelectionCardEvent(frame, key, taskId, rawAction, selectedId);
+    await riskInteraction.handleSelectionCardEvent(frame, riskKeyFor(key, frame.body?.from?.userid), taskId, rawAction, selectedId);
     return;
   }
   if (purpose === 'menu') {
@@ -1853,7 +1362,7 @@ async function handleHomeCardEvent(
     }
     await sessionStore.clear(key);
     riskSelectionTasks.clearConversation(key);
-    riskStates.clearConversation(key);
+    riskApplication.cancelScope(key);
     navigationCards.clearConversation(key);
     await navigation.updateHomeCard(frame, key, taskId);
     return;
@@ -1928,7 +1437,7 @@ async function handleLegacyControlCardEvent(
     }
     await sessionStore.clear(key);
     riskSelectionTasks.clearConversation(key);
-    riskStates.clearConversation(key);
+    riskApplication.cancelScope(key);
     await client.updateTemplateCard(
       frame,
       buildWeComControlCard({
@@ -2000,8 +1509,8 @@ async function replyDoctor(frame: WsFrame, key: string): Promise<void> {
     },
     {
       name: 'Risk Service',
-      status: riskDirectEnabled ? 'ok' : riskConfigured ? 'error' : 'warning',
-      detail: riskDirectEnabled ? 'ready' : riskConfigured ? 'configuration unavailable' : 'not enabled',
+      status: riskRuntime.snapshot().runtime?.ready ? 'ok' : riskConfigured ? 'error' : 'warning',
+      detail: riskRuntime.snapshot().runtime?.ready ? 'ready' : riskRuntime.snapshot().warmup.phase,
     },
     { name: 'Task Store', status: 'ok', detail: `${taskSnapshot.total} records` },
     {
@@ -2334,29 +1843,6 @@ function isRiskUserAllowed(userid: string | undefined): boolean {
   return isRiskUserAllowedByConfig(useAllowedList, riskAllowedUserIds, userid);
 }
 
-function warmRiskService(): void {
-  if (!riskClient || riskWarmup || riskAccessLocked) return;
-  const startedAt = Date.now();
-  riskWarmup = riskClient.prewarm()
-    .then(() => riskClient.listProducts())
-    .then((products) => {
-      const durationMs = Date.now() - startedAt;
-      log.info('wecom-risk', 'warmup-completed', { durationMs, products: products.length });
-      reportMetric('wecom_risk_warmup_ms', durationMs, { outcome: 'success' });
-    })
-    .catch((err: unknown) => {
-      const durationMs = Date.now() - startedAt;
-      log.warn('wecom-risk', 'warmup-failed', {
-        durationMs,
-        message: redactDiagnosticText(err instanceof Error ? err.message : String(err)),
-      });
-      reportMetric('wecom_risk_warmup_ms', durationMs, { outcome: 'error' });
-    })
-    .finally(() => {
-      riskWarmup = undefined;
-    });
-}
-
 function isConversationBusy(key: string): boolean {
   return conversationQueue.has(key) || startingRuns.has(key) || activeRuns.has(key);
 }
@@ -2369,14 +1855,7 @@ async function refreshHealth(): Promise<void> {
     startingRuns: startingRuns.size,
     ...(reconnectAttempt !== undefined ? { reconnectAttempt } : {}),
     ...(lastHealthError ? { lastError: lastHealthError } : {}),
-    riskFastPath: {
-      enabled: riskDirectEnabled,
-      serviceDirConfigured: Boolean(configuredRiskServiceDir),
-      pythonConfigured: Boolean(riskPython),
-      ...(!riskDirectEnabled
-        ? { reason: !riskPython ? 'python-not-configured' : 'path-unavailable' }
-        : {}),
-    },
+    riskFastPath: riskRuntime.snapshot(),
   }).catch((err: unknown) => {
     log.fail('wecom-health', err);
   });
@@ -2436,11 +1915,7 @@ async function shutdown(signal: 'SIGINT' | 'SIGTERM'): Promise<void> {
     }
     const runs = [...activeRuns.values()];
     await Promise.allSettled(runs.map((active) => active.run.stop()));
-    await riskClient?.close().catch((err: unknown) => {
-      console.error(
-        `Failed to stop local risk-service process: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    });
+    await riskRuntime.close().catch(error => log.fail('risk-runtime', error, { step: 'shutdown' }));
     await sessionStore.flush().catch((err: unknown) => {
       console.error(
         `Failed to flush WeCom sessions during ${signal}: ${err instanceof Error ? err.message : String(err)}`,

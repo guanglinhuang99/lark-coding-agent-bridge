@@ -25,6 +25,8 @@ export interface RunExecutorDeps {
   postDoneExitGraceMs?: number;
 }
 export interface SubmitRunInput {
+  /** Cancellation is checked before admission, after admission and before spawn. */
+  signal?: AbortSignal;
   scopeId: string;
   policy: ExecutionPolicy;
   runId?: string;
@@ -95,7 +97,7 @@ export class RunExecutor {
         await this.ledger.annotate(taskId, { kind: 'agent', label: 'Agent execution' });
       }
       release = input.permit ? this.pool.borrow(input.permit)
-        : input.nowait ? this.pool.tryAcquire() : await this.pool.acquire();
+        : input.nowait ? this.pool.tryAcquire() : await this.pool.acquire(input.signal);
       if (!release) throw new RunRejected('pool-full', 'process pool is full');
       this.assertAllowed(input);
       runId ??= this.createRunId();
@@ -191,6 +193,7 @@ export class RunExecutor {
     };
   }
   private assertAllowed(input: SubmitRunInput): void {
+    if (input.signal?.aborted) throw new RunRejected('run-cancelled', 'run cancelled before spawn');
     if (Number.isNaN(input.policy.expiresAt) || input.policy.expiresAt <= this.now()) {
       throw new RunRejected('policy-expired', 'run policy expired before spawn');
     }

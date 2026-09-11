@@ -168,6 +168,9 @@ describe('WeCom workspace scope at CLI boundaries', () => {
       classifyTask: vi.fn(),
       taskStore: { annotate: vi.fn(async () => {}) },
       riskStates: { hasPendingOrExpired: vi.fn(() => false) },
+      riskApplication: { capture: vi.fn(() => ({ accepted: false, release: vi.fn() })) },
+      isRiskUserAllowed: () => true,
+      riskKeyFor: (key: string, actor: string) => JSON.stringify([key, actor]),
       conversationQueue: {
         submit: vi.fn((key: string, task: () => Promise<void>) => {
           queuedKey = key;

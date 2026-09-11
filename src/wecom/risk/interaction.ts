@@ -27,6 +27,8 @@ import {
 } from '../ui/builders';
 import { renderWeComCard } from '../ui/renderer';
 import type { RiskService } from './client';
+import { splitRiskMessage } from '../../business/risk/presentation';
+import { RiskApplication, riskIntentInputPrompt, type RiskReply } from '../../business/risk/application';
 import {
   buildRiskSelectionCard,
   buildRiskSelectionStatusCard,
@@ -36,15 +38,11 @@ import {
 import {
   buildIntentSelection,
   confirmationSummary,
-  normalizeRiskDraft,
-  normalizeSecurity,
-  selectRiskIntentSecurity,
   type RiskIntentState,
 } from './intent';
 import { RiskProgressRelay } from './progress';
 import type {
   RiskQueryState,
-  RiskRouteResult,
   RiskSelectionRequest,
   WeComRiskRouter,
 } from './router';
@@ -62,6 +60,7 @@ export type RiskSelectionExecution =
   | { kind: 'query'; state: RiskQueryState; input: string };
 
 export interface RiskInteractionDependencies {
+  application?: RiskApplication;
   riskClient?: RiskService;
   riskRouter?: WeComRiskRouter;
   riskStates: RiskStateRegistry;
@@ -80,57 +79,49 @@ export interface RiskInteractionDependencies {
 }
 
 /**
- * WeCom-specific presentation and continuation orchestration for risk queries.
- *
- * This class deliberately does not own transaction intent parsing or Codex run lifecycle.
- * RiskStateRegistry remains the single continuation state owner, while WeComRiskRouter stays
- * stateless across messages.
+ * WeCom presentation and validated callback transport only.
+ * RiskApplication owns every business transition; this adapter only registers views.
  */
 export class RiskInteractionController {
   private readonly selectionCardDelayMs: number;
+  private readonly application: RiskApplication;
 
   constructor(private readonly deps: RiskInteractionDependencies) {
     this.selectionCardDelayMs = deps.selectionCardDelayMs ?? 200;
+    this.application = deps.application ?? new RiskApplication({
+      service: deps.riskClient, router: deps.riskRouter, states: deps.riskStates,
+      invalidateSelections: key => deps.riskSelectionTasks.clearConversation(key),
+    });
   }
 
-  async executeQueryMessage(
-    body: ConversationBody,
-    key: string,
-    stream: RiskStreamTarget,
-    execute: (onProgress: (progress: string) => void) => Promise<RiskRouteResult>,
-  ): Promise<boolean> {
-    const startedAt = Date.now();
-    const progressRelay = new RiskProgressRelay(
-      async (progress) => {
-        await stream.update(
-          truncateUtf8(
-            renderWeComNotice('⏳ 风险限额查询中', [progress]),
-            this.deps.streamMaxBytes,
-          ),
-        );
-      },
-      (err) => log.fail('wecom-risk-progress', err, { step: 'message' }),
-      { includeStageCount: true, coalesce: true },
-    );
-    const result = await execute((progress) => progressRelay.push(progress));
-    await progressRelay.finish();
-    if (!result.handled) return false;
-
-    const conversationState = this.applyQueryContinuation(key, result);
-    const durationMs = Date.now() - startedAt;
-    reportMetric('wecom_risk_fastpath_total', 1, { intent: result.intent });
-    reportMetric('wecom_risk_fastpath_ms', durationMs, { intent: result.intent });
-    log.info('wecom-risk', 'completed', { intent: result.intent, durationMs });
-    await stream.finish(
-      truncateUtf8(
-        renderWeComRiskOutput(result.markdown, Boolean(result.selection)),
-        this.deps.streamMaxBytes,
-      ),
-    );
-    if (result.selection && conversationState) {
-      this.scheduleSelectionCard(body, key, result.selection, conversationState);
+  /** Transport/presentation only: decisions and state changes were made by RiskApplication. */
+  async renderReply(body: ConversationBody, key: string, stream: RiskStreamTarget, reply: RiskReply): Promise<void> {
+    if (!reply.handled) return;
+    if (reply.kind === 'notice') {
+      await stream.finish(truncateUtf8(renderWeComNotice(reply.title, reply.lines, {
+        status: reply.level === 'info' ? 'running' : reply.level, eyebrow: 'RISK · WECOM',
+      }), this.deps.streamMaxBytes));
+    } else if (reply.kind === 'intent') {
+      await this.finishIntentState(body, key, stream, reply.state);
+    } else if (reply.kind === 'pages') {
+      await stream.finish(reply.pages[0] ?? '没有可展示的结果。');
+      for (const page of reply.pages.slice(1)) await this.deps.sendMarkdownMessage(body, page);
+    } else {
+      const result = reply.result;
+      const content = renderWeComRiskOutput(result.markdown, Boolean(result.selection));
+      if (reply.confirmed) {
+        await stream.finish(renderWeComNotice(result.intent === 'risk-error' ? '风险限额测算失败' : '风险限额测算完成',
+          ['请查看下方业务结果。']));
+        await this.sendRiskMarkdown(body, content);
+      } else {
+        const pages = splitRiskMessage(content, this.deps.streamMaxBytes);
+        await stream.finish(pages[0] ?? '没有可展示的结果。');
+        for (const page of pages.slice(1)) await this.deps.sendMarkdownMessage(body, page);
+      }
+      if (result.selection && result.continuation) {
+        this.scheduleSelectionCard(body, key, result.selection, { kind: 'query', state: result.continuation });
+      }
     }
-    return true;
   }
 
   async finishIntentState(
@@ -202,119 +193,22 @@ export class RiskInteractionController {
     value: string,
     label: string,
   ): Promise<void> {
-    const riskClient = this.deps.riskClient;
-    if (!riskClient) return;
-    let next: RiskIntentState;
-    if (state.stage === 'account') {
-      next =
-        value === '__other_account__'
-          ? {
-              stage: 'freeform',
-              accountIndex: state.accountIndex,
-              originalText: state.originalText,
-              draft: state.draft,
-              field: 'account',
-            }
-          : state.draft.accounts && state.accountIndex !== undefined
-            ? await normalizeRiskDraft(state.originalText, {
-                ...state.draft,
-                accounts: state.draft.accounts.map((account, index) => index === state.accountIndex
-                  ? { ...account, accountQuery: value, resolvedProduct: value }
-                  : account),
-              }, riskClient)
-            : await normalizeSecurity(
-                state.originalText,
-                { ...state.draft, accountQuery: value },
-                value,
-                riskClient,
-              );
-    } else if (state.stage === 'security') {
-      if (value === '__other_security__') {
-        next = {
-          stage: 'freeform',
-          accountIndex: state.accountIndex,
-          transactionIndex: state.transactionIndex,
-          originalText: state.originalText,
-          draft: state.draft,
-          field: 'security',
-          product: state.product,
-        };
-      } else {
-        const security = JSON.parse(value) as {
-          name: string;
-          code: string;
-          label: string;
-        };
-        next = await selectRiskIntentSecurity(state, security, riskClient);
-      }
-    } else if (state.stage === 'confirm') {
-      if (value === '__confirm__') {
-        this.deps.riskStates.delete(key);
-        await updateRiskCardBestEffort(
-          () =>
-            this.deps.updateTemplateCard(
-              frame,
-              buildRiskSelectionStatusCard(
-                taskId,
-                '测算请求提交成功',
-                '交易信息已锁定；当前阶段：正在准备测算；已完成 0/4。结果将在下方更新。',
-                label,
-              ),
-            ),
-          (error) => log.fail('wecom-risk-card', error, { step: 'confirmation-status' }),
-        );
-        await this.executeSelection(
-          body,
-          key,
-          { kind: 'pretrade', state },
-          false,
-          { kind: 'card' },
-        );
-        return;
-      }
-      const field =
-        value === '__edit_account__'
-          ? 'account'
-          : value === '__edit_security__'
-            ? 'security'
-            : value === '__edit_amount__'
-              ? 'amount'
-              : value === '__edit_market__'
-                ? 'market'
-                : 'other';
-      next = {
-        stage: 'freeform',
-        accountIndex: state.accountIndex,
-        originalText: state.originalText,
-        draft: state.draft,
-        field,
-        product: state.product,
-        security: state.security,
-      };
-    } else {
-      return;
-    }
-    this.deps.riskStates.setPretrade(key, next);
-    await updateRiskCardBestEffort(
-      () =>
-        this.deps.updateTemplateCard(
-          frame,
-          buildRiskSelectionStatusCard(
-            taskId,
-            '请补充信息',
-            next.stage === 'freeform' ? riskIntentInputPrompt(next) : '正在继续确认。',
-            label,
-          ),
-        ),
-      (error) => log.fail('wecom-risk-card', error, { step: 'selection-status' }),
-    );
-    if (next.stage !== 'freeform') {
-      const messageStream: RiskStreamTarget = {
-        finish: async (content: string) => this.sendRiskMarkdown(body, content),
-        update: async () => false,
-      };
-      await this.finishIntentState(body, key, messageStream, next);
-    }
+    if (state.stage === 'freeform') return;
+    const option = buildIntentSelection(state, Date.now() + 300_000).options
+      .find(item => (item.value ?? item.key) === value);
+    if (!option) return;
+    await updateRiskCardBestEffort(() => this.deps.updateTemplateCard(frame,
+      buildRiskSelectionStatusCard(taskId, '已收到选择', '正在校验选择并继续处理。', label)),
+    error => log.fail('wecom-risk-card', error, { step: 'selection-status' }));
+    await withReservation(this.deps.startingRuns, key, () => this.deps.runGate.run(async () => {
+      const reply = await this.application.select({
+        key, text: '', authorized: this.deps.isRiskUserAllowed(body.from?.userid),
+        maxMessageBytes: this.deps.streamMaxBytes,
+      }, state, option.key);
+      await this.renderReply(body, key, {
+        update: async () => {}, finish: content => this.sendRiskMarkdown(body, content),
+      }, reply);
+    }));
   }
 
   async handleSelectionCardEvent(
@@ -456,128 +350,38 @@ export class RiskInteractionController {
     withinConversationRun = false,
     progressTarget?: { kind: 'card' } | { kind: 'stream'; stream: RiskStreamTarget },
   ): Promise<void> {
-    const riskRouter = this.deps.riskRouter;
-    if (!riskRouter) return;
+    const stream: RiskStreamTarget = progressTarget?.kind === 'stream' ? progressTarget.stream
+      : { update: async () => {}, finish: content => this.sendRiskMarkdown(body, content) };
+    const execute = async () => {
+      void this.deps.refreshHealth();
+      const relay = new RiskProgressRelay(message => stream.update(renderWeComNotice('风险查询处理中', [message])),
+        error => log.fail('wecom-risk-progress', error), { includeStageCount: true, coalesce: true });
+      const request = { key, text: '', authorized: this.deps.isRiskUserAllowed(body.from?.userid),
+        maxMessageBytes: this.deps.streamMaxBytes, onProgress: (message: string) => relay.push(message) };
+      const startedAt = Date.now();
+      const reply = selection.kind === 'query'
+        ? await this.application.continueQuery(request, selection.state, selection.input)
+        : await this.application.select(request, selection.state, 'confirm');
+      await relay.finish();
+      reportMetric(selection.kind === 'query' ? 'wecom_risk_selection_ms' : 'wecom_risk_confirmed_ms', Date.now() - startedAt);
+      await this.renderReply(body, key, stream, reply);
+    };
     try {
-      const execute = async () => {
-        // Health persistence is observability, not a prerequisite for risk execution.
-        // Do not put its atomic file write on the user-visible critical path.
-        void this.deps.refreshHealth();
-        const progressRelay = new RiskProgressRelay(
-          (progress) =>
-            progressTarget?.kind === 'stream'
-              ? progressTarget.stream.update(
-                  truncateUtf8(
-                    renderWeComNotice('⏳ 风险限额查询中', [progress]),
-                    this.deps.streamMaxBytes,
-                  ),
-                )
-              : progressTarget?.kind === 'card'
-                ? Promise.resolve()
-                : this.sendRiskMarkdown(
-                    body,
-                    renderWeComNotice('⏳ 风险限额查询中', [progress]),
-                  ),
-          (err) => log.fail('wecom-risk-progress', err, { step: 'card-selection' }),
-          { includeStageCount: true, coalesce: true },
-        );
-        const onProgress = (progress: string) => {
-          if (progress.startsWith('已确认：')) return;
-          progressRelay.push(progress);
-        };
-        const startedAt = Date.now();
-        const result = selection.kind === 'query'
-          ? await riskRouter.continue(selection.state, selection.input, onProgress)
-          : await riskRouter.executeConfirmed(selection.state, onProgress);
-        reportMetric(
-          selection.kind === 'query' ? 'wecom_risk_selection_ms' : 'wecom_risk_confirmed_ms',
-          Date.now() - startedAt,
-        );
-        await progressRelay.finish();
-        if (result.handled) {
-          if (progressTarget?.kind === 'stream') {
-            const failed = result.intent === 'risk-error';
-            await progressTarget.stream.finish(
-              truncateUtf8(
-                renderWeComNotice(
-                  failed ? '⚠️ 风险限额测算失败' : '风险限额测算完成',
-                  [
-                    failed
-                      ? '本次未执行成功，请查看下方错误说明。'
-                      : '业务结果已生成，请查看下方结果。',
-                  ],
-                  failed ? { status: 'error', eyebrow: 'RISK · WECOM' } : undefined,
-                ),
-                this.deps.streamMaxBytes,
-              ),
-            );
-          }
-          await this.sendRouteResult(body, key, result);
-        } else {
-          const content = renderWeComNotice('无法继续风险查询', [
-            '当前选择已失效，请重新发起查询。',
-          ], {
-            status: 'warning',
-            eyebrow: 'RISK · WECOM',
-          });
-          if (progressTarget?.kind === 'stream') {
-            await progressTarget.stream.finish(content);
-          } else {
-            await this.sendRiskMarkdown(body, content);
-          }
-        }
-      };
-      if (withinConversationRun) {
-        await execute();
-      } else {
-        await withReservation(this.deps.startingRuns, key, async () => this.deps.runGate.run(execute));
-      }
-    } catch (err) {
-      if (!(err instanceof WeComRunCapacityError)) {
-        if (progressTarget?.kind === 'stream') {
-          await progressTarget.stream
-            .finish(
-              renderWeComNotice('⚠️ 风险限额测算失败', [
-                '暂时无法完成测算，请稍后重试。',
-              ]),
-            )
-            .catch(() => {});
-        }
-        throw err;
-      }
-      const content = truncateUtf8(
-        renderWeComNotice('⚠️ 当前任务较多', [capacityNotice(err.reason)]),
-        this.deps.streamMaxBytes,
-      );
-      if (progressTarget?.kind === 'stream') {
-        await progressTarget.stream.finish(content);
-      } else {
-        await this.sendRiskMarkdown(body, content);
-      }
+      if (withinConversationRun) await execute();
+      else await withReservation(this.deps.startingRuns, key, () => this.deps.runGate.run(execute));
+    } catch (error) {
+      if (!(error instanceof WeComRunCapacityError)) throw error;
+      await stream.finish(renderWeComNotice('当前任务较多', [capacityNotice(error.reason)]));
     } finally {
       void this.deps.refreshHealth();
     }
   }
 
-  async sendRouteResult(
-    body: ConversationBody,
-    key: string,
-    result: Extract<RiskRouteResult, { handled: true }>,
-  ): Promise<void> {
-    const conversationState = this.applyQueryContinuation(key, result);
-    const content = renderWeComRiskOutput(result.markdown, Boolean(result.selection));
-    await this.sendRiskMarkdown(body, content);
-    if (result.selection && conversationState) {
-      this.scheduleSelectionCard(body, key, result.selection, conversationState);
-    }
-  }
-
   async sendRiskMarkdown(body: ConversationBody, content: string): Promise<void> {
     const rendered = content.includes('**▌ ') ? content : renderWeComRiskOutput(content);
-    await this.deps.sendMarkdownMessage(
-      body,
-      truncateUtf8(rendered, this.deps.streamMaxBytes),
-    );
+    for (const page of splitRiskMessage(rendered, this.deps.streamMaxBytes)) {
+      await this.deps.sendMarkdownMessage(body, page);
+    }
   }
 
   scheduleSelectionCard(
@@ -586,6 +390,7 @@ export class RiskInteractionController {
     selection: RiskSelectionRequest,
     conversationState: RiskConversationState,
   ): void {
+    if (this.deps.riskStates.getConversation(key)?.state !== conversationState.state) return;
     const taskId = this.deps.createRiskTaskId();
     this.deps.riskSelectionTasks.register(taskId, key, selection);
     this.deps.riskStates.clearTasksForConversation(key);
@@ -597,7 +402,8 @@ export class RiskInteractionController {
     );
     void (async () => {
       await new Promise<void>((resolve) => setTimeout(resolve, this.selectionCardDelayMs));
-      if (!this.deps.riskSelectionTasks.has(taskId, key)) return;
+      if (!this.deps.riskSelectionTasks.has(taskId, key) ||
+          this.deps.riskStates.getConversation(key)?.state !== conversationState.state) return;
       try {
         await this.deps.sendControlCardMessage(
           body,
@@ -611,42 +417,6 @@ export class RiskInteractionController {
     })();
   }
 
-  private applyQueryContinuation(
-    key: string,
-    result: Extract<RiskRouteResult, { handled: true }>,
-  ): RiskConversationState | undefined {
-    if (!result.continuation) {
-      this.deps.riskStates.delete(key);
-      return undefined;
-    }
-    this.deps.riskStates.setQuery(key, result.continuation);
-    return { kind: 'query', state: result.continuation };
-  }
 }
 
-export function isRiskIntentConfirmation(text: string): boolean {
-  return /^(?:确认|是|是的|对|对的|好|好的|可以|行|ok|yes|y|1)$/i.test(text.trim());
-}
-
-export function riskIntentInputPrompt(
-  state: Extract<RiskIntentState, { stage: 'freeform' }>,
-): string {
-  const prefix = state.accountIndex === undefined
-    ? (state.transactionIndex === undefined ? '' : `第${state.transactionIndex + 1}笔：`)
-    : `第${state.accountIndex + 1}个账户${state.transactionIndex === undefined ? '' : `第${state.transactionIndex + 1}笔`}：`;
-  if (state.draft.accounts && state.field === 'other') {
-    return '请指定账户和交易序号，例如“第2个账户第1笔金额改为3000万”。';
-  }
-  if (state.draft.transactions && state.field === 'other') {
-    return `${prefix}请指定交易序号和修改内容，例如“第2笔金额改为3000万”。`;
-  }
-  return prefix + (state.field === 'account'
-    ? '请直接输入准确的账户名称或关键词。'
-    : state.field === 'security'
-      ? '请直接输入准确的证券名称或代码。'
-      : state.field === 'amount'
-        ? '请直接输入正确的金额或数量（含单位）。'
-        : state.field === 'market'
-          ? '请直接输入“一级”或“二级”。'
-          : '请直接输入需要修改或补充的内容。');
-}
+export { isRiskIntentConfirmation, riskIntentInputPrompt } from '../../business/risk/application';

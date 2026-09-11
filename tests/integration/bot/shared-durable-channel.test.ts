@@ -9,6 +9,9 @@ import { FakeAgentAdapter } from '../../helpers/fake-agent.js';
 import type { AgentEvent } from '../../../src/agent/types.js';
 import { createTmpProfile, type TmpProfile } from '../../helpers/tmp-profile.js';
 import { TaskLedger } from '../../../src/bridge/task-ledger';
+import { RiskApplication } from '../../../src/business/risk/application';
+import type { RiskService } from '../../../src/business/risk/client';
+import { createLarkRiskAdapter, type LarkRiskAdapter } from '../../../src/bot/risk-adapter';
 import { writeFileAtomic } from '../../../src/platform/atomic-write';
 
 const sdkMock = vi.hoisted(() => ({
@@ -30,6 +33,7 @@ vi.mock('@larksuite/channel', async (importOriginal) => {
 import { startChannel } from '../../../src/bot/channel.js';
 
 interface MessageHandlerMap {
+  reconnected?: () => void;
   message?: (msg: NormalizedMessage) => Promise<void> | void;
 }
 
@@ -73,10 +77,10 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function startDurable(h: Awaited<ReturnType<typeof createHarness>>, ledger?: TaskLedger) {
+async function startDurable(h: Awaited<ReturnType<typeof createHarness>>, ledger?: TaskLedger, riskAdapter?: LarkRiskAdapter) {
   const bridge = await startChannel({
     cfg: h.profileConfig, agent: h.agent, sessions: h.sessions, workspaces: h.workspaces,
-    controls: h.controls, taskLedger: ledger,
+    controls: h.controls, taskLedger: ledger, riskAdapter,
     appPaths: {
       sessionsFile: join(h.tmp.profile, 'sessions.json'),
       workspacesFile: join(h.tmp.profile, 'workspaces.json'),
@@ -92,6 +96,54 @@ function input(id: string, content: string) {
 }
 
 describe('Lark production channel with shared durable state', () => {
+  it('invokes the common runtime on startup, connection recovery and shutdown', async () => {
+    const h = await createHarness({ chatMode: 'group' });
+    const riskAdapter: LarkRiskAdapter = { start: vi.fn(async () => {}),
+      handle: vi.fn(async () => false), close: vi.fn(async () => {}) };
+    const bridge = await startDurable(h, undefined, riskAdapter);
+    expect(riskAdapter.start).toHaveBeenCalledTimes(2);
+    h.channel.handlers.reconnected!();
+    expect(riskAdapter.start).toHaveBeenCalledTimes(3);
+    await bridge.disconnect();
+    expect(riskAdapter.close).toHaveBeenCalledOnce();
+    expect(h.agent.runOptions).toHaveLength(0);
+  });
+  it('closes the business runtime when platform connection fails', async () => {
+    const h = await createHarness({ chatMode: 'group' });
+    vi.spyOn(h.channel, 'connect').mockRejectedValueOnce(new Error('synthetic connection failure'));
+    const riskAdapter: LarkRiskAdapter = { start: vi.fn(async () => {}),
+      handle: vi.fn(async () => false), close: vi.fn(async () => {}) };
+    await expect(startDurable(h, undefined, riskAdapter)).rejects.toThrow('synthetic connection failure');
+    expect(riskAdapter.start).toHaveBeenCalledOnce();
+    expect(riskAdapter.close).toHaveBeenCalledOnce();
+    expect(h.agent.runOptions).toHaveLength(0);
+  });
+
+  it('dispatches business messages once through the actual authenticated durable intake', async () => {
+    const h = await createHarness({ chatMode: 'group' });
+    const service = { getCredit: vi.fn(async (entity: string) => ({
+      entity, date: '2026-09-10',
+      group_internal: { credit_limit_yuan: 100_000, used_credit_yuan: 20_000, remaining_credit_yuan: 80_000 },
+      third_party: { credit_limit_yuan: null, used_credit_yuan: 0, remaining_credit_yuan: null },
+    })) } as unknown as RiskService;
+    const application = new RiskApplication({ service });
+    const riskAdapter = createLarkRiskAdapter({ application, env: {}, authorized: () => true,
+      identity: { channel: 'lark', accountId: 'test', instanceId: 'test' },
+      stateDir: h.tmp.profile, pool: {} as never, activeRuns: {} as never, channel: h.channel as never });
+    const ledger = new TaskLedger(join(h.tmp.profile, 'tasks.json'), { namespace: 'lark' });
+    await ledger.load();
+    await startDurable(h, ledger, riskAdapter);
+    await Promise.all([
+      h.channel.handlers.message!(input('credit-shared', '/授信 公司甲')),
+      h.channel.handlers.message!(input('credit-shared', '/授信 公司甲')),
+    ]);
+    expect(service.getCredit).toHaveBeenCalledOnce();
+    expect(service.getCredit).toHaveBeenCalledWith('公司甲');
+    expect(h.agent.runOptions).toHaveLength(0);
+    expect(ledger.snapshot()).toMatchObject({ done: 1, running: 0, queued: 0 });
+    expect(JSON.stringify(h.channel.sent)).toContain('公司甲');
+  });
+
   it('deduplicates redelivery without changing debounce batching of distinct messages', async () => {
     const h = await createHarness({ chatMode: 'group' });
     const ledger = new TaskLedger(join(h.tmp.profile, 'tasks.json'), { namespace: 'lark' }); await ledger.load();

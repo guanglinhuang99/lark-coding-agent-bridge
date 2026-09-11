@@ -1,16 +1,24 @@
-import { defineConfig } from 'tsup';
+import { defineConfig, type Options } from 'tsup';
+import { copyFile, mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 
-export default defineConfig([
+export default defineConfig((options): Options[] => {
+  const outDir = options.outDir ?? 'dist';
+  return [
   {
     entry: {
       cli: 'src/cli/index.ts',
       wecom: 'src/wecom/cli.ts',
     },
-    outDir: 'dist',
+    outDir,
     format: ['esm'],
     target: 'node20',
     platform: 'node',
     clean: true,
+    async onSuccess() {
+      await mkdir(join(outDir, 'risk'), { recursive: true });
+      await copyFile('src/business/risk/direct_bridge.py', join(outDir, 'risk/direct_bridge.py'));
+    },
     sourcemap: false,
     splitting: false,
     dts: false,
@@ -21,7 +29,7 @@ export default defineConfig([
   },
   {
     entry: { index: 'src/index.ts' },
-    outDir: 'dist',
+    outDir,
     format: ['esm'],
     target: 'node20',
     platform: 'node',
@@ -29,4 +37,5 @@ export default defineConfig([
     splitting: false,
     dts: true,
   },
-]);
+  ];
+});
