@@ -9,6 +9,11 @@ type StoredConversationState =
   | { status: 'active'; state: RiskConversationState; expiresAt: number; revision: number }
   | { status: 'expired' };
 
+export interface RiskTerminalState {
+  readonly reason: 'consumed' | 'cancelled';
+  readonly expiresAt: number;
+}
+
 interface StoredTaskState {
   expiresAt: number;
   conversationKey: string;
@@ -25,8 +30,11 @@ export class RiskStateRegistry {
   dispose(): void {
     for (const key of this.keys()) this.clearConversation(key);
     for (const taskId of [...this.taskStates.keys()]) this.deleteTask(taskId);
+    this.terminals.clear();
   }
 
+  // Only small lifecycle hints, never executable drafts or business results.
+  private readonly terminals = new Map<string, RiskTerminalState>();
   private readonly states = new Map<string, StoredConversationState>();
   private readonly stateTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly taskStates = new Map<string, StoredTaskState>();
@@ -70,6 +78,31 @@ export class RiskStateRegistry {
     if (this.states.get(conversationKey)?.status !== 'expired') return false;
     this.states.delete(conversationKey);
     return true;
+  }
+
+  terminalFor(key: string): RiskTerminalState | undefined {
+    const terminal = this.terminals.get(key);
+    if (terminal && terminal.expiresAt <= this.now()) {
+      this.terminals.delete(key);
+      return undefined;
+    }
+    return terminal;
+  }
+
+  rememberTerminal(key: string, reason: RiskTerminalState['reason']): void {
+    const now = this.now();
+    for (const [storedKey, value] of this.terminals) {
+      if (value.expiresAt <= now) this.terminals.delete(storedKey);
+    }
+    this.terminals.delete(key);
+    this.terminals.set(key, Object.freeze({ reason, expiresAt: now + this.ttlMs }));
+    while (this.terminals.size > Math.max(0, this.maxExpiredEntries)) {
+      this.terminals.delete(this.terminals.keys().next().value!);
+    }
+  }
+
+  forgetTerminal(key: string, expected?: RiskTerminalState): void {
+    if (!expected || this.terminals.get(key) === expected) this.terminals.delete(key);
   }
 
   setPretrade(conversationKey: string, state: RiskIntentState): void {
@@ -154,6 +187,7 @@ export class RiskStateRegistry {
   }
 
   private setConversation(conversationKey: string, state: RiskConversationState): void {
+    this.forgetTerminal(conversationKey);
     this.delete(conversationKey);
     const stored: StoredConversationState = { status: 'active', state, expiresAt: this.now() + this.ttlMs,
       revision: ++this.revisionCounter };

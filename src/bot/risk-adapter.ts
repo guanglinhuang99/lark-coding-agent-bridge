@@ -1,4 +1,5 @@
 import type { LarkChannel, NormalizedMessage } from '@larksuite/channel';
+import { log } from '../core/logger';
 import { createRiskBusinessRuntime, type RiskBusinessSnapshot } from '../runtime/risk-business';
 import type { ActiveRuns } from '../bridge/active-runs';
 import type { ProcessPool } from '../bridge/process-pool';
@@ -39,6 +40,7 @@ export function createLarkRiskAdapter(input: {
     key: keyFor(scope, msg.senderId, workspace), text: msg.content, authorized: authorized(msg.senderId),
     hasAttachments: msg.resources.length > 0, maxMessageBytes: 3500,
   });
+  const controlReplies = new Set<Promise<void>>();
   const send = async (msg: NormalizedMessage, content: string) => {
     for (const page of splitRiskMessage(content)) {
       await input.channel.send(msg.chatId, { markdown: page }, {
@@ -54,8 +56,16 @@ export function createLarkRiskAdapter(input: {
     async handle(msg, scope, workspace, ingress) {
       const key = keyFor(scope, msg.senderId, workspace);
       if (['/stop', '/new'].includes(msg.content.trim().toLowerCase())) {
-        application.cancel(key);
+        const cancellation = application.cancel(key);
         ingress?.release();
+        if (msg.content.trim().toLowerCase() === '/stop') {
+          // Hand off to the ordinary stop handler immediately, not after a network reply.
+          const delivery = (async () => {
+            for (const content of renderLarkRiskReply(cancellation)) await send(msg, content);
+          })().catch(error => log.fail('risk-stop-reply', error));
+          controlReplies.add(delivery);
+          void delivery.then(() => controlReplies.delete(delivery), () => controlReplies.delete(delivery));
+        }
         return false; // The standard command handler still handles its agent/session state.
       }
       const reply = await application.handle(requestFor(msg, scope, workspace), ingress);
@@ -64,7 +74,8 @@ export function createLarkRiskAdapter(input: {
       return true;
     },
     async close() {
-      await runtime.close();
+      try { await runtime.close(); }
+      finally { await Promise.allSettled([...controlReplies]); }
     },
   };
 }

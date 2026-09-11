@@ -254,7 +254,8 @@ describe('core architecture boundary', () => {
     expect(cli).toContain('riskIntentRunsStarting.add(businessConversationScope(key))');
     expect(cli).toContain('riskIntentStopRequests.delete(scope)');
     expect(cli).toContain('if (activeRuns.get(scope) === active) activeRuns.delete(scope)');
-    expect(cli.match(/^\s*requestRiskIntentStop\(key\);/gm)).toHaveLength(3);
+    // All three callers remain connected, whether they consume the cancellation reply or not.
+    expect(cli.match(/\brequestRiskIntentStop\(key\);/g)).toHaveLength(3);
     // All initial/correction paths now enter one shared application callback.
     expect(cli).not.toContain('analyzeRiskDraft');
     const runtime = await readFile('src/runtime/risk-business.ts', 'utf8');

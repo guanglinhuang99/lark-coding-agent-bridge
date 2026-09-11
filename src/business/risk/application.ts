@@ -11,7 +11,7 @@ import {
 import { isRiskCandidate } from './parser';
 import { RiskRouter, type RiskRouteResult, type RiskQueryState } from './router';
 import { businessConversationScope } from '../identity';
-import { RiskStateRegistry } from './state';
+import { RiskStateRegistry, type RiskTerminalState } from './state';
 
 export type RiskReply =
   | { handled: false }
@@ -44,6 +44,7 @@ interface CapturedInput {
   text: string;
   explicit: boolean;
   expectedState?: RiskIntentState | RiskQueryState;
+  terminal?: RiskTerminalState;
   continuation: boolean;
   controller: AbortController;
   used: boolean;
@@ -88,6 +89,7 @@ export class RiskApplication {
   accepts(key: string, text: string, hasAttachments = false): boolean {
     const command = parseBusinessCommand(text);
     if (command.kind === 'credit-query') return true;
+    if (isRiskIntentConfirmation(text) && this.states.terminalFor(key)) return true;
     if (command.kind === 'help' || (command.kind === 'other' && text.trim().startsWith('/'))) return false;
     return shouldUseRiskFastPath(command, this.states.hasPendingOrExpired(key) || this.pending.has(key) || this.ingress.has(key), hasAttachments,
       isPretradeIntentCandidate(text));
@@ -109,6 +111,7 @@ export class RiskApplication {
       ((request.explicitMeasurement || command.kind === 'risk-measurement') && !isRiskIntentConfirmation(text));
     const captured: CapturedInput = { key: request.key, text: request.text, explicit: Boolean(request.explicitMeasurement),
       expectedState: this.states.getConversation(request.key, maxRevision)?.state, continuation: !fresh,
+      terminal: this.states.terminalFor(request.key),
       controller: new AbortController(), used: false, released: false,
       full: accepted && this.ingressCount >= (this.options.maxPending ?? 32) };
     const tracked = accepted && !captured.full;
@@ -133,15 +136,23 @@ export class RiskApplication {
     return receipt;
   }
 
-  cancel(key: string): void {
+  cancel(key: string): RiskReply {
+    const hadWork = this.states.hasPendingOrExpired(key) || this.requests.has(key) || this.ingress.has(key);
     for (const receipt of this.ingress.get(key) ?? []) this.receipts.get(receipt)?.controller.abort();
     for (const request of this.requests.get(key) ?? []) request.abort();
     this.clear(key);
+    if (!hadWork) return { handled: false };
+    this.states.rememberTerminal(key, 'cancelled');
+    return riskCancellationReply();
   }
 
-  cancelScope(scope: string): void {
+  cancelScope(scope: string): RiskReply {
     const keys = new Set([...this.states.keys(), ...this.requests.keys(), ...this.ingress.keys()]);
-    for (const key of keys) if (businessConversationScope(key) === scope) this.cancel(key);
+    let cancelled = false;
+    for (const key of keys) {
+      if (businessConversationScope(key) === scope && this.cancel(key).handled) cancelled = true;
+    }
+    return cancelled ? riskCancellationReply() : { handled: false };
   }
 
   async close(): Promise<void> {
@@ -159,12 +170,25 @@ export class RiskApplication {
       return Promise.resolve(notice('请求已失效', ['请重新发送；本次未执行。']));
     }
     captured.used = true;
-    if (!receipt.accepted) { receipt.release(); return Promise.resolve({ handled: false }); }
+    if (!receipt.accepted) {
+      // A genuinely new ordinary message hands control back to the generic Agent.
+      // Compare the captured marker so a delayed generic message cannot erase a newer end.
+      if (request.authorized && captured.terminal && !isRiskIntentConfirmation(request.text) &&
+          !request.text.trim().startsWith('/')) this.states.forgetTerminal(request.key, captured.terminal);
+      receipt.release();
+      return Promise.resolve({ handled: false });
+    }
     if (captured.full) { receipt.release(); return Promise.resolve(notice('当前任务较多', ['请稍后重试，本次未执行。'])); }
     return this.serial(request.key, async signal => {
       if (!request.authorized) return notice('无法使用风险查询', ['当前用户没有风险查询权限。'], 'error');
       if (captured.continuation && (!captured.expectedState ||
           this.states.getConversation(request.key)?.state !== captured.expectedState)) {
+        const terminal = this.states.terminalFor(request.key) ?? captured.terminal;
+        if (!this.states.has(request.key) && terminal && isRiskIntentConfirmation(request.text)) {
+          return terminal.reason === 'cancelled'
+            ? notice('该风险交互已取消', ['当前没有待确认草稿；本条确认不会启动测算。请重新发送 `/测算 <交易文本>`。'], 'info')
+            : notice('该确认已处理', ['不会重复执行测算。请查看上次结果；失败或需要重新测算时，请重新发送 `/测算 <交易文本>`。'], 'info');
+        }
         return notice('当前确认或选择已失效', ['请等待最新确认摘要，再回复；本次未执行。']);
       }
       const reply = await this.dispatch(request, signal);
@@ -356,6 +380,7 @@ export class RiskApplication {
     ensureActive(signal);
     // Consume before awaiting the backend. Duplicate text/card deliveries cannot submit again.
     this.clear(request.key);
+    this.states.rememberTerminal(request.key, 'consumed');
     request.onProgress?.('交易信息已锁定，正在执行投资限额测算。');
     const result = await this.router!.executeConfirmed(state, request.onProgress);
     ensureActive(signal);
@@ -416,6 +441,12 @@ export function riskIntentInputPrompt(state: Extract<RiskIntentState, { stage: '
     : state.field === 'security' ? '请直接输入准确的证券名称或代码。'
       : state.field === 'amount' ? '请直接输入正确的金额或数量（含单位）。'
         : state.field === 'market' ? '请直接输入“一级”或“二级”。' : '请直接输入需要修改或补充的内容。');
+}
+function riskCancellationReply(): RiskReply {
+  return notice('已取消风险交互', [
+    '待确认草稿和排队请求已撤销，后续确认不会启动测算。',
+    '已经提交的只读操作可能仍在完成；不会自动重试，也不会恢复已撤销的草稿。',
+  ], 'info');
 }
 function notice(title: string, lines: string[], level: 'info' | 'warning' | 'error' = 'warning'): RiskReply {
   return { handled: true, kind: 'notice', title, lines, level };

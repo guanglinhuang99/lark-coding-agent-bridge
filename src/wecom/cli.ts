@@ -98,7 +98,7 @@ import {
 } from './agent-preferences';
 import type { NormalizedAttachment } from '../media/attachment';
 import { createRiskBusinessRuntime } from '../runtime/risk-business';
-import type { RiskIngress } from '../business/risk/application';
+import type { RiskIngress, RiskReply } from '../business/risk/application';
 import { RiskProgressRelay } from '../business/risk/progress';
 import { businessConversationKey, businessConversationScope } from '../business/identity';
 import { RiskSelectionTaskRegistry } from './risk/card';
@@ -709,9 +709,23 @@ async function handleMessage<T extends BaseMessage>(
   }
 
   if (command === '/stop') {
-    requestRiskIntentStop(key);
+    const riskCancellation = requestRiskIntentStop(key);
     const active = activeRuns.get(key);
+    // Stopping must not wait for cancellation-receipt delivery or ledger writes.
+    if (active) {
+      active.state = markInterrupted(active.state);
+      await active.run.stop();
+      if (active.durableTaskId) {
+        await taskStore.markInterrupted(active.durableTaskId).catch(() => {});
+      }
+    }
+    if (riskCancellation.handled) {
+      await riskInteraction.renderReply(body, riskKeyFor(key, body.from?.userid),
+        new WeComStreamReply(client, frame, generateReqId('risk-stop')), riskCancellation)
+        .catch((error: unknown) => log.fail('risk-stop-reply', error));
+    }
     if (!active) {
+      if (riskCancellation.handled) return;
       const starting = startingRuns.has(key) || conversationQueue.has(key);
       const riskIntentStopping = riskIntentStopRequests.has(key);
       await replyControl(
@@ -735,11 +749,6 @@ async function handleMessage<T extends BaseMessage>(
       return;
     }
 
-    active.state = markInterrupted(active.state);
-    if (active.durableTaskId) {
-      await taskStore.markInterrupted(active.durableTaskId).catch(() => {});
-    }
-    await active.run.stop();
     await replyControl(
       frame,
       key,
@@ -1016,9 +1025,10 @@ function isWorkspaceScope(value: string): boolean {
   return /^(?:group|single):workspace-v1:/u.test(value);
 }
 
-function requestRiskIntentStop(key: string): void {
-  riskApplication.cancelScope(key);
+function requestRiskIntentStop(key: string): RiskReply {
+  const cancellation = riskApplication.cancelScope(key);
   if (riskIntentRunsStarting.has(key)) riskIntentStopRequests.add(key);
+  return cancellation;
 }
 
 class RiskIntentInterruptedError extends Error {

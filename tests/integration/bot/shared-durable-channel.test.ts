@@ -98,6 +98,30 @@ function input(id: string, content: string) {
 }
 
 describe('Lark production channel with shared durable state', () => {
+  it.each(['confirmed', 'cancelled'] as const)('owns post-terminal confirmations through the real intake: %s', async terminal => {
+    const h = await createHarness({ chatMode: 'group' });
+    const calculatePretrade = vi.fn(async () => ({ status: 'success', result: {} }));
+    const application = new RiskApplication({ service: { calculatePretrade } as unknown as RiskService });
+    const identity = { channel: 'lark' as const, accountId: 'test', instanceId: 'test' };
+    const adapter = createLarkRiskAdapter({ application, env: {}, authorized: () => true, identity,
+      stateDir: h.tmp.profile, pool: {} as never, activeRuns: {} as never, channel: h.channel as never });
+    const ledger = new TaskLedger(join(h.tmp.profile, 'tasks.json'), { namespace: 'lark' });
+    await ledger.load();
+    await startDurable(h, ledger, adapter);
+    const key = businessConversationKey(identity, businessWorkspaceScope('oc_topic_chat', h.profileConfig.workspaces.default), 'ou_user');
+    application.states.setPretrade(key, { stage: 'confirm', product: '测试账户', originalText: '测试账户申购100万',
+      draft: { accountQuery: '测试账户', action: 'subscription', amountText: '100万', market: 'secondary' } });
+    await h.channel.handlers.message!(input('terminal-action', terminal === 'confirmed' ? '确认' : '/stop'));
+    if (terminal === 'cancelled') expect(JSON.stringify(h.channel.sent)).toContain('已取消风险交互');
+    const priorReplies = h.channel.sent.length;
+    await h.channel.handlers.message!(input('late-confirmation', '确认'));
+    expect(h.channel.sent.length).toBeGreaterThan(priorReplies);
+    expect(JSON.stringify(h.channel.sent.slice(priorReplies))).toContain(terminal === 'confirmed' ? '不会重复' : '已取消');
+    expect(ledger.snapshot()).toMatchObject({ queued: 0, running: 0 });
+    expect(calculatePretrade).toHaveBeenCalledTimes(terminal === 'confirmed' ? 1 : 0);
+    expect(h.agent.runOptions).toHaveLength(0);
+  });
+
   it.each(['chat-mode', 'topic'] as const)('fences confirmation arrival before scope resolution: %s', async stage => {
     const h = await createHarness({ chatMode: stage === 'topic' ? 'topic' : 'group',
       rawThreadIds: { 'early-confirm': 'thread-early', 'newer-correction': 'thread-early' } });
