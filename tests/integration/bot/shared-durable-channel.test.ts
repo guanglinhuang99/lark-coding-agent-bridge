@@ -10,6 +10,8 @@ import type { AgentEvent } from '../../../src/agent/types.js';
 import { createTmpProfile, type TmpProfile } from '../../helpers/tmp-profile.js';
 import { TaskLedger } from '../../../src/bridge/task-ledger';
 import { RiskApplication } from '../../../src/business/risk/application';
+import { businessConversationKey, businessWorkspaceScope } from '../../../src/business/identity';
+import type { RiskIntentState } from '../../../src/business/risk/intent';
 import type { RiskService } from '../../../src/business/risk/client';
 import { createLarkRiskAdapter, type LarkRiskAdapter } from '../../../src/bot/risk-adapter';
 import { writeFileAtomic } from '../../../src/platform/atomic-write';
@@ -96,6 +98,63 @@ function input(id: string, content: string) {
 }
 
 describe('Lark production channel with shared durable state', () => {
+  it.each(['replaced', 'cancelled'] as const)('does not rebind a delayed confirmation after its draft is %s', async change => {
+    const h = await createHarness({ chatMode: 'group' });
+    const calculatePretrade = vi.fn(async () => ({ status: 'success', result: {} }));
+    const service = { calculatePretrade } as unknown as RiskService;
+    const application = new RiskApplication({ service });
+    const identity = { channel: 'lark' as const, accountId: 'test', instanceId: 'test' };
+    const riskAdapter = createLarkRiskAdapter({ application, env: {}, authorized: () => true,
+      identity, stateDir: h.tmp.profile, pool: {} as never, activeRuns: {} as never, channel: h.channel as never });
+    const ledger = new TaskLedger(join(h.tmp.profile, 'tasks.json'), { namespace: 'lark' });
+    await ledger.load();
+    await startDurable(h, ledger, riskAdapter);
+    const key = businessConversationKey(identity,
+      businessWorkspaceScope('oc_topic_chat', h.profileConfig.workspaces.default), 'ou_user');
+    const original: RiskIntentState = { stage: 'confirm', originalText: '测试账户申购1000万', product: '测试账户',
+      draft: { accountQuery: '测试账户', action: 'subscription', amountText: '1000万', market: 'secondary' } };
+    application.states.setPretrade(key, original);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let entered = false;
+    const claim = ledger.claimInbound.bind(ledger);
+    vi.spyOn(ledger, 'claimInbound').mockImplementation(async (...args) => {
+      if (args[0].includes('delayed-confirm')) { entered = true; await gate; }
+      return claim(...args);
+    });
+    const pending = h.channel.handlers.message!(input('delayed-confirm', '确认'));
+    await waitFor(() => entered);
+    const replacement: RiskIntentState = { ...original, draft: { ...original.draft, amountText: '2000万' } };
+    if (change === 'replaced') application.states.setPretrade(key, replacement);
+    else application.cancel(key);
+    release();
+    await pending;
+    expect(calculatePretrade).not.toHaveBeenCalled();
+    expect(JSON.stringify(h.channel.sent)).toContain(change === 'replaced' ? '已失效' : '已停止');
+    expect(application.states.getPretrade(key)).toBe(change === 'replaced' ? replacement : undefined);
+    expect(h.agent.runOptions).toHaveLength(0);
+  });
+
+  it.each(['duplicate', 'write-failed'] as const)('releases the captured business ingress when durable acceptance is %s', async outcome => {
+    const h = await createHarness({ chatMode: 'group' });
+    const release = vi.fn();
+    const riskAdapter: LarkRiskAdapter = {
+      capture: vi.fn(() => ({ accepted: true, release })),
+      handle: vi.fn(async () => false), close: vi.fn(async () => {}),
+    };
+    const ledger = new TaskLedger(join(h.tmp.profile, 'tasks.json'), { namespace: 'lark' });
+    await ledger.load();
+    const original = await ledger.claimInbound('existing', 'scope');
+    if (outcome === 'duplicate') vi.spyOn(ledger, 'claimInbound').mockResolvedValue({ ...original, accepted: false });
+    else vi.spyOn(ledger, 'claimInbound').mockRejectedValue(new Error('synthetic write failure'));
+    await startDurable(h, ledger, riskAdapter);
+    await h.channel.handlers.message!(input('rejected-confirm', '确认'));
+    expect(riskAdapter.capture).toHaveBeenCalledOnce();
+    expect(riskAdapter.handle).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledOnce();
+    expect(h.agent.runOptions).toHaveLength(0);
+  });
+
   it('invokes the common runtime on startup, connection recovery and shutdown', async () => {
     const h = await createHarness({ chatMode: 'group' });
     const riskAdapter: LarkRiskAdapter = { start: vi.fn(async () => {}),

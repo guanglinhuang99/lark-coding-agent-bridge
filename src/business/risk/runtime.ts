@@ -23,9 +23,9 @@ export function resolveRiskBridgePath(rootDir: string, moduleUrl = import.meta.u
 export function readRiskRuntimeConfig(input: {
   env: NodeJS.ProcessEnv; rootDir: string; defaultStateDir: string; legacyPrefix?: string;
 }): RiskRuntimeConfig {
-  const get = (name: string): string | undefined => (
-    input.env[`RISK_${name}`] ?? (input.legacyPrefix ? input.env[`${input.legacyPrefix}_RISK_${name}`] : undefined)
-  )?.trim() || undefined;
+  const get = (name: string): string | undefined =>
+    input.env[`RISK_${name}`]?.trim() ||
+    (input.legacyPrefix ? input.env[`${input.legacyPrefix}_RISK_${name}`]?.trim() : undefined) || undefined;
   const integer = (name: string, fallback: number): number => {
     const raw = get(name);
     if (raw === undefined) return fallback;

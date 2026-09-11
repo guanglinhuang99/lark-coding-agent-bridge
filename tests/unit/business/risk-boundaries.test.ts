@@ -47,6 +47,18 @@ describe('shared business architecture', () => {
     expect(readRiskRuntimeConfig({ env: { WECOM_RISK_PYTHON: '/legacy/python' }, rootDir: '/root',
       defaultStateDir: '/state', legacyPrefix: 'WECOM' }).pythonPath).toBe('/legacy/python');
   });
+  it.each(['', '   '])('treats blank neutral settings as absent for legacy fallback: %j', blank => {
+    const legacy = { WECOM_RISK_PYTHON: '/legacy/python', WECOM_RISK_SERVICE_DIR: '/legacy/service',
+      WECOM_RISK_STATE_DIR: '/legacy/state', WECOM_RISK_DIRECT_WORKERS: '3' };
+    const options = { rootDir: '/root', defaultStateDir: '/state', legacyPrefix: 'WECOM' };
+    const expected = readRiskRuntimeConfig({ ...options, env: legacy });
+    expect(readRiskRuntimeConfig({ ...options, env: { ...legacy, RISK_PYTHON: blank,
+      RISK_SERVICE_DIR: blank, RISK_STATE_DIR: blank, RISK_DIRECT_WORKERS: blank } })).toEqual(expected);
+  });
+  it('rejects nonblank invalid neutral configuration instead of using a valid legacy value', () => {
+    expect(() => readRiskRuntimeConfig({ rootDir: '/root', defaultStateDir: '/state', legacyPrefix: 'WECOM',
+      env: { RISK_DIRECT_WORKERS: 'bad', WECOM_RISK_DIRECT_WORKERS: '3' } })).toThrow('RISK_DIRECT_WORKERS');
+  });
   it('finds the packaged Python bridge next to the loaded bundle, not the caller cwd', () => {
     const packaged = resolve('/release/dist/risk/direct_bridge.py');
     const moduleUrl = pathToFileURL(resolve('/release/dist/cli.js')).href;

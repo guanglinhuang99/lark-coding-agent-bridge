@@ -4,7 +4,7 @@ import type { ActiveRuns } from '../bridge/active-runs';
 import type { ProcessPool } from '../bridge/process-pool';
 import type { BridgeIdentity } from '../bridge/identity';
 import { businessConversationKey, businessWorkspaceScope } from '../business/identity';
-import { RiskApplication, riskIntentInputPrompt, type RiskReply } from '../business/risk/application';
+import { RiskApplication, riskIntentInputPrompt, type RiskIngress, type RiskRequest, type RiskReply } from '../business/risk/application';
 import { buildIntentSelection } from '../business/risk/intent';
 import { splitRiskMessage } from '../business/risk/presentation';
 export { splitRiskMessage as splitLarkRiskMessage } from '../business/risk/presentation';
@@ -12,7 +12,8 @@ export { splitRiskMessage as splitLarkRiskMessage } from '../business/risk/prese
 export interface LarkRiskAdapter {
   start?(): Promise<void>;
   snapshot?(): RiskBusinessSnapshot;
-  handle(msg: NormalizedMessage, scope: string, workspace?: string): Promise<boolean>;
+  capture?(msg: NormalizedMessage, scope: string, workspace?: string): RiskIngress;
+  handle(msg: NormalizedMessage, scope: string, workspace?: string, ingress?: RiskIngress): Promise<boolean>;
   close(): Promise<void>;
 }
 
@@ -33,6 +34,10 @@ export function createLarkRiskAdapter(input: {
   const { application } = runtime;
   const keyFor = (scope: string, actor: string, workspace?: string) =>
     businessConversationKey(input.identity, businessWorkspaceScope(scope, workspace), actor);
+  const requestFor = (msg: NormalizedMessage, scope: string, workspace?: string): RiskRequest => ({
+    key: keyFor(scope, msg.senderId, workspace), text: msg.content, authorized: authorized(msg.senderId),
+    hasAttachments: msg.resources.length > 0, maxMessageBytes: 3500,
+  });
   const send = async (msg: NormalizedMessage, content: string) => {
     for (const page of splitRiskMessage(content)) {
       await input.channel.send(msg.chatId, { markdown: page }, {
@@ -43,14 +48,15 @@ export function createLarkRiskAdapter(input: {
   return {
     start: () => runtime.start(),
     snapshot: () => runtime.snapshot(),
-    async handle(msg, scope, workspace) {
+    capture: (msg, scope, workspace) => application.capture(requestFor(msg, scope, workspace)),
+    async handle(msg, scope, workspace, ingress) {
       const key = keyFor(scope, msg.senderId, workspace);
       if (['/stop', '/new'].includes(msg.content.trim().toLowerCase())) {
         application.cancel(key);
+        ingress?.release();
         return false; // The standard command handler still handles its agent/session state.
       }
-      const reply = await application.handle({ key, text: msg.content, authorized: authorized(msg.senderId),
-        hasAttachments: msg.resources.length > 0, maxMessageBytes: 3500 });
+      const reply = await application.handle(requestFor(msg, scope, workspace), ingress);
       if (!reply.handled) return false;
       for (const content of renderLarkRiskReply(reply)) await send(msg, content);
       return true;

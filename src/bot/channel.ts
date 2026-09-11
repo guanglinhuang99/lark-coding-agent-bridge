@@ -804,6 +804,9 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
   }
 
   const businessWorkspace = workspaces.cwdFor(scope) ?? controls.profileConfig.workspaces.default;
+  // Capture the server-owned draft before any durable receipt write can yield.
+  const riskIngress = deps.riskAdapter?.capture?.(emsg, scope, businessWorkspace);
+  try {
   try {
     const claim = await deps.inbound?.accept(emsg);
     if (claim && !claim.accepted) {
@@ -818,7 +821,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
   }
   try {
   // Business commands run after authentication and durable deduplication, before generic chat.
-  if (await deps.riskAdapter?.handle(emsg, scope, businessWorkspace)) {
+  if (await deps.riskAdapter?.handle(emsg, scope, businessWorkspace, riskIngress)) {
     await deps.inbound?.finish([emsg], 'done');
     return;
   }
@@ -858,6 +861,10 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
   } catch (err) {
     await deps.inbound?.finish([emsg], 'failed').catch((failure) => log.fail('inbound-ledger', failure));
     throw err;
+  }
+  } finally {
+    // Includes rejected duplicates and failed writes; application release is idempotent.
+    riskIngress?.release();
   }
 }
 
