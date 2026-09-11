@@ -682,6 +682,8 @@ type LogThreadModeOverride = (input: {
 }) => void;
 
 async function intakeMessage(deps: IntakeDeps): Promise<void> {
+  // No state created after arrival may be approved by this message, even if scope lookup yields.
+  const riskArrival = deps.riskAdapter?.markArrival?.();
   const {
     channel,
     agent,
@@ -805,7 +807,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
 
   const businessWorkspace = workspaces.cwdFor(scope) ?? controls.profileConfig.workspaces.default;
   // Capture the server-owned draft before any durable receipt write can yield.
-  const riskIngress = deps.riskAdapter?.capture?.(emsg, scope, businessWorkspace);
+  const riskIngress = deps.riskAdapter?.capture?.(emsg, scope, businessWorkspace, riskArrival);
   try {
   try {
     const claim = await deps.inbound?.accept(emsg);

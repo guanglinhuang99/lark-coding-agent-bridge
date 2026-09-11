@@ -4,7 +4,7 @@ import type { ActiveRuns } from '../bridge/active-runs';
 import type { ProcessPool } from '../bridge/process-pool';
 import type { BridgeIdentity } from '../bridge/identity';
 import { businessConversationKey, businessWorkspaceScope } from '../business/identity';
-import { RiskApplication, riskIntentInputPrompt, type RiskIngress, type RiskRequest, type RiskReply } from '../business/risk/application';
+import { RiskApplication, riskIntentInputPrompt, type RiskArrival, type RiskIngress, type RiskRequest, type RiskReply } from '../business/risk/application';
 import { buildIntentSelection } from '../business/risk/intent';
 import { splitRiskMessage } from '../business/risk/presentation';
 export { splitRiskMessage as splitLarkRiskMessage } from '../business/risk/presentation';
@@ -12,7 +12,8 @@ export { splitRiskMessage as splitLarkRiskMessage } from '../business/risk/prese
 export interface LarkRiskAdapter {
   start?(): Promise<void>;
   snapshot?(): RiskBusinessSnapshot;
-  capture?(msg: NormalizedMessage, scope: string, workspace?: string): RiskIngress;
+  markArrival?(): RiskArrival;
+  capture?(msg: NormalizedMessage, scope: string, workspace?: string, arrival?: RiskArrival): RiskIngress;
   handle(msg: NormalizedMessage, scope: string, workspace?: string, ingress?: RiskIngress): Promise<boolean>;
   close(): Promise<void>;
 }
@@ -48,7 +49,8 @@ export function createLarkRiskAdapter(input: {
   return {
     start: () => runtime.start(),
     snapshot: () => runtime.snapshot(),
-    capture: (msg, scope, workspace) => application.capture(requestFor(msg, scope, workspace)),
+    markArrival: () => application.markArrival(),
+    capture: (msg, scope, workspace, arrival) => application.capture(requestFor(msg, scope, workspace), arrival),
     async handle(msg, scope, workspace, ingress) {
       const key = keyFor(scope, msg.senderId, workspace);
       if (['/stop', '/new'].includes(msg.content.trim().toLowerCase())) {

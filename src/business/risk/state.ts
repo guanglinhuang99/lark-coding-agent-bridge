@@ -6,7 +6,7 @@ export type RiskConversationState =
   | { kind: 'query'; state: RiskQueryState };
 
 type StoredConversationState =
-  | { status: 'active'; state: RiskConversationState; expiresAt: number }
+  | { status: 'active'; state: RiskConversationState; expiresAt: number; revision: number }
   | { status: 'expired' };
 
 interface StoredTaskState {
@@ -17,6 +17,9 @@ interface StoredTaskState {
 
 /** Single owner for a runtime's risk continuation state and interaction callbacks. */
 export class RiskStateRegistry {
+  private revisionCounter = 0;
+  revision(): number { return this.revisionCounter; }
+
   keys(): string[] { return [...this.states.keys()]; }
 
   dispose(): void {
@@ -35,13 +38,13 @@ export class RiskStateRegistry {
     private readonly maxExpiredEntries = 2_000,
   ) {}
 
-  getConversation(conversationKey: string): RiskConversationState | undefined {
+  getConversation(conversationKey: string, maxRevision = Number.POSITIVE_INFINITY): RiskConversationState | undefined {
     const stored = this.states.get(conversationKey);
     if (stored?.status === 'active' && stored.expiresAt <= this.now()) {
       this.expire(conversationKey, stored);
       return undefined;
     }
-    return stored?.status === 'active' ? stored.state : undefined;
+    return stored?.status === 'active' && stored.revision <= maxRevision ? stored.state : undefined;
   }
 
   getPretrade(conversationKey: string): RiskIntentState | undefined {
@@ -152,7 +155,8 @@ export class RiskStateRegistry {
 
   private setConversation(conversationKey: string, state: RiskConversationState): void {
     this.delete(conversationKey);
-    const stored: StoredConversationState = { status: 'active', state, expiresAt: this.now() + this.ttlMs };
+    const stored: StoredConversationState = { status: 'active', state, expiresAt: this.now() + this.ttlMs,
+      revision: ++this.revisionCounter };
     this.states.set(conversationKey, stored);
     const timer = setTimeout(() => {
       this.expire(conversationKey, stored);

@@ -98,6 +98,44 @@ function input(id: string, content: string) {
 }
 
 describe('Lark production channel with shared durable state', () => {
+  it.each(['chat-mode', 'topic'] as const)('fences confirmation arrival before scope resolution: %s', async stage => {
+    const h = await createHarness({ chatMode: stage === 'topic' ? 'topic' : 'group',
+      rawThreadIds: { 'early-confirm': 'thread-early', 'newer-correction': 'thread-early' } });
+    const calculatePretrade = vi.fn(async () => ({ status: 'success', result: {} }));
+    const application = new RiskApplication({ service: { calculatePretrade } as unknown as RiskService });
+    const identity = { channel: 'lark' as const, accountId: 'test', instanceId: 'test' };
+    const adapter = createLarkRiskAdapter({ application, env: {}, authorized: () => true, identity,
+      stateDir: h.tmp.profile, pool: {} as never, activeRuns: {} as never, channel: h.channel as never });
+    await startDurable(h, undefined, adapter);
+    const scope = stage === 'topic' ? 'oc_topic_chat:thread-early' : 'oc_topic_chat';
+    const key = businessConversationKey(identity, businessWorkspaceScope(scope, h.profileConfig.workspaces.default), 'ou_user');
+    application.states.setPretrade(key, { stage: 'confirm', originalText: '测试账户申购1000万', product: '测试账户',
+      draft: { accountQuery: '测试账户', action: 'subscription', amountText: '1000万', market: 'secondary' } });
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let entered = false;
+    if (stage === 'chat-mode') {
+      vi.spyOn(h.channel, 'getChatMode').mockImplementationOnce(async () => { entered = true; await gate; return 'group'; });
+    } else {
+      const fetch = h.channel.fetchRawMessage.getMockImplementation()!;
+      h.channel.fetchRawMessage.mockImplementation(async (...args) => {
+        if (args[0] === 'early-confirm') { entered = true; await gate; }
+        return fetch(...args);
+      });
+    }
+    const pending = h.channel.handlers.message!(input('early-confirm', '确认'));
+    await waitFor(() => entered);
+    try {
+      await h.channel.handlers.message!(input('newer-correction', '金额改为2000万'));
+      expect(application.states.getPretrade(key)?.draft.amountText).toBe('2000万');
+    } finally { release(); }
+    await pending;
+    expect(calculatePretrade).not.toHaveBeenCalled();
+    expect(application.states.getPretrade(key)?.draft.amountText).toBe('2000万');
+    expect(JSON.stringify(h.channel.sent)).toContain('已失效');
+    expect(h.agent.runOptions).toHaveLength(0);
+  });
+
   it.each(['replaced', 'cancelled'] as const)('does not rebind a delayed confirmation after its draft is %s', async change => {
     const h = await createHarness({ chatMode: 'group' });
     const calculatePretrade = vi.fn(async () => ({ status: 'success', result: {} }));

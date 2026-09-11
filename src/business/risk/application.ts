@@ -31,6 +31,9 @@ export interface RiskRequest {
   maxMessageBytes?: number;
   onProgress?: (message: string) => void;
 }
+/** Opaque, single-use marker captured before asynchronous conversation resolution. */
+export interface RiskArrival { readonly kind: 'risk-arrival' }
+
 /** Server-owned receipt captured BEFORE transport acknowledgement or queue waits. */
 export interface RiskIngress {
   readonly accepted: boolean;
@@ -71,6 +74,7 @@ export class RiskApplication {
   private readonly pending = new Map<string, Promise<unknown>>();
   private readonly requests = new Map<string, Set<AbortController>>();
   private readonly receipts = new WeakMap<RiskIngress, CapturedInput>();
+  private readonly arrivals = new WeakMap<RiskArrival, number>();
   private readonly ingress = new Map<string, Set<RiskIngress>>();
   private ingressCount = 0;
   private pendingCount = 0;
@@ -89,14 +93,22 @@ export class RiskApplication {
       isPretradeIntentCandidate(text));
   }
 
-  capture(request: RiskRequest): RiskIngress {
+  markArrival(): RiskArrival {
+    const arrival: RiskArrival = Object.freeze({ kind: 'risk-arrival' });
+    this.arrivals.set(arrival, this.states.revision());
+    return arrival;
+  }
+
+  capture(request: RiskRequest, arrival?: RiskArrival): RiskIngress {
+    const maxRevision = arrival ? this.arrivals.get(arrival) ?? -1 : this.states.revision();
+    if (arrival) this.arrivals.delete(arrival);
     const command = parseBusinessCommand(request.text);
     const text = command.kind === 'risk-measurement' ? command.payload : request.text.trim();
     const accepted = Boolean(request.explicitMeasurement || this.accepts(request.key, request.text, request.hasAttachments));
     const fresh = command.kind === 'credit-query' || isPretradeIntentCandidate(text) ||
       ((request.explicitMeasurement || command.kind === 'risk-measurement') && !isRiskIntentConfirmation(text));
     const captured: CapturedInput = { key: request.key, text: request.text, explicit: Boolean(request.explicitMeasurement),
-      expectedState: this.states.getConversation(request.key)?.state, continuation: !fresh,
+      expectedState: this.states.getConversation(request.key, maxRevision)?.state, continuation: !fresh,
       controller: new AbortController(), used: false, released: false,
       full: accepted && this.ingressCount >= (this.options.maxPending ?? 32) };
     const tracked = accepted && !captured.full;
