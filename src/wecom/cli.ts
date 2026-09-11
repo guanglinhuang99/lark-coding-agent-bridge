@@ -99,6 +99,7 @@ import {
 import type { NormalizedAttachment } from '../media/attachment';
 import { createRiskBusinessRuntime } from '../runtime/risk-business';
 import type { RiskIngress, RiskReply } from '../business/risk/application';
+import { withTimeout } from '../bridge/reliability';
 import { RiskProgressRelay } from '../business/risk/progress';
 import { businessConversationKey, businessConversationScope } from '../business/identity';
 import { RiskSelectionTaskRegistry } from './risk/card';
@@ -689,7 +690,7 @@ async function handleMessage<T extends BaseMessage>(
       return;
     }
     riskSelectionTasks.clearConversation(key);
-    riskApplication.cancelScope(key);
+    riskApplication.resetScope(key);
     navigationCards.clearConversation(key);
     await sessionStore.clear(key);
     await replyControl(
@@ -720,8 +721,9 @@ async function handleMessage<T extends BaseMessage>(
       }
     }
     if (riskCancellation.handled) {
-      await riskInteraction.renderReply(body, riskKeyFor(key, body.from?.userid),
-        new WeComStreamReply(client, frame, generateReqId('risk-stop')), riskCancellation)
+      await withTimeout('risk-stop-reply', 1000,
+        riskInteraction.renderReply(body, riskKeyFor(key, body.from?.userid),
+          new WeComStreamReply(client, frame, generateReqId('risk-stop')), riskCancellation), () => {})
         .catch((error: unknown) => log.fail('risk-stop-reply', error));
     }
     if (!active) {
@@ -1372,7 +1374,7 @@ async function handleHomeCardEvent(
     }
     await sessionStore.clear(key);
     riskSelectionTasks.clearConversation(key);
-    riskApplication.cancelScope(key);
+    riskApplication.resetScope(key);
     navigationCards.clearConversation(key);
     await navigation.updateHomeCard(frame, key, taskId);
     return;
@@ -1447,7 +1449,7 @@ async function handleLegacyControlCardEvent(
     }
     await sessionStore.clear(key);
     riskSelectionTasks.clearConversation(key);
-    riskApplication.cancelScope(key);
+    riskApplication.resetScope(key);
     await client.updateTemplateCard(
       frame,
       buildWeComControlCard({

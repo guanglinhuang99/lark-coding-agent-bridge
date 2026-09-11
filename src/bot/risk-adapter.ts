@@ -1,5 +1,6 @@
 import type { LarkChannel, NormalizedMessage } from '@larksuite/channel';
 import { log } from '../core/logger';
+import { withTimeout } from '../bridge/reliability';
 import { createRiskBusinessRuntime, type RiskBusinessSnapshot } from '../runtime/risk-business';
 import type { ActiveRuns } from '../bridge/active-runs';
 import type { ProcessPool } from '../bridge/process-pool';
@@ -41,8 +42,11 @@ export function createLarkRiskAdapter(input: {
     hasAttachments: msg.resources.length > 0, maxMessageBytes: 3500,
   });
   const controlReplies = new Set<Promise<void>>();
+  let closed = false;
+  let closing: Promise<void> | undefined;
   const send = async (msg: NormalizedMessage, content: string) => {
     for (const page of splitRiskMessage(content)) {
+      if (closed) return;
       await input.channel.send(msg.chatId, { markdown: page }, {
         replyTo: msg.messageId, ...(msg.threadId ? { replyInThread: true } : {}),
       });
@@ -54,11 +58,17 @@ export function createLarkRiskAdapter(input: {
     markArrival: () => application.markArrival(),
     capture: (msg, scope, workspace, arrival) => application.capture(requestFor(msg, scope, workspace), arrival),
     async handle(msg, scope, workspace, ingress) {
+      if (closed) { ingress?.release(); return true; }
       const key = keyFor(scope, msg.senderId, workspace);
-      if (['/stop', '/new'].includes(msg.content.trim().toLowerCase())) {
+      if (msg.content.trim().toLowerCase() === '/new') {
+        application.reset(key);
+        ingress?.release();
+        return false;
+      }
+      if (msg.content.trim().toLowerCase() === '/stop') {
         const cancellation = application.cancel(key);
         ingress?.release();
-        if (msg.content.trim().toLowerCase() === '/stop') {
+        if (cancellation.handled) {
           // Hand off to the ordinary stop handler immediately, not after a network reply.
           const delivery = (async () => {
             for (const content of renderLarkRiskReply(cancellation)) await send(msg, content);
@@ -73,9 +83,21 @@ export function createLarkRiskAdapter(input: {
       for (const content of renderLarkRiskReply(reply)) await send(msg, content);
       return true;
     },
-    async close() {
-      try { await runtime.close(); }
-      finally { await Promise.allSettled([...controlReplies]); }
+    close() {
+      if (closing) return closing;
+      closed = true;
+      closing = (async () => {
+        try { await runtime.close(); }
+        finally {
+          // Platform transport may never settle a send. It must not hold up shutdown.
+          try {
+            await withTimeout('risk-stop-reply-drain', 1000, Promise.allSettled([...controlReplies]), () => {});
+          } catch {
+            log.warn('risk-stop-reply', 'shutdown-delivery-timeout', { pending: controlReplies.size });
+          } finally { controlReplies.clear(); }
+        }
+      })();
+      return closing;
     },
   };
 }

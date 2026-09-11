@@ -10,9 +10,10 @@ import { RiskInteractionController } from '../../../src/wecom/risk/interaction';
 import { RiskSelectionTaskRegistry } from '../../../src/wecom/risk/card';
 import { renderWeComNotice, truncateUtf8 } from '../../../src/wecom/presentation';
 import type { RiskService } from '../../../src/business/risk/client';
+import { withTimeout } from '../../../src/bridge/reliability';
 
 const apps: RiskApplication[] = [];
-afterEach(async () => { await Promise.all(apps.splice(0).map(app => app.close())); });
+afterEach(async () => { await Promise.all(apps.splice(0).map(app => app.close())); vi.useRealTimers(); });
 const trade = '/测算 测试账户 申购 100万';
 function setup() {
   const source = readFileSync('src/wecom/cli.ts', 'utf8');
@@ -33,12 +34,14 @@ function setup() {
     createRiskTaskId: () => 'test-selection' });
   const generic = vi.fn(async () => {});
   const context: Record<string, any> = {
-    Date, Buffer, RiskProgressRelay, truncateUtf8, renderWeComNotice, riskApplication: app,
+    Date, Buffer, withTimeout, RiskProgressRelay, truncateUtf8, renderWeComNotice, riskApplication: app,
     riskInteraction: controller, riskKeyFor: keyFor, activeRuns,
     riskIntentRunsStarting: new Set(), riskIntentStopRequests: new Set(), startingRuns: new Set(),
     textFromWeComMessage: (body: any) => body.text.content, normalizeIncomingText: (text: string) => text,
     collectWeComMediaInputs: () => [], parseWeComCommand: parseBusinessCommand,
-    conversationKey: () => 'room', sessionStore: { captureScope: (key: string) => key, workspaceFor: () => '/test' },
+    conversationKey: () => 'room', sessionStore: { captureScope: (key: string) => key, workspaceFor: () => '/test', clear: async () => {} },
+    isConversationBusy: () => false, riskSelectionTasks: { clearConversation: () => {} },
+    navigationCards: { clearConversation: () => {} },
     isRiskUserAllowed: () => true, taskStore: {}, client: {},
     withReservation: async (_set: unknown, _key: string, fn: () => Promise<void>) => fn(),
     runGate: { run: async (fn: () => Promise<void>) => fn() }, refreshHealth: async () => {},
@@ -67,6 +70,30 @@ function setup() {
 }
 
 describe('WeCom actual message entry after risk termination', () => {
+  it.each(['draft', 'consumed', 'cancelled'])('new session releases the previous business ownership: %s', async state => {
+    const api = setup(); await api.send(trade);
+    if (state === 'consumed') await api.send('确认');
+    if (state === 'cancelled') await api.send('/stop');
+    await api.send('/new');
+    await api.send('确认');
+    expect(api.generic).toHaveBeenCalledOnce();
+    expect(api.app.states.terminalFor(api.key)).toBeUndefined();
+    expect(api.calculatePretrade).toHaveBeenCalledTimes(state === 'consumed' ? 1 : 0);
+  });
+  it('finishes a stop request when its cancellation receipt never settles', async () => {
+    vi.useFakeTimers();
+    const api = setup(); await api.send(trade);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    vi.spyOn(api.controller, 'renderReply').mockImplementationOnce(async () => { await gate; });
+    let finished = false;
+    const pending = api.send('/stop').then(() => { finished = true; });
+    try {
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(finished).toBe(true);
+      expect(api.app.states.has(api.key)).toBe(false);
+    } finally { release(); await pending; }
+  });
   it('keeps a second confirmation on the business reply path after the first result finished', async () => {
     const api = setup();
     await api.send(trade); await api.send('确认'); await api.send('确认');

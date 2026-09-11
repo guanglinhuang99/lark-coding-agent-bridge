@@ -112,7 +112,10 @@ describe('Lark production channel with shared durable state', () => {
     application.states.setPretrade(key, { stage: 'confirm', product: '测试账户', originalText: '测试账户申购100万',
       draft: { accountQuery: '测试账户', action: 'subscription', amountText: '100万', market: 'secondary' } });
     await h.channel.handlers.message!(input('terminal-action', terminal === 'confirmed' ? '确认' : '/stop'));
-    if (terminal === 'cancelled') expect(JSON.stringify(h.channel.sent)).toContain('已取消风险交互');
+    if (terminal === 'cancelled') {
+      expect(JSON.stringify(h.channel.sent)).toContain('已取消风险交互');
+      expect(h.channel.sent).toHaveLength(1); // The ordinary unscoped /stop deliberately has no reply.
+    }
     const priorReplies = h.channel.sent.length;
     await h.channel.handlers.message!(input('late-confirmation', '确认'));
     expect(h.channel.sent.length).toBeGreaterThan(priorReplies);

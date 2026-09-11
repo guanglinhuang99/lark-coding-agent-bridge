@@ -111,7 +111,7 @@ export class RiskApplication {
       ((request.explicitMeasurement || command.kind === 'risk-measurement') && !isRiskIntentConfirmation(text));
     const captured: CapturedInput = { key: request.key, text: request.text, explicit: Boolean(request.explicitMeasurement),
       expectedState: this.states.getConversation(request.key, maxRevision)?.state, continuation: !fresh,
-      terminal: this.states.terminalFor(request.key),
+      terminal: this.states.terminalFor(request.key, maxRevision),
       controller: new AbortController(), used: false, released: false,
       full: accepted && this.ingressCount >= (this.options.maxPending ?? 32) };
     const tracked = accepted && !captured.full;
@@ -153,6 +153,18 @@ export class RiskApplication {
       if (businessConversationScope(key) === scope && this.cancel(key).handled) cancelled = true;
     }
     return cancelled ? riskCancellationReply() : { handled: false };
+  }
+
+  /** A new ordinary session relinquishes old risk ownership; stopping retains it. */
+  reset(key: string): void {
+    this.cancel(key);
+    this.states.forgetTerminal(key);
+  }
+
+  resetScope(scope: string): void {
+    const keys = new Set([...this.states.keys(), ...this.states.terminalKeys(),
+      ...this.requests.keys(), ...this.ingress.keys()]);
+    for (const key of keys) if (businessConversationScope(key) === scope) this.reset(key);
   }
 
   async close(): Promise<void> {
