@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "task": "risk-shared-business-20260910",
+  "recorded_at": "2026-09-10T21:14:47+08:00",
+  "baseline_head": "21af9cbfa1d2e4b8189a8c499b7d73d36fed8063",
+  "status": {
+    "code_implemented": true,
+    "source_installed": true,
+    "running_process_verified": false
+  },
+  "backend": {
+    "root": "/Users/guanglin/Sync/risk-service",
+    "git_checkout": false,
+    "changed_source": "linked_sources/portfolio_limits/check_portfolio_limits.py",
+    "source_kind": "regular_file",
+    "symlinks_below_root": 0,
+    "before_sha256": "1b7395c527753b7d4f3de1acf778a0761f04eaec1bacdd7cbcc754ce4ce5eecb",
+    "after_sha256": "2805a2b8a7b5186c3240c48889b57dee07dfc14dd110a8ff848d2f0349ac0830",
+    "shared_dist_changed": false,
+    "shared_dist_sha256": "1b7395c527753b7d4f3de1acf778a0761f04eaec1bacdd7cbcc754ce4ce5eecb"
+  },
+  "memoization": {
+    "functions": ["clean_text", "normalize_product_name"],
+    "exact_builtin_strings_only": true,
+    "max_chars": 256,
+    "max_entries_per_function": 4096,
+    "mutable_alias_resolution_cached": false,
+    "business_decisions_cached": false,
+    "old_backend_behavior": "functional_with_unoptimized_capability"
+  },
+  "reproduction": {
+    "patch": "docs/patches/risk-service-shared-text-memoization-20260910.patch",
+    "patch_sha256": "a408f3914ed5ebcda6070d434277eefa9bc5b043b1b3b0ae262b0cc2d147e18a",
+    "dry_run_exit_code": 0,
+    "applied_copy_matches_installed_sha256": true,
+    "private_before_copy_ignored": true
+  },
+  "focused_validation": {
+    "python_runtime": "/Users/guanglin/.lark-channel/releases/wecom-risk-20260908-40e196ce3872/python-runtime/bin/python",
+    "python_tests_passed": 11,
+    "python_tests_failed": 0,
+    "python_exit_code": 0,
+    "typescript_tests_passed": 21,
+    "typescript_tests_failed": 0,
+    "typescript_exit_code": 0,
+    "python_compile_exit_code": 0,
+    "independent_processes": 2,
+    "live_query_acceptance": false
+  },
+  "isolated_validation": {
+    "snapshot": "/private/tmp/wecom-risk-shared-validation-Jx1Qdi",
+    "regular_files_hash_verified": 628,
+    "symlinks_verified": 1,
+    "node_version": "v24.19.0",
+    "dependencies": "existing_node_modules",
+    "initial_full_run": {
+      "test_files_passed": 160,
+      "test_files_failed": 2,
+      "test_files_skipped": 1,
+      "tests_passed": 1186,
+      "tests_failed": 14,
+      "tests_skipped": 1,
+      "failure_category": "snapshot_git_metadata_and_sandbox_loopback"
+    },
+    "corrected_full_run": {
+      "test_files_passed": 162,
+      "test_files_failed": 0,
+      "test_files_skipped": 1,
+      "tests_passed": 1200,
+      "tests_failed": 0,
+      "tests_skipped": 1,
+      "exit_code": 0
+    },
+    "typecheck_exit_code": 0,
+    "server_build_exit_code": 0,
+    "live_dist_changed": false,
+    "diff_check_exit_code": 0
+  },
+  "lark_route": {
+    "entry": "generic_agent",
+    "active_agent_kind": "codex",
+    "inherits_codex_home": true,
+    "risk_named_mcp_bindings_found": 0,
+    "binding_search_scope": "risk-named servers in inherited config; other names, skills, per-workspace and remote paths not excluded",
+    "direct_risk_client_bound": false,
+    "optimized_business_functions_proven": false,
+    "unresolved_gate": "risk MCP configuration and deployed source rollout"
+  },
+  "wecom_route": {
+    "entry": "RiskDirectClient",
+    "local_shared_import_proven_offline": true,
+    "optimized_business_functions_proven_in_running_process": false
+  },
+  "final_review_validation": {
+    "python_tests_passed": 48,
+    "python_tests_skipped": 0,
+    "python_exit_code": 0,
+    "portable_without_backend_passed": 5,
+    "missing_backend_integration_skipped": 11,
+    "portable_exit_code": 0,
+    "explicit_invalid_backend_expected_exit_code": 1,
+    "capability_errors_non_fatal": true,
+    "bridge_sha256": "0c87e1bf23d9cf4504a6dc2650beb40db77445611a4d38fbbc1432fd636645bc",
+    "after_full_typescript_validation_changes": "Python diagnostic and tests only",
+    "shared_scope": "pure text CPU memoization; DailyPQCache and prewarm not migrated",
+    "full_snapshot_distributable": false
+  },
+  "final_runtime_observation": {
+    "wecom_pid": 70569,
+    "wecom_runs": 1,
+    "wecom_release": "wecom-risk-cpu-20260910-cce6da13",
+    "risk_child_pid": 70573,
+    "started_at": "2026-09-10T21:09:54+08:00",
+    "lark_pid": 36940,
+    "lark_runs": 1,
+    "concurrent_runtime_change_observed": true,
+    "runtime_change_performed_by_this_task": false,
+    "live_shared_function_objects_verified": false,
+    "new_shared_bridge_deployed_by_this_task": false
+  },
+  "safety": {
+    "live_database_probes": 0,
+    "business_network_probes": 0,
+    "messages_sent": 0,
+    "credentials_read_or_printed": false,
+    "configuration_changed": false,
+    "permissions_or_proxy_changed": false,
+    "production_process_actions": 0,
+    "commit_or_push_or_deploy": false
+  }
+}

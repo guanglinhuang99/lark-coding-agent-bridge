@@ -1,6 +1,5 @@
 import { readFileSync, readdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { RiskRouter } from '../../../src/business/risk/router';
 import { WeComRiskRouter } from '../../../src/wecom/risk/router';
@@ -8,7 +7,7 @@ import { RiskDirectClient } from '../../../src/business/risk/client';
 import { RiskDirectClient as LegacyClient } from '../../../src/wecom/risk/client';
 import { parseBusinessCommand } from '../../../src/business/commands';
 import { parseWeComCommand } from '../../../src/wecom/commands';
-import { readRiskRuntimeConfig, resolveRiskIntentModel, resolveRiskBridgePath } from '../../../src/business/risk/runtime';
+import { readRiskRuntimeConfig, resolveRiskIntentModel } from '../../../src/business/risk/runtime';
 import { collectRiskIntent } from '../../../src/business/risk/analyzer';
 import type { AgentEvent, AgentRun } from '../../../src/agent/types';
 
@@ -32,49 +31,56 @@ describe('shared business architecture', () => {
       expect(text, file).not.toMatch(/from\s+['"][^'"]*(?:\/wecom\/|\/bot\/|@wecom\/|@larksuite\/)/);
     }
   });
+  it('keeps local stdio on the same core tool contract as remote MCP', () => {
+    const source = readFileSync('src/business/risk/stdio_server.py', 'utf8');
+    expect(source).toContain('create_unified_mcp(include_specialized_tools=False)');
+    expect(source).not.toContain('include_specialized_tools=True');
+  });
   it('channel presentation cannot write or replace business conversation state', () => {
     const source = readFileSync('src/wecom/risk/interaction.ts', 'utf8');
     expect(source).not.toMatch(/riskStates\.(?:setQuery|setPretrade|setConversation|delete|clearConversation)\(/);
     expect(source).not.toMatch(/executeQueryMessage|sendRouteResult|applyQueryContinuation/);
   });
   it('neutral runtime settings override legacy values while preserving the migration fallback', () => {
-    const env = { RISK_PYTHON: '/common/python', WECOM_RISK_PYTHON: '/legacy/python', RISK_DIRECT_WORKERS: '6' };
+    const env = { RISK_MCP_URL: 'https://connect.example/risk/mcp/', WECOM_RISK_MCP_URL: 'https://legacy/mcp/' };
     const shared = readRiskRuntimeConfig({ env, rootDir: '/root', defaultStateDir: '/state' });
     const migrated = readRiskRuntimeConfig({ env, rootDir: '/root', defaultStateDir: '/state', legacyPrefix: 'WECOM' });
     expect(migrated).toEqual(shared);
-    expect(shared).toMatchObject({ pythonPath: '/common/python', workers: 6,
-      bridgePath: resolve('/root', 'src/business/risk/direct_bridge.py') });
-    expect(readRiskRuntimeConfig({ env: { WECOM_RISK_PYTHON: '/legacy/python' }, rootDir: '/root',
-      defaultStateDir: '/state', legacyPrefix: 'WECOM' }).pythonPath).toBe('/legacy/python');
+    expect(shared).toMatchObject({ url: 'https://connect.example/risk/mcp/' });
+    expect(readRiskRuntimeConfig({ env: { WECOM_RISK_MCP_URL: 'https://legacy/mcp/' }, rootDir: '/root',
+      defaultStateDir: '/state', legacyPrefix: 'WECOM' }).url).toBe('https://legacy/mcp/');
   });
   it.each(['', '   '])('treats blank neutral settings as absent for legacy fallback: %j', blank => {
-    const legacy = { WECOM_RISK_PYTHON: '/legacy/python', WECOM_RISK_SERVICE_DIR: '/legacy/service',
-      WECOM_RISK_STATE_DIR: '/legacy/state', WECOM_RISK_DIRECT_WORKERS: '3' };
+    const legacy = { WECOM_RISK_MCP_URL: 'https://legacy/mcp/', WECOM_RISK_MCP_AUTH: 'Key secret' };
     const options = { rootDir: '/root', defaultStateDir: '/state', legacyPrefix: 'WECOM' };
     const expected = readRiskRuntimeConfig({ ...options, env: legacy });
-    expect(readRiskRuntimeConfig({ ...options, env: { ...legacy, RISK_PYTHON: blank,
-      RISK_SERVICE_DIR: blank, RISK_STATE_DIR: blank, RISK_DIRECT_WORKERS: blank } })).toEqual(expected);
+    expect(readRiskRuntimeConfig({ ...options, env: { ...legacy, RISK_MCP_URL: blank,
+      RISK_MCP_AUTH: blank } })).toEqual(expected);
   });
   it('rejects nonblank invalid neutral configuration instead of using a valid legacy value', () => {
     expect(() => readRiskRuntimeConfig({ rootDir: '/root', defaultStateDir: '/state', legacyPrefix: 'WECOM',
-      env: { RISK_DIRECT_WORKERS: 'bad', WECOM_RISK_DIRECT_WORKERS: '3' } })).toThrow('RISK_DIRECT_WORKERS');
-  });
-  it('finds the packaged Python bridge next to the loaded bundle, not the caller cwd', () => {
-    const packaged = resolve('/release/dist/risk/direct_bridge.py');
-    const moduleUrl = pathToFileURL(resolve('/release/dist/cli.js')).href;
-    expect(resolveRiskBridgePath('/unrelated/cwd', moduleUrl, path => path === packaged)).toBe(packaged);
-    expect(resolveRiskBridgePath('/checkout', moduleUrl, () => false))
-      .toBe(resolve('/checkout/src/business/risk/direct_bridge.py'));
-    expect(readRiskRuntimeConfig({ env: { RISK_BRIDGE_PATH: '/explicit/bridge.py' }, rootDir: '/checkout',
-      defaultStateDir: '/state' }).bridgePath).toBe(resolve('/explicit/bridge.py'));
+      env: { RISK_MCP_POLL_INTERVAL_MS: 'bad', WECOM_RISK_MCP_POLL_INTERVAL_MS: '1000' } })).toThrow('RISK_MCP_POLL_INTERVAL_MS');
   });
   it('uses the same default intent model, with neutral overrides winning', () => {
     expect(resolveRiskIntentModel({})).toBe(resolveRiskIntentModel({}, 'WECOM'));
     expect(resolveRiskIntentModel({ RISK_INTENT_MODEL: 'shared', WECOM_RISK_INTENT_MODEL: 'old' }, 'WECOM')).toBe('shared');
   });
-  it.each(['0', '-1', 'bad', '1.5'])('rejects invalid shared worker configuration: %s', value => {
-    expect(() => readRiskRuntimeConfig({ env: { RISK_DIRECT_WORKERS: value }, rootDir: '/r', defaultStateDir: '/s' }))
-      .toThrow('RISK_DIRECT_WORKERS');
+  it('selects remote HTTP or local stdio MCP explicitly', () => {
+    const common = { rootDir: '/root', defaultStateDir: '/state' };
+    expect(readRiskRuntimeConfig({ ...common, env: { RISK_MCP_URL: 'https://connect.example/mcp/' } }))
+      .toMatchObject({ mode: 'local', url: 'https://connect.example/mcp/' });
+    expect(readRiskRuntimeConfig({ ...common, env: {
+      RISK_MCP_MODE: 'remote', RISK_MCP_URL: 'https://connect.example/mcp/',
+    } })).toMatchObject({ mode: 'remote', url: 'https://connect.example/mcp/' });
+    expect(readRiskRuntimeConfig({ ...common, env: {
+      RISK_MCP_MODE: 'local', RISK_MCP_PYTHON: '/python', RISK_SERVICE_DIR: '/risk-service',
+    } })).toMatchObject({ mode: 'local', pythonPath: '/python', serviceDir: '/risk-service' });
+    expect(() => readRiskRuntimeConfig({ ...common, env: { RISK_MCP_MODE: 'automatic' } }))
+      .toThrow('RISK_MCP_MODE');
+  });
+  it.each(['0', '-1', 'bad', '1.5'])('rejects invalid MCP poll configuration: %s', value => {
+    expect(() => readRiskRuntimeConfig({ env: { RISK_MCP_POLL_INTERVAL_MS: value }, rootDir: '/r', defaultStateDir: '/s' }))
+      .toThrow('RISK_MCP_POLL_INTERVAL_MS');
   });
 });
 

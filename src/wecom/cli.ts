@@ -260,7 +260,6 @@ const artifactOptions = {
   maxFileBytes: readPositiveInt(process.env.WECOM_OUTPUT_MAX_FILE_BYTES, 25 * 1024 * 1024),
   maxTotalBytes: readPositiveInt(process.env.WECOM_OUTPUT_MAX_BYTES, 50 * 1024 * 1024),
 };
-const configuredRiskServiceDir = (process.env.RISK_SERVICE_DIR ?? process.env.WECOM_RISK_SERVICE_DIR)?.trim();
 const riskAllowedUserIds = new Set(
   (process.env.WECOM_RISK_ALLOWED_USERIDS ?? '')
     .replaceAll('，', ',')
@@ -365,8 +364,7 @@ const riskClient = riskRuntime.client;
 const riskApplication = riskRuntime.application;
 const riskRouter = riskApplication.router;
 const riskStates = riskApplication.states;
-const riskDirectEnabled = Boolean(riskClient);
-const riskPython = riskRuntime.config.pythonPath;
+const riskMcpEnabled = Boolean(riskClient);
 const riskKeyFor = (key: string, userId: string | undefined) => businessConversationKey(
   { channel: 'wecom', accountId: botId, instanceId: stateDir }, key, userId || '__missing_actor__',
 );
@@ -379,7 +377,7 @@ const riskSelectionCardDelayMs = readPositiveInt(
 // Initialize both before the first heartbeat (including unbundled execution).
 await refreshHealth();
 
-if (!riskDirectEnabled) console.warn(`WeCom risk fast path disabled: ${riskRuntime.snapshot().reason}`);
+if (!riskMcpEnabled) console.warn(`WeCom risk MCP disabled: ${riskRuntime.snapshot().reason}`);
 
 // Initialization, reconnect warmup and shutdown have the same owner in both channels.
 void riskRuntime.start();
@@ -1485,7 +1483,7 @@ async function handleLegacyControlCardEvent(
 async function replyDoctor(frame: WsFrame, key: string): Promise<void> {
   const workspace = sessionStore.workspaceFor(key);
   const taskSnapshot = taskStore.snapshot();
-  const riskConfigured = Boolean(riskPython || configuredRiskServiceDir);
+  const riskConfigured = riskRuntime.snapshot().mcpConfigured;
   const codexAvailability = await operationRunner
     .run('codex-health', () => codex.checkAvailability(), {
       idempotent: true,

@@ -1,0 +1,91 @@
+--- a/risk-service/tests/test_app.py
++++ b/risk-service/tests/test_app.py
+@@ -273,8 +273,69 @@
+         health = client.get("/api/health").json()
+     assert health["api_service_name"] == "riskservice-api"
+     assert health["mcp_service_name"] == "riskservice-mcp"
++
++
++def test_health_reports_loaded_runtime_without_database_calls(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    checker = unified.portfolio_connect_app.web.checker
++    for name in (
++        "fetch_holdings",
++        "latest_holding_date_for_product",
++        "load_scopes",
++    ):
++        if hasattr(checker, name):
++            monkeypatch.setattr(
++                checker,
++                name,
++                lambda *_args, _name=name, **_kwargs: pytest.fail(
++                    f"health must not call {_name}"
++                ),
++            )
+ 
++    application = unified.create_app(enable_runtime_startup=False)
++    with TestClient(application) as client:
++        health = client.get("/api/health").json()
+ 
++    assert health["ok"] is True
++    assert health["api_docs"] == "api-docs"
++    assert health["mcp"] == "mcp/"
++    assert health["runtime"] == {
++        "schema": "risk-text-runtime/v1",
++        "shared_text_memoization": "optimized",
++        "functions": {
++            "clean_text": {"optimized": True, "max_entries": 4096},
++            "normalize_product_name": {"optimized": True, "max_entries": 4096},
++        },
++    }
++
++
++def test_runtime_metadata_conservatively_handles_old_or_broken_functions(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    checker = unified.portfolio_connect_app.web.checker
++
++    def old_clean_text(value: object) -> str:
++        return str(value)
++
++    def broken_normalize(value: object) -> str:
++        return str(value)
++
++    broken_normalize.__risk_text_memoized__ = True
++    broken_normalize.cache_info = lambda: (_ for _ in ()).throw(RuntimeError("hidden"))
++    monkeypatch.setattr(checker, "clean_text", old_clean_text)
++    monkeypatch.setattr(checker, "normalize_product_name", broken_normalize)
++
++    assert unified.runtime_metadata() == {
++        "schema": "risk-text-runtime/v1",
++        "shared_text_memoization": "unoptimized",
++        "functions": {
++            "clean_text": {"optimized": False, "max_entries": None},
++            "normalize_product_name": {"optimized": False, "max_entries": None},
++        },
++    }
++
++
+ def test_public_source_api_routes_are_reused_at_unified_paths() -> None:
+     application = unified.create_app(enable_runtime_startup=False)
+     unified_endpoints = {
+@@ -1700,6 +1761,18 @@
+ 
+ 
+ @pytest.mark.anyio
++async def test_unified_mcp_exposes_runtime_metadata_resource() -> None:
++    server = unified.create_unified_mcp()
++    async with Client(server) as client:
++        resources = await client.list_resources()
++        result = await client.read_resource("riskservice://runtime")
++
++    assert [str(resource.uri) for resource in resources] == ["riskservice://runtime"]
++    assert result[0].text
++    assert '"schema":"risk-text-runtime/v1"' in result[0].text.replace(" ", "")
++
++
++@pytest.mark.anyio
+ async def test_pretrade_schema_explains_that_restricted_check_is_included() -> None:
+     server = unified.create_unified_mcp()
+     async with Client(server) as client:
