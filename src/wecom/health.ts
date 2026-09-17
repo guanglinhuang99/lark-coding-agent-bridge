@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { writeFileAtomic } from '../platform/atomic-write';
-import type { RiskDirectRuntimeStatus } from './risk/client';
+import type { RiskMcpRuntimeStatus } from '../business/risk/mcp-client';
 import type { RiskBusinessSnapshot } from '../runtime/risk-business';
 
 export type WeComHealthPhase =
@@ -24,9 +24,11 @@ export interface WeComHealthSnapshot {
   lastError?: string;
   riskFastPath?: {
     enabled: boolean;
-    serviceDirConfigured: boolean;
-    pythonConfigured: boolean;
-    runtime?: RiskDirectRuntimeStatus;
+    mcpConfigured?: boolean;
+    mcpMode?: 'remote' | 'local';
+    serviceDirConfigured?: boolean;
+    pythonConfigured?: boolean;
+    runtime?: RiskMcpRuntimeStatus;
     warmup?: RiskBusinessSnapshot['warmup'];
     accessEnabled?: boolean;
     intent?: RiskBusinessSnapshot['intent'];

@@ -118,12 +118,14 @@ wecom-channel-bridge
 | `WECOM_OUTPUT_MAX_COUNT` | `5` | maximum generated files returned per answer |
 | `WECOM_OUTPUT_MAX_FILE_BYTES` | `26214400` | per-file output limit (25 MiB) |
 | `WECOM_OUTPUT_MAX_BYTES` | `52428800` | aggregate generated-file output limit (50 MiB) |
-| `WECOM_RISK_SERVICE_DIR` | `./risk-service` fallback | 推荐显式配置 risk-service 本地目录；仓库内 `./risk-service` 软链接仅作为当前机器的便捷 fallback，不是部署前提 |
-| `WECOM_RISK_PYTHON` | required for risk fast path | 安装了 `azpy`、`pandas`、`pins` 和 `openpyxl` 的 Python 解释器；不再使用机器相关的硬编码默认路径 |
-| `WECOM_RISK_BRIDGE_PATH` | `src/wecom/risk/direct_bridge.py` | 常驻本地直接调用桥脚本 |
-| `WECOM_RISK_DIRECT_WORKERS` | `4` | bridge 可同时处理的本地请求数 |
-| `WECOM_RISK_TIMEOUT_MS` | `180000` | 单次 risk-service 本地调用超时 |
-| `WECOM_RISK_STARTUP_TIMEOUT_MS` | `30000` | 常驻 Python bridge 启动后等待 `ready` 的最长时间；超时会终止卡住的进程并允许下一次调用重新启动 |
+| `WECOM_RISK_MCP_MODE` | `local` | `local` 启动本地 risk-service stdio MCP；`remote` 使用 Connect HTTP MCP |
+| `WECOM_RISK_MCP_URL` | remote 模式 required | Connect 上 risk-service 的 MCP HTTP 地址，例如 `https://host/content-path/mcp/` |
+| `WECOM_RISK_MCP_AUTH` | optional | Connect MCP 查询认证头的完整值；仅从环境读取，不写入日志或健康文件 |
+| `WECOM_RISK_MCP_PYTHON` | local 模式 required | 安装了 risk-service requirements（含 FastMCP）的 Python 解释器 |
+| `WECOM_RISK_SERVICE_DIR` | local 模式默认 `./risk-service` | 本地 risk-service 源码目录；仅 local 模式加载 |
+| `WECOM_RISK_MCP_STDIO_LAUNCHER` | bundled launcher | 可选的 stdio MCP 启动脚本覆盖路径 |
+| `WECOM_RISK_TIMEOUT_MS` | `180000` | 单次 MCP 请求及完整投前测算的最长时间 |
+| `WECOM_RISK_MCP_POLL_INTERVAL_MS` | `1000` | 异步投前测算状态轮询间隔 |
 | `WECOM_RISK_PRODUCT_CACHE_TTL_MS` | `3600000` | product-list refresh interval; a prior successful list remains usable if refresh fails |
 | `WECOM_RISK_ALLOWED_USERIDS` | — | comma-separated WeCom userid allowlist for risk-query access control; when allowlist enforcement is enabled, an empty list locks risk-query access for everyone |
 | `USE_ALLOWED_LIST` | `1` | `1` enforces `WECOM_RISK_ALLOWED_USERIDS` fail-closed; `0` explicitly allows every user in the bot's WeCom audience to use risk queries |
@@ -173,7 +175,7 @@ Risk continuation state has a single owner: `RiskStateRegistry` stores pre-trade
 account/security/freeform/confirmation state, deterministic-query product/security/missing
 continuations, card callback state, and expiry markers. `WeComRiskRouter` is stateless across
 messages and returns any required continuation explicitly; product-list caching remains in
-`RiskDirectClient` rather than being duplicated in the router.
+the selected `RiskMcpClient` transport rather than being duplicated in the router.
 
 The executable `src/wecom/cli.ts` keeps transport ingress, queue admission, Codex run lifecycle,
 and legacy run controls. `RiskInteractionController` owns WeCom-specific risk presentation,
@@ -189,7 +191,7 @@ timing used by `wecom-qa-bot`.
 
 Risk progress is forwarded in order and deduplicated. Short queries announce their operation (for
 example, holdings, investment restrictions, credit, or security checks), while pre-trade runs also
-forward the detailed local `risk-service` stages for holdings/rules, security resolution, limit
+forward the remote Connect MCP stages for holdings/rules, security resolution, limit
 calculation, restricted/related-party checks, and credit checks. Text requests update their live
 stream; card-triggered runs receive proactive progress messages.
 

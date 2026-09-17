@@ -17,7 +17,7 @@ export default defineConfig((options): Options[] => {
     clean: true,
     async onSuccess() {
       await mkdir(join(outDir, 'risk'), { recursive: true });
-      await copyFile('src/business/risk/direct_bridge.py', join(outDir, 'risk/direct_bridge.py'));
+      await copyFile('src/business/risk/stdio_server.py', join(outDir, 'risk/stdio_server.py'));
     },
     sourcemap: false,
     splitting: false,

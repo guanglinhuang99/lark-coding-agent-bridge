@@ -1,0 +1,77 @@
+--- a/risk-service/app.py
++++ b/risk-service/app.py
+@@ -26,6 +26,8 @@
+ STATIC_ROOT = PROJECT_ROOT / "static"
+ API_SERVICE_NAME = os.environ.get("RISK_API_SERVICE_NAME", "riskservice-api").strip()
+ MCP_SERVICE_NAME = os.environ.get("RISK_MCP_SERVICE_NAME", "riskservice-mcp").strip()
++RUNTIME_METADATA_SCHEMA = "risk-text-runtime/v1"
++RUNTIME_FUNCTION_NAMES = ("clean_text", "normalize_product_name")
+ 
+ RUNTIME_DATA_ROOT.mkdir(parents=True, exist_ok=True)
+ os.environ.setdefault(
+@@ -94,6 +96,44 @@
+     return portfolio_connect_app.web.checker.as_float(value)
+ 
+ 
++def runtime_metadata() -> dict[str, object]:
++    """Return bounded diagnostics for the already-loaded shared checker."""
++
++    checker = portfolio_connect_app.web.checker
++    functions: dict[str, dict[str, object]] = {}
++    for name in RUNTIME_FUNCTION_NAMES:
++        optimized = False
++        max_entries: int | None = None
++        try:
++            function = getattr(checker, name, None)
++            cache_info = getattr(function, "cache_info", None)
++            if (
++                callable(function)
++                and getattr(function, "__risk_text_memoized__", False) is True
++                and callable(cache_info)
++            ):
++                bound = cache_info().maxsize
++                if type(bound) is int and bound > 0:
++                    optimized = True
++                    max_entries = bound
++        except Exception:
++            # Diagnostics are optional and must not expose or propagate failures.
++            pass
++        functions[name] = {
++            "optimized": optimized,
++            "max_entries": max_entries,
++        }
++    return {
++        "schema": RUNTIME_METADATA_SCHEMA,
++        "shared_text_memoization": (
++            "optimized"
++            if all(item["optimized"] is True for item in functions.values())
++            else "unoptimized"
++        ),
++        "functions": functions,
++    }
++
++
+ def product_holdings_payload(product: str, holding_date: str | None = None) -> dict[str, object]:
+     """Return the raw PQ holdings fields needed by the product holdings API."""
+ 
+@@ -239,6 +279,12 @@
+     server.mount(related_party_app.state.mcp_server)
+     server.mount(portfolio_connect_app.app.state.mcp_server)
+ 
++    @server.resource("riskservice://runtime")
++    def get_runtime_metadata() -> dict[str, object]:
++        """Read sanitized metadata for the loaded shared risk checker."""
++
++        return runtime_metadata()
++
+     @server.tool()
+     def get_product_holdings(
+         product: Annotated[str, Field(description="产品名称或简称。")],
+@@ -436,6 +482,7 @@
+             "mcp_docs": "mcp-docs",
+             "openapi": "api/openapi.json",
+             "mcp": "mcp/",
++            "runtime": runtime_metadata(),
+         }
+ 
+     @application.get("/api/openapi.json", include_in_schema=False)

@@ -6,17 +6,18 @@ import type { ActiveRuns } from '../bridge/active-runs';
 import type { ProcessPool } from '../bridge/process-pool';
 import type { BridgeIdentity } from '../bridge/identity';
 import { RunExecutor } from '../bridge/run-executor';
-import { log, redactDiagnosticText, reportMetric } from '../core/logger';
+import { log, reportMetric } from '../core/logger';
 import { RiskApplication, type RiskAnalyzerInput, type RiskApplicationOptions } from '../business/risk/application';
 import { buildRiskIntentPrompt, type RiskAiDraft } from '../business/risk/intent';
 import { collectRiskIntent } from '../business/risk/analyzer';
-import type { RiskService, RiskDirectRuntimeStatus } from '../business/risk/client';
-import { createRiskRuntimeClient, readRiskRuntimeConfig, resolveRiskIntentModel, type RiskRuntimeConfig } from '../business/risk/runtime';
+import type { RiskService } from '../business/risk/client';
+import type { RiskMcpRuntimeStatus } from '../business/risk/mcp-client';
+import { createRiskRuntimeClient, readRiskRuntimeConfig, resolveRiskIntentModel, riskRuntimeAvailable, type RiskRuntimeConfig } from '../business/risk/runtime';
 
 export interface RiskRuntimeClient extends RiskService {
   prewarm(): Promise<void>;
   close(): Promise<void>;
-  runtimeStatus(): RiskDirectRuntimeStatus;
+  runtimeStatus(): RiskMcpRuntimeStatus;
 }
 export interface RiskIntentLifecycle {
   /** Optional transport bookkeeping only; it must never parse or execute business rules. */
@@ -44,10 +45,10 @@ export interface RiskBusinessSnapshot {
   schema: 'risk-business-runtime/v1';
   enabled: boolean;
   accessEnabled: boolean;
-  pythonConfigured: boolean;
-  serviceDirConfigured: boolean;
-  reason?: 'closed' | 'python-not-configured' | 'path-unavailable';
-  runtime?: RiskDirectRuntimeStatus;
+  mcpConfigured: boolean;
+  mcpMode: 'remote' | 'local';
+  reason?: 'closed' | 'mcp-not-configured';
+  runtime?: RiskMcpRuntimeStatus;
   warmup: { phase: 'idle' | 'running' | 'ready' | 'failed' | 'disabled' | 'closed'; durationMs?: number; products?: number };
   intent: { model: string; active: number };
 }
@@ -86,11 +87,6 @@ export function createRiskBusinessRuntime(input: RiskBusinessRuntimeOptions) {
       event('call', { method, durationMs, outcome });
     },
     onStage: ({ stage, durationMs, outcome }) => { metric('stage_ms', durationMs, { stage, outcome }); },
-    onStartup: timings => {
-      for (const [stage, durationMs] of Object.entries(timings)) metric('startup_ms', durationMs, { stage });
-    },
-    onBusinessCapabilities: capabilities => event('capabilities', { capabilities }),
-    onDiagnostic: line => safe(() => log.warn('risk-runtime', 'python', { channel, message: redactDiagnosticText(line) })),
   });
   // Lazy extraction infrastructure: deterministic queries never prepare or launch an Agent.
   let executor: RunExecutor | undefined;
@@ -173,10 +169,9 @@ export function createRiskBusinessRuntime(input: RiskBusinessRuntimeOptions) {
   function snapshot(): RiskBusinessSnapshot {
     return {
       schema: 'risk-business-runtime/v1', enabled: Boolean(client) && !shutdown.signal.aborted,
-      accessEnabled: accessEnabled(), pythonConfigured: Boolean(config.pythonPath),
-      serviceDirConfigured: Boolean(value('SERVICE_DIR')),
+      accessEnabled: accessEnabled(), mcpConfigured: riskRuntimeAvailable(config), mcpMode: config.mode,
       ...(!client || shutdown.signal.aborted ? { reason: shutdown.signal.aborted ? 'closed' as const
-        : !config.pythonPath ? 'python-not-configured' as const : 'path-unavailable' as const } : {}),
+        : 'mcp-not-configured' as const } : {}),
       ...(client ? { runtime: shutdown.signal.aborted ? { ready: false } : client.runtimeStatus() } : {}),
       warmup: { ...warmup }, intent: { model, active: analyses.size },
     };

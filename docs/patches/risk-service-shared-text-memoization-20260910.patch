@@ -1,0 +1,49 @@
+--- a/linked_sources/portfolio_limits/check_portfolio_limits.py
++++ b/linked_sources/portfolio_limits/check_portfolio_limits.py
+@@ -22,6 +22,7 @@
+ from concurrent.futures import ThreadPoolExecutor
+ from dataclasses import dataclass, replace
+ from datetime import date, datetime, timedelta
++from functools import lru_cache, wraps
+ from pathlib import Path
+ from typing import Any, Callable
+ 
+@@ -288,7 +289,30 @@
+             return self.by_code[code]
+         return self.by_name.get(normalize_product_name(product_name))
+ 
++
++def memoize_short_text(
++    function: Callable[[Any], str],
++    max_entries: int = 4096,
++    max_chars: int = 256,
++) -> Callable[[Any], str]:
++    """Memoize only exact, short built-in strings for a pure conversion."""
++    if getattr(function, "__risk_text_memoized__", False) is True:
++        return function
++    cached = lru_cache(maxsize=max(0, max_entries))(function)
+ 
++    @wraps(function)
++    def convert(value: Any) -> str:
++        if type(value) is str and len(value) <= max_chars:
++            return cached(value)
++        return function(value)
++
++    convert.cache_info = cached.cache_info
++    convert.cache_clear = cached.cache_clear
++    convert.__risk_text_memoized__ = True
++    return convert
++
++
++@memoize_short_text
+ def clean_text(value: Any) -> str:
+     if value is None:
+         return ""
+@@ -296,6 +320,7 @@
+     return re.sub(r"\s+", " ", text)
+ 
+ 
++@memoize_short_text
+ def normalize_product_name(value: Any) -> str:
+     text = clean_text(value)
+     for suffix in ("集合资产管理产品", "资产管理产品", "专项产品", "资管产品", "产品"):

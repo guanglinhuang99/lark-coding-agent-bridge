@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "observed_at": "2026-09-10T22:08:58+08:00",
+  "verdict": "PARTIAL_WECOM_VERIFIED_CONNECT_DEPLOYED_LARK_AUTH_BLOCKED",
+  "source": {
+    "head": "21af9cbfa1d2e4b8189a8c499b7d73d36fed8063",
+    "branch": "perf/risk-cpu-20260910",
+    "dirty_approved_source_fingerprint": "b1cdd6b8e16760987bca6414aaa102d9893f6e79718b852e7cd31c8e4b81d4e1"
+  },
+  "backend": {
+    "runtime_schema": "risk-text-runtime/v1",
+    "app_sha256": "3d52970d2ab3321bf5fbc9b23e778286f5d2cb635b8f56a4aea8ae2ad162e54b",
+    "test_sha256": "403f455b517ee6f1e52d31f9ca414c589059a4f088fcc00e54d7f09043fce537",
+    "checker_sha256": "2805a2b8a7b5186c3240c48889b57dee07dfc14dd110a8ff848d2f0349ac0830",
+    "package_app_parity": true,
+    "package_checker_parity": true,
+    "financial_tool_count": 10,
+    "focused_pytest": {
+      "status": "NOT_RUN_PRIVATE_VENV_SETUP_BLOCKED",
+      "collected": 0,
+      "passed": 0,
+      "failed": 0,
+      "skipped": 0,
+      "new_installs": 0
+    },
+    "syntax_check": "PASS"
+  },
+  "connect": {
+    "guid": "1ec85ef0-897f-4230-b824-1ed14103c34f",
+    "id": "218",
+    "bundle_before": "2810",
+    "bundle_after": "2841",
+    "python": "3.11.6",
+    "access_before": "acl",
+    "access_after": "acl",
+    "deployment_completed": true,
+    "deployment_verification": "PASS",
+    "remote_runtime_health": "BLOCKED_QUERY_AUTH",
+    "mcp_resource_protocol": "BLOCKED_QUERY_AUTH"
+  },
+  "lark": {
+    "pid_before": 36940,
+    "pid_after": 36940,
+    "runs_after": 1,
+    "job_changed": false,
+    "mcp_binding_changed": false,
+    "configuration_gate": "BLOCKED_QUERY_AUTH",
+    "endpoint_gate": "BLOCKED_QUERY_AUTH",
+    "agent_protocol_gate": "NOT_VERIFIED",
+    "native_chat_gate": "NOT_RUN_SENDING_PROHIBITED"
+  },
+  "wecom": {
+    "release": "wecom-risk-runtime-20260910-09223264",
+    "bundle_sha256": "09223264db039265da46b6d847bb19dd19cd06671ddc440d5a960d67869fc219",
+    "bridge_sha256": "0c87e1bf23d9cf4504a6dc2650beb40db77445611a4d38fbbc1432fd636645bc",
+    "runtime_dependencies_resolved": 8,
+    "pid_before": 70569,
+    "pid_after": 77479,
+    "child_pid_after": 77480,
+    "runs_after": 1,
+    "connected": true,
+    "active_runs": 0,
+    "starting_runs": 0,
+    "durable_queued": 0,
+    "durable_running": 0,
+    "runtime_ready": true,
+    "shared_text_memoization": "optimized",
+    "functions": {
+      "clean_text": {"optimized": true, "max_entries": 4096},
+      "normalize_product_name": {"optimized": true, "max_entries": 4096}
+    },
+    "configuration_gate": "PASS",
+    "endpoint_runtime_gate": "PASS",
+    "agent_protocol_gate": "PASS_DAEMON_HEALTH",
+    "native_chat_gate": "NOT_RUN_SENDING_PROHIBITED"
+  },
+  "validation": {
+    "prior_targeted_typescript_tests": 37,
+    "prior_python_tests": 48,
+    "prior_results_rerun": false,
+    "candidate_web_build": "PASS",
+    "candidate_server_build": "PASS",
+    "candidate_javascript_syntax": "PASS",
+    "candidate_python_ast": "PASS",
+    "candidate_plist_lint": "PASS",
+    "patch_dry_run": "PASS"
+  },
+  "backend_test_gap_followup": {
+    "observed_at": "2026-09-10T22:16:48+08:00",
+    "chronology": "AFTER_CONNECT_BUNDLE_2841_AND_WECOM_RUNTIME_CUTOVER",
+    "venv_count": 1,
+    "venv_private_temp_root": "/private/tmp/risk-channel-backend-tests.PcXD2T",
+    "python_executable": "/Users/guanglin/miniforge3/bin/python3",
+    "python_version": "3.12.8",
+    "pip_version": "24.3.1",
+    "dependency_status": {
+      "pandas": "2.2.3_INHERITED",
+      "fastapi": "NOT_INSTALLED",
+      "fastmcp": "NOT_INSTALLED",
+      "pytest": "NOT_INSTALLED",
+      "pydantic": "NOT_INSTALLED",
+      "pins": "NOT_INSTALLED",
+      "pyarrow": "NOT_INSTALLED",
+      "azpy": "NOT_INSTALLED"
+    },
+    "setup_attempts": [
+      {
+        "command": "venv/bin/pip install -r requirements.txt pytest",
+        "exit_code": 1,
+        "barrier": "azpy==1.9.0 unavailable from configured package source"
+      },
+      {
+        "command": "venv/bin/pip install --index-url KNOWN_INTERNAL_INDEX -r requirements.txt pytest",
+        "exit_code": 1,
+        "barrier": "pip required an explicit trust bypass for the plain-HTTP index"
+      }
+    ],
+    "trusted_host_bypass_used": false,
+    "tests": {
+      "status": "NOT_RUN",
+      "collected": 0,
+      "passed": 0,
+      "failed": 0,
+      "skipped": 0
+    },
+    "test_patch": {
+      "path": "docs/patches/risk-service-runtime-metadata-tests-20260910.patch",
+      "sha256": "c558b619bdea7a6872dd2c224af48eb64025ebd3258ab4a92ebd75c3848dfe48",
+      "apply_reverse_byte_exact": true
+    },
+    "app_patch_apply_reverse_byte_exact": true,
+    "application_changed": false,
+    "service_or_config_changed": false
+  },
+  "rollback": {
+    "source": "actual_loaded_plist_preimage",
+    "plist_sha256": "dea3abc9415ddb5f86e65bedbd65dc2e9da685e0c1b8df69be57f17bea0e662a",
+    "state_snapshot_restore_allowed": false
+  },
+  "private_evidence": "/Users/guanglin/.lark-channel/acceptance/risk-channel-runtime-20260910",
+  "safety": {
+    "messages_sent": false,
+    "financial_actions": false,
+    "business_queries": false,
+    "credentials_emitted": false,
+    "deployment_credentials_repurposed": false,
+    "lark_job_changed": false,
+    "lark_dist_rebuilt": false,
+    "git_mutation": false
+  }
+}
